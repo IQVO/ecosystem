@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+    tags: ['v*']
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # Regenerates the catalog (prepare-specs -> generators) and builds the
+      # static site; proves the tree is self-contained without license.jwt.
+      - run: npm run build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: static-site
+          path: dist/
+          retention-days: 3
+
+  helm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
+        with:
+          version: latest
+      - run: helm lint charts/ecosystem
+
+  docker-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [lint, build, helm]
+    # Images are cut from main (GitFlow publish) and from release tags.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # cosign keyless signing (Fulcio/Rekor via GitHub OIDC)
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - name: Set image tags
+        run: |
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          fi
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - name: Log in to GHCR
+        uses: docker/login-action@d3b9cdfa580156c018ca5e745c1bf653d8ea46b5
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/iqvo/ecosystem:latest
+            ghcr.io/iqvo/ecosystem:${{ env.SHORT_SHA }}
+            ${{ env.RELEASE_TAG && format('ghcr.io/iqvo/ecosystem:{0}', env.RELEASE_TAG) || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Install cosign
+        uses: sigstore/cosign-installer@b9c35392b7c1401bcc77d30c9b07cf4b1c7a7b07
+      - name: Sign the published image (keyless, GitHub OIDC identity)
+        run: |
+          cosign sign --yes \
+            ghcr.io/iqvo/ecosystem@${{ steps.build.outputs.digest }}
+      - name: Generate SBOM (SPDX) for the published image
+        uses: anchore/sbom-action@f8706fc06deabb1adc34978fc92896fdcd3d17fe
+        with:
+          image: ghcr.io/iqvo/ecosystem@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+      - name: Attest the image with its SBOM (keyless)
+        run: |
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/iqvo/ecosystem@${{ steps.build.outputs.digest }}
+      - name: Upload SBOM as a workflow artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: sbom-spdx
+          path: sbom.spdx.json
+          retention-days: 7
