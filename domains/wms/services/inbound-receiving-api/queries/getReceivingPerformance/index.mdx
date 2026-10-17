@@ -1,0 +1,75 @@
+---
+id: inbound-receiving-api-getReceivingPerformance
+version: 1.0.0
+name: getReceivingPerformance
+summary: 'Receiving performance and accuracy per day, and the state right now'
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Reports'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: /reports/receiving-performance
+  statusCodes:
+    - '200'
+    - '400'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+How is the dock performing? `days[]` has one row per UTC calendar day
+intersecting `[from, to)` (zeros included); a day's counts cover the
+part of the day inside the range. `receipts_closed`, `discrepancies`
+and `receipt_cycle` follow the receipt's `ReceiptClosed` time;
+`lines_received` counts the receiving actions (`ReceiptLineReceived`)
+and `units_good` / `units_damaged` sum their quantities by condition.
+`receipt_cycle` (open to close) and `dock_dwell` (check-in to
+completed) include only receipts and appointments whose opening or
+check-in the projection also saw; their `p50_seconds` / `p95_seconds`
+are linear-interpolated percentiles and are null when `count` is 0.
+`appointments` counts each milestone that fell in the window.
+
+`current` is the state right now, independent of the range:
+`open_receipts` (opened, not yet closed), `expected_today` (ASNs not
+cancelled whose expected arrival falls in today's UTC day) and
+`expected_today_started` (those with a receipt already opened). The
+data is as fresh as `GET /reports/freshness` says.
+
+
+
+
+
+## GET `(/reports/receiving-performance)`
+
+### Parameters
+- **from** (query): RFC 3339 instant, inclusive. Defaults to `to` minus 30 days.
+- **to** (query): RFC 3339 instant, exclusive. Defaults to now. At most 366 days after `from`.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

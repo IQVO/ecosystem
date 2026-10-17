@@ -1,0 +1,72 @@
+---
+id: fulfillment-execution-api-createTask
+version: 1.0.0
+name: createTask
+summary: Create a task and place it in the pool
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Tasks'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /tasks
+  statusCodes:
+    - '201'
+    - '400'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Puts a new unit of Pick, Pack, or SLAM work into the pending pool. The task is not assigned to any station at creation time — PULL dispatch (`POST /stations/{stationId}/claim-next`) is the only way a task becomes claimed, consistent with this service's rule that work is never pushed to a named station in advance. `cpt` (Critical Pull Time) drives dispatch priority: `claimNext` always selects the earliest-CPT pending task a station is equipped for.
+
+**Idempotent per `Idempotency-Key` (ADR-0028).** Send a caller-chosen `Idempotency-Key` header on every call. The first request with a given key creates the task; a retry with the same key and the same body replays the stored response verbatim (same status, headers and task id — including a cached 4xx) instead of creating a duplicate. Reusing a key with a different body is rejected with `422 idempotency-key-reused`; omitting the header is `400 idempotency-key-required`. (Key enforcement requires the Postgres-backed deployment; the in-memory development configuration skips it.) Without a repeated key every call creates a new task with a fresh, server-generated id.
+
+
+
+
+
+## POST `(/tasks)`
+
+### Parameters
+- **Idempotency-Key** (header): Caller-supplied unique key (e.g. a UUID) identifying this creation attempt. **Clients must always send a non-empty key**: a Postgres-backed deployment rejects a missing key with `400 idempotency-key-required` (the in-memory development configuration ignores the header, which is why the schema marks it optional). Retries of the same logical request must reuse it; a genuinely different request must use a new one.
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

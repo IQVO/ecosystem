@@ -1,0 +1,191 @@
+---
+id: inbound-receiving
+name: Inbound Receiving (events)
+version: 1.0.0
+summary: ''
+badges:
+  - content: inbound-receiving
+    textColor: blue
+    backgroundColor: blue
+  - content: asn
+    textColor: blue
+    backgroundColor: blue
+  - content: dockappointment
+    textColor: blue
+    backgroundColor: blue
+  - content: receipt
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+  - content: analytics
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: ASNRegistered
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.events
+        version: 1.0.0
+  - id: ASNCancelled
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.events
+        version: 1.0.0
+  - id: DockAppointmentBooked
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.events
+        version: 1.0.0
+  - id: DockAppointmentCheckedIn
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.events
+        version: 1.0.0
+  - id: DockAppointmentCancelled
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.events
+        version: 1.0.0
+  - id: DockAppointmentCompleted
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.events
+        version: 1.0.0
+  - id: ReceiptOpened
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.events
+        version: 1.0.0
+  - id: ReceiptLineReceived
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.events
+        version: 1.0.0
+  - id: ReceiptClosed
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.events
+        version: 1.0.0
+  - id: ASNRegisteredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.analytics
+        version: 1.0.0
+  - id: ASNCancelledAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.analytics
+        version: 1.0.0
+  - id: DockAppointmentBookedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.analytics
+        version: 1.0.0
+  - id: DockAppointmentCheckedInAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.analytics
+        version: 1.0.0
+  - id: DockAppointmentCancelledAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.analytics
+        version: 1.0.0
+  - id: DockAppointmentCompletedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.analytics
+        version: 1.0.0
+  - id: ReceiptOpenedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.analytics
+        version: 1.0.0
+  - id: ReceiptLineReceivedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.analytics
+        version: 1.0.0
+  - id: ReceiptClosedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.inbound-receiving.analytics
+        version: 1.0.0
+receives:
+  - id: ProductRegistered
+    version: 1.0.0
+    from:
+      - id: warehouse.product-master.events
+        version: 1.0.0
+  - id: LocationSlotRegistered
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationSlotDecommissioned
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+Event catalog for the **inbound-receiving** bounded context (WMS subdomain):
+the inbound dock workflow of ASNs, dock appointments and receipts
+(ADR 0001, ADR 0002).
+
+**Published.** The `Asn`, `DockAppointment` and `Receipt` aggregates raise
+nine events, published to `warehouse.inbound-receiving.events` through a
+**transactional outbox**: the aggregate row and its already-encoded events
+are written in ONE database transaction and a relay drains them to Kafka
+(at-least-once; the CloudEvents `id` is stored with the outbox row, so a
+retry republishes the same `id`). Consumers dedupe on `id`.
+`ReceiptLineReceived` is the **handover event**: inventory-storage consumes
+it and books `condition=Good` quantities into stock (ADR 0003); Damaged
+quantities are recorded here and not booked.
+
+**Consumed (ADR 0003).** `ProductRegistered` from
+`warehouse.product-master.events` feeds the `known_skus` local copy
+(`PRODUCT_MODE`, group from env `PRODUCT_CONSUMER_GROUP`).
+`LocationSlotRegistered` and `LocationSlotDecommissioned` from
+`warehouse.facility.events` feed the `dock_doors` local copy
+(`DOCK_DOOR_MODE`, group from env `DOCK_DOOR_CONSUMER_GROUP`). Both modes
+default to `permissive` (consumer not started); a `kafka` mode with an
+unset group is a boot error.
+
+**Analytics (ADR 0006).** The same nine events are ALSO written, in the
+same transaction, to `warehouse.inbound-receiving.analytics` with the same
+`type` and the same `id` per occurrence, `dataschema`
+`urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and payloads
+equal to the integration payloads. Only this service's `inbound-projector`
+consumes it; it is not an integration contract.
+
+**Planned, not built.** warehouse-planning consuming
+`DockAppointmentBooked` as inbound-labor demand is a documented future
+edge. Nothing consumes that event today.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`.
+Optional W3C trace-context headers (`traceparent`, and `tracestate` /
+`baggage` when present) carry the trace of the request that wrote the
+outbox row (ADR 0009); consumers may extract them, and must not require
+them.
+`specversion`, `id`, `source` (`/warehouse/inbound-receiving`), `type`,
+`subject` (the aggregate instance id), `time`, `datacontenttype`
+(`application/json`) and `dataschema`
+(`urn:warehouse:inbound-receiving:events:<EventName>:v1`) are all required.
+`type` = `com.warehouse.wms.inbound-receiving.<entity>.<EventName>` with
+`<entity>` one of `asn`, `dockappointment`, `receipt`. Kafka key:
+`asn_number` for `asn.*` and `receipt.*`, `appointment_id` for
+`dockappointment.*`. `data` is snake_case, optional fields are omitted when
+unset, timestamps are RFC 3339 UTC. A breaking payload change is a new
+`.v2` type, never a mutation.
+
+
+## Architecture diagram
+<NodeGraph />

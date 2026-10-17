@@ -1,0 +1,104 @@
+---
+id: workforce-management-api
+version: 1.0.0
+name: Workforce Management API
+summary: ''
+schemaPath: openapi-reports.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Workforce Management API
+  - type: openapi
+    path: openapi-reports.yaml
+    name: Workforce Management Reports API
+badges:
+  - content: Associates
+    textColor: blue
+    backgroundColor: blue
+  - content: Shift Plans
+    textColor: blue
+    backgroundColor: blue
+  - content: Assignments
+    textColor: blue
+    backgroundColor: blue
+  - content: Staffing
+    textColor: blue
+    backgroundColor: blue
+  - content: System
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: workforce-management-api-getReportsHealthz
+    version: 1.0.0
+  - id: workforce-management-api-getLaborReport
+    version: 1.0.0
+  - id: workforce-management-api-getLaborReportFreshness
+    version: 1.0.0
+  - id: workforce-management-api-healthz
+    version: 1.0.0
+  - id: workforce-management-api-readyz
+    version: 1.0.0
+  - id: workforce-management-api-startAssociateShift
+    version: 1.0.0
+  - id: workforce-management-api-certifyAssociate
+    version: 1.0.0
+  - id: workforce-management-api-proposePathPlan
+    version: 1.0.0
+  - id: workforce-management-api-commitShiftPlan
+    version: 1.0.0
+  - id: workforce-management-api-assignLabor
+    version: 1.0.0
+  - id: workforce-management-api-startAssociateBreak
+    version: 1.0.0
+  - id: workforce-management-api-endAssociateBreak
+    version: 1.0.0
+  - id: workforce-management-api-getStaffingGap
+    version: 1.0.0
+  - id: workforce-management-api-listStaffingGapsForSiteShift
+    version: 1.0.0
+  - id: workforce-management-api-listStaffingGapsForShift
+    version: 1.0.0
+  - id: workforce-management-api-endAssociateShift
+    version: 1.0.0
+---
+Workforce Management is a Supporting bounded context that owns "who is on
+shift, on which process path, at what rate; direct vs indirect hours."
+
+It covers two things:
+
+1. **The shift-start planning horizon** — a human proposes and then
+   commits a split of headcount across process paths (`ShiftPlan`, made
+   of `PathPlan` lines: path, planned heads, planned rate, planned
+   hours), one plan per site per shift (the plan key is the canonical
+   `siteCode`; `buildingId` is its deprecated alias, ADR 0035).
+2. **Intra-shift assignment tracking** — moving associates between paths
+   as backlogs deviate from plan (`LaborAssignment`). The move itself is
+   always a human call; this context makes the staffing gap legible
+   (`GetStaffingGap` / `PathUnderstaffed`), it never decides or performs
+   a rebalance on its own.
+
+Three aggregates back the API: `AssociateShift` (roster entry —
+certifications, break state, logged hours), `ShiftPlan` (committed
+headcount split across paths), and `LaborAssignment` (one associate, one
+path, an interval — exactly one ACTIVE assignment per associate at a
+time, and an assignment is rejected if the associate lacks the path's
+required certification).
+
+**Where this context's boundary stops:** it never links an associate to
+a specific task, and it never dispatches work — that is Fulfillment
+Execution's job, against a completely different cadence (shifts/hours
+here vs. seconds there for task claiming). Keeping the seam at "this
+associate is on this path" lets task-dispatch policy change without
+touching workforce planning, and vice versa.
+
+All error responses use RFC 7807 (`application/problem+json`); see the
+shared `Problem` schema.
+  
+
+## Architecture diagram
+<NodeGraph />

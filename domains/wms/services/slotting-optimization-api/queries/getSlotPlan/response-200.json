@@ -1,0 +1,249 @@
+{
+  "type": "object",
+  "required": [
+    "planId",
+    "siteId",
+    "state",
+    "policy",
+    "windowFrom",
+    "windowTo",
+    "generatedAt",
+    "version",
+    "assignments",
+    "moves",
+    "unassigned"
+  ],
+  "properties": {
+    "planId": {
+      "type": "string",
+      "example": "plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+    },
+    "siteId": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string",
+      "description": "Lifecycle state of a plan.",
+      "enum": [
+        "Draft",
+        "Approved",
+        "Rejected",
+        "Superseded"
+      ]
+    },
+    "policy": {
+      "type": "string",
+      "example": "abc-velocity-v1"
+    },
+    "windowFrom": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "windowTo": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Exclusive"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approvedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rejectedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "supersededAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rejectReason": {
+      "type": "string"
+    },
+    "supersedesPlanId": {
+      "type": "string",
+      "description": "The plan this one replaced when it was approved"
+    },
+    "version": {
+      "type": "integer",
+      "format": "int64",
+      "description": "Starts at 1, +1 per accepted transition."
+    },
+    "assignments": {
+      "type": "array",
+      "description": "In SKU order.",
+      "items": {
+        "type": "object",
+        "required": [
+          "sku",
+          "slot",
+          "abcClass",
+          "picks",
+          "units"
+        ],
+        "properties": {
+          "sku": {
+            "type": "string",
+            "example": "SKU-1"
+          },
+          "slot": {
+            "type": "string",
+            "description": "The facility-layout location code of the forward slot",
+            "example": "WH1-FWD-A01-01-01-A"
+          },
+          "abcClass": {
+            "type": "string",
+            "description": "Velocity class by cumulative pick share (A up to 80 %, B up to 95 %, else C).",
+            "enum": [
+              "A",
+              "B",
+              "C"
+            ]
+          },
+          "picks": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "ACTIVE demand lines in the window"
+          },
+          "units": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Units on those lines"
+          }
+        }
+      }
+    },
+    "moves": {
+      "type": "array",
+      "description": "In SKU order.",
+      "items": {
+        "type": "object",
+        "required": [
+          "sku",
+          "kind"
+        ],
+        "properties": {
+          "sku": {
+            "type": "string"
+          },
+          "fromSlot": {
+            "type": "string",
+            "description": "Omitted for an Assign"
+          },
+          "toSlot": {
+            "type": "string",
+            "description": "Omitted for a Vacate"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "Assign",
+              "Relocate",
+              "Vacate"
+            ]
+          }
+        }
+      }
+    },
+    "unassigned": {
+      "type": "array",
+      "description": "In SKU order.",
+      "items": {
+        "type": "object",
+        "required": [
+          "sku",
+          "reason"
+        ],
+        "properties": {
+          "sku": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "`NoPhysicalProfile`: the SKU has no effective dimensions. `NoCapacityFit`:\ncompatible slots exist but none holds one unit. `NoEligibleSlot`: no\ncompatible slot exists, or every eligible slot went to a higher-ranked SKU.\n",
+            "enum": [
+              "NoEligibleSlot",
+              "NoPhysicalProfile",
+              "NoCapacityFit"
+            ]
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "description": "Execution progress of the plan (ADR 0010, additive): which of its moves\nthe floor has executed, from inventory-storage's `StockRelocated`\nmatched to the move (by the move reference `<planId>:<moveSeq>`, else\nby SKU and bins on the site's Approved plan). Present on\n`GET /slot-plans/{planId}` only. Only Approved and Superseded plans can\ngain executions.\n",
+      "required": [
+        "movesTotal",
+        "movesExecuted",
+        "moves"
+      ],
+      "properties": {
+        "movesTotal": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0,
+          "description": "The plan's moves."
+        },
+        "movesExecuted": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0,
+          "description": "Moves with at least one relocation recorded."
+        },
+        "lastExecutedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The latest relocation's instant; absent until one is recorded."
+        },
+        "moves": {
+          "type": "array",
+          "description": "One entry per move, in moveSeq order (the plan's moves, SKU order).",
+          "items": {
+            "type": "object",
+            "required": [
+              "moveSeq",
+              "sku",
+              "kind",
+              "executed",
+              "executedQuantity"
+            ],
+            "properties": {
+              "moveSeq": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0,
+                "description": "0-based position of the move in the plan's moves (the `move_seq` of SlotPlanApproved's consumers)."
+              },
+              "sku": {
+                "type": "string"
+              },
+              "kind": "[Circular]",
+              "executed": {
+                "type": "boolean",
+                "description": "At least one relocation of this move is recorded."
+              },
+              "executedQuantity": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "description": "Units moved, summed over the move's relocations."
+              },
+              "lastExecutedAt": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Absent until the move is executed."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "isSchema": true
+}

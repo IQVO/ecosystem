@@ -1,0 +1,76 @@
+---
+id: order-management-api-releaseHeldOrder
+version: 2.0.0
+name: releaseHeldOrder
+summary: Release an order held at intake
+schemaPath: ''
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Allocation'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/orders/{id}/release'
+  statusCodes:
+    - '200'
+    - '404'
+    - '409'
+    - '500'
+    - '503'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+The ReleaseHeldOrder use case (ADR 0020). Commits an order received with `releaseOnAllocation: false` to the floor: its already-allocated lines are released through the same BR3-gated flow every other release uses, the promise is recomputed by the same policy, and the same `OrderAllocated`/`OrderReleased` events fire with the same per-line payload.
+
+IDEMPOTENT for a HELD order: releasing one whose lines are already released returns `200` with no state change and no event. A caller working against an external fill-or-kill deadline cannot distinguish "my release was lost" from "my release failed", so retrying must be safe.
+
+An order that was never held has nothing to release on demand — its lines release themselves at allocation — so calling this on one is rejected with `409` rather than silently succeeding, since it means the caller has the wrong order id or the wrong expectation. This holds even when that order has no allocated lines of its own (a backordered order, say): "never held" and "already released" are different answers and must not collapse into one.
+
+
+
+
+
+## POST `(/orders/{id}/release)`
+
+### Parameters
+- **id** (path) (required): The order's identifier, as returned by receiveOrder.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+#### <span className="text-red-500">503 Service Unavailable</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-503.json" maxHeight="500" id="response-503" />
+
+
+
+## Architecture
+
+<NodeGraph />

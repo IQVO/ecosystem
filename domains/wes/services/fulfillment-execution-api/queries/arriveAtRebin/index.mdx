@@ -1,0 +1,71 @@
+---
+id: fulfillment-execution-api-arriveAtRebin
+version: 1.0.0
+name: arriveAtRebin
+summary: Record one picked line arriving at the order's Rebin consolidation slot
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Rebin'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /rebin/arrivals
+  statusCodes:
+    - '400'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+A Rebin / put-wall associate (or automation signal) scans one picked line of an order into that order's consolidation slot. This is the pick -> pack handoff of [ADR-0016](/docs/adr/0016-rebin-and-order-consolidation): once every required line of the order has arrived, this call creates the order's PACK task (through the same `CreateTask` use case as `POST /tasks`, so it appears in `GET /tasks?orderRef=` and is claimable via `claim-next` with `taskType: PACK`) and raises `OrderConsolidated`. Every accepted arrival raises `ItemArrivedAtRebin`. Neither event is forwarded to Kafka today.
+
+**The first call for an `orderRef` fixes the required line set.** The first arrival seen for an `orderRef` creates its consolidation tracker with that call's `requiredLineIds` as the full, fixed set. Every later call for the same `orderRef` must still send `requiredLineIds` (it is validated as required on every call, since only the caller knows whether an arrival is the first), but the value is ignored once the set exists — the caller is responsible for sending the same set each time. `lineId` must be a member of the fixed set, otherwise the call is rejected with `422` `rebin-unknown-line` (this includes a first call whose `lineId` is not in its own `requiredLineIds`).
+
+**Idempotent per (`orderRef`, `lineId`).** Re-sending an arrival for a line that has already arrived is a no-op success (`204`), so a redelivered scan never errors and never double-counts.
+
+**The PACK task is created exactly once**, by the arrival that completes the set; it takes `packCpt`, `packRequiredCapabilities`, `packFragile` and `packGiftWrap` from that completing call. Any later arrival for an already-consolidated order is a `204` no-op and creates no further PACK task. A single-line order (`requiredLineIds` of length 1, `lineId` equal to it) completes on its first arrival, creating the PACK task immediately.
+
+No response body on success. Not guarded by an `Idempotency-Key` header (ADR-0028): the natural (`orderRef`, `lineId`) key already makes retries safe.
+
+
+
+
+
+## POST `(/rebin/arrivals)`
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

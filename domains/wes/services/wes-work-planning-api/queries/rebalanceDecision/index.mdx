@@ -1,0 +1,67 @@
+---
+id: wes-work-planning-api-rebalanceDecision
+version: 1.0.0
+name: rebalanceDecision
+summary: Get the flow-balancing recommendation for a process path
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Rebalance'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: '/paths/{pathId}/rebalance'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+Inspects a process path's live buffer telemetry (backlog vs. plan) and recommends `ThrottleUpstream` (a flow-fed path over its alarm threshold — slow admission upstream, Drum-Buffer-Rope with CPT as the drum), `ReassignLabor` (a release-fed path saturated at its WIP limit with backlog remaining — flag for headcount reassignment), or `NoActionNeeded` — the RebalanceDecision use case. Side effect: publishes `PathThrottled` or `LaborReassignmentFlagged` when a non-default action is recommended (same read-only-GET-with-telemetry-side-effect pattern as `/telemetry`). When a labor plan has been observed for this path (see Labor Plan View), the response additionally includes it as extra context under `laborPlan` — this is additive and does not change the throttle/reassign decision logic itself.
+
+
+
+
+
+## GET `(/paths/{pathId}/rebalance)`
+
+### Parameters
+- **pathId** (path) (required): The process path's identifier — a named station that owns a queue (unit-in → unit-out), e.g. a pick zone or pack line. Must belong to a process-path family declared in this deployment's process-path catalogue (ADR-0012; today the fleet's sortable-fc topology declares the pick/pack/rebin/slam families, each optionally carrying a "-"-delimited station/zone suffix, e.g. pick-a or pack-station-1). The write endpoints (receiveChargeForecast, commitShiftPlan, enqueueWorkUnit) reject ids outside the declared families with `400 unknown-path-id`; read endpoints surface a missing pool/projection as `404` instead.
+
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

@@ -1,0 +1,71 @@
+---
+id: order-management-api-receiveOrder
+version: 2.0.0
+name: receiveOrder
+summary: Receive a new order — allocates and releases automatically
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Orders'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /orders
+  statusCodes:
+    - '201'
+    - '400'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Intake — the ReceiveOrder use case. Validates every requested line (SKU non-empty, quantity > 0), mints an `OrderId`, and persists the order in `Received` status, publishing `OrderReceived` unconditionally.
+
+Immediately afterward, in the SAME call, this service attempts allocation-then-release: it reserves stock per line via inventory-storage's `POST /reservations` (see the Allocation tag), and for every line that ends up `Allocated` and eligible under BR3 (see below), releases it — announced via the enriched `OrderAllocated` / `OrderPartiallyAllocated` Kafka events, never a second synchronous call. If that implicit allocation attempt hits a hard (non-business) failure, this endpoint still returns `201`: the order genuinely was received, and a caller expressing "place an order" must never be told that failed just because an internal, best-effort next step could not complete. The returned body reflects whatever the allocation pass actually achieved.
+
+`allowPartialShipment` defaults to `false` — ship-complete (BR3). Every line's `pathId` is chosen by this service, not the caller (ADR 0021): the active process paths in the process-path catalogue are filtered by their declared eligibility and the shortest known cycle time wins (ties: lower path id), falling back to the default `pick` when no catalogue is configured or no path is active. A caller placing an order has no business supplying wes-work-planning's process-path vocabulary at intake; `pathId` is visible on every line in the response, but not settable on the request.
+
+
+
+
+
+## POST `(/orders)`
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

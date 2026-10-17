@@ -1,0 +1,236 @@
+{
+  "allOf": [
+    {
+      "type": "object",
+      "description": "CloudEvents 1.0 context attributes; every attribute is required in this fleet.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "description": "CloudEvents spec version.",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "UUID v4, minted once per occurrence and stable across outbox redelivery.",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "Producing service, `/warehouse/<repo>`.",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "type": {
+          "type": "string",
+          "description": "`com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Aggregate instance id; equal to the Kafka message key.",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Domain occurred-at, UTC, RFC 3339.",
+          "x-parser-schema-id": "<anonymous-schema-10>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "description": "Content type of `data`.",
+          "x-parser-schema-id": "<anonymous-schema-11>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.",
+          "x-parser-schema-id": "<anonymous-schema-12>"
+        },
+        "data": {
+          "type": "object",
+          "description": "Event payload (snake_case keys).",
+          "x-parser-schema-id": "<anonymous-schema-13>"
+        }
+      },
+      "x-parser-schema-id": "CloudEvent"
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "source",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.warehouse.wes.work-planning.workunit.WorkReleased",
+          "x-parser-schema-id": "<anonymous-schema-161>"
+        },
+        "source": {
+          "type": "string",
+          "const": "/warehouse/wes-work-planning",
+          "x-parser-schema-id": "<anonymous-schema-162>"
+        },
+        "dataschema": {
+          "type": "string",
+          "const": "urn:warehouse:wes-work-planning:events:WorkReleased:v1",
+          "x-parser-schema-id": "<anonymous-schema-163>"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "path_id",
+            "work_unit_id",
+            "cpt"
+          ],
+          "properties": {
+            "path_id": {
+              "type": "string",
+              "description": "Process path id, resolved against the process-path catalogue.",
+              "x-parser-schema-id": "<anonymous-schema-165>"
+            },
+            "work_unit_id": {
+              "type": "string",
+              "description": "Becomes the Task's order reference.",
+              "x-parser-schema-id": "<anonymous-schema-166>"
+            },
+            "cpt": {
+              "type": "string",
+              "description": "CPT deadline.",
+              "format": "date-time",
+              "x-parser-schema-id": "<anonymous-schema-167>"
+            },
+            "ref": {
+              "type": "string",
+              "description": "Release reference. For order-originated work this is the order id; it is kept on the Task and published as TaskCompleted.order_ref (ADR-0040). For transfer work it is the demand id. For RELOCATE work it is the slot plan id and is not kept (ADR-0047).",
+              "x-parser-schema-id": "<anonymous-schema-168>"
+            },
+            "line_no": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1,
+              "maximum": 2147483647,
+              "description": "Optional (additive; the event stays v1). The 1-based order line this work unit is for; wes-work-planning sets it for order-originated work (explicitly, not encoded in work_unit_id). It is kept on the Task as source_line_no and published as TaskCompleted.line_no (ADR-0041). Absent from producers that predate it, and never honoured for transfer work. A value above 2147483647 (the 32-bit column width) is ignored by this consumer rather than rejected, so the task is still created with its line unknown.",
+              "x-parser-schema-id": "<anonymous-schema-169>"
+            },
+            "fragile": {
+              "type": "boolean",
+              "description": "Optional fragile packing hint (default false).",
+              "x-parser-schema-id": "<anonymous-schema-170>"
+            },
+            "gift_wrap": {
+              "type": "boolean",
+              "description": "Optional gift-wrap request (default false).",
+              "x-parser-schema-id": "<anonymous-schema-171>"
+            },
+            "transfer_ref": {
+              "type": "string",
+              "description": "Present only for inter-warehouse-transfer work (the transfer saga's correlation id). Its presence turns the created Task into transfer work whose completion publishes exactly one transfer fact.",
+              "x-parser-schema-id": "<anonymous-schema-172>"
+            },
+            "work_kind": {
+              "type": "string",
+              "enum": [
+                "TRANSFER_PICK",
+                "TRANSFER_DISPATCH",
+                "TRANSFER_ARRIVAL"
+              ],
+              "description": "Kind of transfer work; selects the completion fact. Required whenever transfer_ref is present, unknown values are rejected.",
+              "x-parser-schema-id": "<anonymous-schema-173>"
+            },
+            "site_id": {
+              "type": "string",
+              "description": "Site the transfer fact is about (origin for pick/dispatch, destination for arrival).",
+              "x-parser-schema-id": "<anonymous-schema-174>"
+            },
+            "sku": {
+              "type": "string",
+              "description": "SKU the transfer moves.",
+              "x-parser-schema-id": "<anonymous-schema-175>"
+            },
+            "quantity": {
+              "type": "integer",
+              "description": "Units of sku the transfer moves.",
+              "x-parser-schema-id": "<anonymous-schema-176>"
+            },
+            "relocation": {
+              "type": "object",
+              "description": "Present ONLY on work released on the RELOCATE process path (ADR-0047; additive, the event stays v1). One move of an approved slot plan (slotting-optimization SlotPlanApproved, planned by wes-work-planning). It turns the created Task into a RELOCATE task whose completion takes the operator-confirmed quantity and scanned bins and publishes them on TaskCompleted. A RELOCATE release without this object, this object on any other path, or an object that is not a valid move (missing move_seq, unknown kind, a bin the kind requires missing, from_bin equal to to_bin, blank plan_id or sku) is rejected and dead-lettered; no task is created.",
+              "required": [
+                "plan_id",
+                "move_seq",
+                "kind",
+                "sku"
+              ],
+              "properties": {
+                "plan_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The approved slot plan's id (SlotPlanApproved.data.plan_id).",
+                  "x-parser-schema-id": "<anonymous-schema-178>"
+                },
+                "move_seq": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0,
+                  "description": "The move's 0-based position in SlotPlanApproved.data.moves. With plan_id it forms the move reference `<plan_id>:<move_seq>` published as TaskCompleted.relocation_ref (keep plan_id + move_seq within 200 characters).",
+                  "x-parser-schema-id": "<anonymous-schema-179>"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "Relocate",
+                    "Assign",
+                    "Vacate"
+                  ],
+                  "description": "The SlotPlanApproved move kind, exact case. Relocate needs from_bin and to_bin; Assign needs to_bin (the source is scanned at completion); Vacate needs from_bin (the reserve destination is scanned at completion).",
+                  "x-parser-schema-id": "<anonymous-schema-180>"
+                },
+                "sku": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The SKU to move (SlotPlanApproved move sku).",
+                  "x-parser-schema-id": "<anonymous-schema-181>"
+                },
+                "from_bin": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Source bin (SlotPlanApproved move from_slot). Omitted for an Assign (the operator scans the source); if sent for an Assign it is fixed.",
+                  "x-parser-schema-id": "<anonymous-schema-182>"
+                },
+                "to_bin": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Destination bin (SlotPlanApproved move to_slot). Omitted for a Vacate (the operator scans a reserve bin); if sent for a Vacate it is fixed.",
+                  "x-parser-schema-id": "<anonymous-schema-183>"
+                }
+              },
+              "x-parser-schema-id": "<anonymous-schema-177>"
+            }
+          },
+          "x-parser-schema-id": "<anonymous-schema-164>"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-160>"
+    }
+  ],
+  "x-parser-schema-id": "<anonymous-schema-159>"
+}

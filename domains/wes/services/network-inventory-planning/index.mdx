@@ -1,0 +1,204 @@
+---
+id: network-inventory-planning
+name: Network Inventory Planning (events)
+version: 1.0.0
+summary: ''
+badges:
+  - content: consumed-facts
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed-replies
+    textColor: blue
+    backgroundColor: blue
+  - content: published
+    textColor: blue
+    backgroundColor: blue
+  - content: published-analytics
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: TransferPlanApproved
+    version: 1.0.0
+    to:
+      - id: warehouse.network-inventory-planning.events
+        version: 1.0.0
+  - id: TransferAllocationRequested
+    version: 1.0.0
+    to:
+      - id: warehouse.network-inventory-planning.events
+        version: 1.0.0
+  - id: WorkDemandReleased
+    version: 1.0.0
+    to:
+      - id: warehouse.network-inventory-planning.events
+        version: 1.0.0
+  - id: TransferStateAdvanced
+    version: 1.0.0
+    to:
+      - id: warehouse.network-inventory-planning.analytics
+        version: 1.0.0
+  - id: TransferStuckDetected
+    version: 1.0.0
+    to:
+      - id: warehouse.network-inventory-planning.analytics
+        version: 1.0.0
+  - id: RebalanceRunCompleted
+    version: 1.0.0
+    to:
+      - id: warehouse.network-inventory-planning.analytics
+        version: 1.0.0
+receives:
+  - id: SiteCapabilityChanged
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: SiteSkuDemandChanged
+    version: 1.0.0
+    from:
+      - id: warehouse.order-management.events
+        version: 1.0.0
+  - id: CapacityPlanPublished
+    version: 1.0.0
+    from:
+      - id: warehouse.warehouse-planning.events
+        version: 0.5.0
+  - id: TransferStockAllocated
+    version: 1.0.0
+    from:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+  - id: TransferStockAllocationRejected
+    version: 1.0.0
+    from:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+  - id: TransferReceiptStaged
+    version: 1.0.0
+    from:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+  - id: TransferStockStowed
+    version: 1.0.0
+    from:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+  - id: TransferPicked
+    version: 2.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: TransferDispatched
+    version: 2.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: TransferArrived
+    version: 2.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+Event contract of the network-inventory-planning bounded context.
+
+**Phase 1** declares the three CONSUMED facts (projected into local
+read models):
+
+- `com.warehouse.wms.facility-layout.site.SiteCapabilityChanged`
+  (facility-layout, `warehouse.facility.events`) → local
+  `site_capability` read model (keyed site_id, LWW on
+  capability_revision).
+- `com.warehouse.wes.order-management.siteskudemand.SiteSkuDemandChanged`
+  (order-management, `warehouse.order-management.events`) → local
+  `site_sku_demand` read model (keyed source_order_id+line_no, state
+  ACTIVE/REMOVED).
+- `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished`
+  (warehouse-planning, `warehouse.warehouse-planning.events`) → local
+  `published_capacity_plan` read model (keyed plan_id, LWW on the
+  CloudEvents time. The payload is warehouse-planning's existing v1
+  payload plus the additive `site_id`; a legacy event WITHOUT `site_id`
+  is EXCLUDED (the site is never inferred from warehouse_id).
+
+**Phase 2 (ADR 0003, the transfer saga)** adds the PUBLISHED stream on
+`warehouse.network-inventory-planning.events` — emitted through the
+transactional outbox in the same transaction as the saga state change —
+and the two CONSUMED inventory-storage replies on
+`warehouse.inventory.events`:
+
+- `com.warehouse.wes.network-inventory-planning.transfer.TransferPlanApproved`
+  (published, subject/key transfer_id): an operator approved an
+  advisory proposal into a transfer plan.
+- `com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested`
+  (published COMMAND, subject/key `transfer_line_id` = `<transfer_id>:1`
+  for the v1 single-line saga): inventory-storage allocates origin
+  stock against `transfer_line_id` and replies on
+  `warehouse.inventory.events`.
+- `com.warehouse.wms.inventory-storage.reservation.TransferStockAllocated`
+  (consumed reply, subject/key reservation_id): the saga moves
+  ALLOCATING → ALLOCATED, persisting reservation_id, allocations[] and
+  expires_at.
+- `com.warehouse.wms.inventory-storage.reservation.TransferStockAllocationRejected`
+  (consumed reply, subject/key transfer_line_id): the saga moves
+  ALLOCATING → UNFULFILLABLE with the closed reason
+  ORIGIN_SITE_UNKNOWN|INSUFFICIENT_USABLE|IDEMPOTENCY_CONFLICT.
+
+**Phase 4 (ADR 0007, observability + scheduled runs)** adds this
+context's analytics stream on
+`warehouse.network-inventory-planning.analytics`: the saga-health
+occurrences `TransferStateAdvanced` (every state transition, same
+outbox transaction), `TransferStuckDetected` (a bounded observe-only
+ticker; NIP_HEALTH_CHECK_INTERVAL / NIP_STUCK_THRESHOLDS) and
+`RebalanceRunCompleted` (each scheduled rebalance pass; observe-only
+— no approval, no allocation command). W3C trace context
+(`traceparent`) propagates on every produced and consumed message.
+
+**Phase 3 (ADR 0005, work-demand release + fact-driven transitions)**
+adds the released work demands on the PUBLISHED stream, the three
+CONSUMED fulfillment-execution transfer facts on
+`warehouse.fulfillment.events`, and the two CONSUMED
+inventory-storage destination facts on `warehouse.inventory.events`:
+
+- `com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased`
+  (published COMMAND, subject/key `demand_id`): one leg of an approved
+  transfer released for warehouse work. WES (wes-work-planning) is the
+  consumer; the payload below mirrors ITS consumed contract exactly.
+- `com.warehouse.wes.fulfillment-execution.transfer.TransferPicked`
+  (consumed fact, subject/key task_id): ALLOCATED → PICKED, the
+  picked quantity recorded (a short pick is recorded, not refused),
+  and the dispatch WorkDemandReleased released with the PICKED
+  quantity.
+- `com.warehouse.wes.fulfillment-execution.transfer.TransferDispatched`
+  (consumed fact, subject/key task_id): PICKED → IN_TRANSIT.
+- `com.warehouse.wes.fulfillment-execution.transfer.TransferArrived`
+  (consumed fact, RESERVED — scan-driven receiving may bypass it):
+  IN_TRANSIT → ARRIVED; inventory-storage's TransferReceiptStaged
+  drives the same transition.
+- `com.warehouse.wms.inventory-storage.stock.TransferReceiptStaged`
+  (consumed fact, subject/key transfer_line_id): IN_TRANSIT → ARRIVED
+  (the scan-driven receiving path).
+- `com.warehouse.wms.inventory-storage.stock.TransferStockStowed`
+  (consumed fact, subject/key transfer_line_id): ARRIVED → RECEIVED
+  (terminal), the destination stow allocations persisted.
+
+Consumers decode CloudEvents 1.0 structured mode only, dispatch on the
+FULL `type`, ignore unknown types, dedupe on `id` in-transaction
+(processed_events), and commit offsets only after the read-model
+transaction commits. Consumer group ids are environment-configured
+(SITE_CAPABILITY_CONSUMER_GROUP, SITE_SKU_DEMAND_CONSUMER_GROUP,
+CAPACITY_PLAN_CONSUMER_GROUP, TRANSFER_REPLY_CONSUMER_GROUP,
+TRANSFER_FACT_CONSUMER_GROUP); unset means the consumer does not
+exist. A fact whose transfer_ref names no known transfer is
+WARN-logged and committed past, never retried.
+
+The consumed payload schemas below are the producers' own contract
+shapes mirrored read-only (each producer's apis/asyncapi.yaml on
+origin/develop is authoritative).
+
+
+## Architecture diagram
+<NodeGraph />

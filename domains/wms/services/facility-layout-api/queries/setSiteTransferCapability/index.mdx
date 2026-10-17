@@ -1,0 +1,75 @@
+---
+id: facility-layout-api-setSiteTransferCapability
+version: 1.0.0
+name: setSiteTransferCapability
+summary: Set a site's transfer capability
+schemaPath: request-body.json
+badges:
+  - content: PUT
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Sites'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: PUT
+  path: '/sites/{siteCode}/transfer-capability'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '409'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: PUT
+---
+## Overview
+Replaces the site's transfer capability with the full snapshot in the body (ADR-0035). When the snapshot differs from the current one — or no snapshot was ever published — the site's capabilityRevision advances by exactly one and SiteCapabilityChanged is published through the transactional outbox with that revision. Repeating the current snapshot is an idempotent no-op: 200, same revision, no event, so no Idempotency-Key is needed.
+
+Optimistic concurrency (ADR-0025, extended to Site by ADR-0035): a concurrent change of the same site loses with 409 `concurrent-modification`; re-read and retry. A decommissioned site's capability is frozen (409 `site-not-active`).
+
+
+
+
+
+## PUT `(/sites/{siteCode}/transfer-capability)`
+
+### Parameters
+- **siteCode** (path) (required): The site's code — the first segment of every LocationCode inside it.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+A site's transfer capability (ADR-0035) and the revision of the last SiteCapabilityChanged published for it. The revision only ever increases per site; 0 means no snapshot was ever published.
+
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

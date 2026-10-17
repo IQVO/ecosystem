@@ -1,0 +1,1419 @@
+openapi: 3.0.3
+info:
+  title: warehouse-planning
+  description: >
+    Can this warehouse process the demand assigned to it, given its
+    current labor, location, equipment, station, conveyor and buffer
+    constraints? Phase 1 exposes native ProcessCapacity registration and
+    the computed effective rate; Phase 2 the normalized ProcessPath
+    capacity; Phase 4 CapacityPlans (assigned demand vs. path capacity,
+    shortage, bottleneck) whose lifecycle events leave through a
+    transactional outbox (see asyncapi.yaml). Station capacity: stations
+    tallied from facility-layout have no throughput of their own; an
+    operator-declared StationStandard (throughput per station) is composed
+    with LABOR and the other constraints AT READ TIME (docs/adr/0002), and
+    the storage positions / station counts of a site are a read model.
+  version: "0.1.0"
+  contact:
+    name: warehouse-planning maintainers
+    url: https://github.com/IQVO/warehouse-planning
+  license:
+    name: UNLICENSED
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: process-capacities
+    description: Native and effective ProcessCapacity registration (Phase 1).
+  - name: process-paths
+    description: ProcessPath registration and normalized ProcessPathCapacity (Phase 2).
+  - name: capacity-plans
+    description: CapacityPlan creation, publication and lookup (Phase 4).
+  - name: station-capacity
+    description: Operator-declared station standards and the storage/station read model of a site (ADR 0002).
+  - name: demand
+    description: Expected demand of a site, read from the local read model fed by order-management's order events (ADR 0004).
+  - name: reports
+    description: >
+      Read-only analytics reports (ADR 0005) served by the separate planning-reports binary on port 8092,
+      from the analytical database the planning-projector builds from this service's analytics topic.
+      Not part of the OLTP API on port 8080.
+paths:
+  /process-capacities:
+    post:
+      operationId: registerProcessCapacityConstraint
+      summary: Register (or upsert) one capacity constraint
+      tags: [process-capacities]
+      description: >
+        Upserts one named constraint (LABOR, LOCATION, EQUIPMENT, STATION,
+        CONVEYOR, BUFFER or REPLENISHMENT) on the ProcessCapacity identified
+        by (process_type, location, window_start, window_end), creating the
+        aggregate on first registration. Returns the recomputed effective
+        rate (the minimum across every registered constraint) and which
+        constraint is binding. The window is the aggregate's identity: this
+        endpoint (like GET /process-capacities) uses EXACT-key semantics.
+        When path capacity or a capacity plan is computed, a registered
+        window applies to the requested planning window if it COVERS it
+        (docs/adr/0003).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterConstraintRequest"
+      responses:
+        "201":
+          description: Constraint registered; effective capacity recomputed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EffectiveCapacityResponse"
+        "400":
+          description: Malformed request body or window.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Constraint rate unit does not match the aggregate's established native unit.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: Negative quantity or non-positive period.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+    get:
+      operationId: getEffectiveProcessCapacity
+      summary: Get the effective capacity for a process, location and window
+      tags: [process-capacities]
+      description: >
+        Returns the effective rate (the minimum across every registered
+        constraint), which constraint is binding, and the full list of
+        registered constraints for the ProcessCapacity identified by
+        (process_type, location, window_start, window_end). This lookup keeps
+        EXACT-key semantics (it reads one registered aggregate; it does NOT
+        match by coverage -- path capacity and capacity plans do, see
+        docs/adr/0003). 404 if nothing has been registered for that
+        identity yet.
+      parameters:
+        - name: process_type
+          in: query
+          required: true
+          schema:
+            type: string
+          example: PICK
+        - name: location
+          in: query
+          required: true
+          schema:
+            type: string
+          example: PICK-ZONE-A
+        - name: window_start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: window_end
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Effective capacity for this process, location and window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EffectiveCapacityResponse"
+        "400":
+          description: Malformed window_start/window_end.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "404":
+          description: No ProcessCapacity registered for this process, location and window.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /process-paths:
+    get:
+      operationId: listProcessPaths
+      summary: List the registered ProcessPaths
+      tags: [process-paths]
+      description: >
+        Every ProcessPath registered with POST /process-paths, ordered by id,
+        each with its ordered steps. 200 with an empty list when none is
+        registered. Read-only; there is no MCP tool for it.
+      responses:
+        "200":
+          description: The registered paths (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPathsResponse"
+    post:
+      operationId: registerProcessPath
+      summary: Register (seed) a ProcessPath read model
+      tags: [process-paths]
+      description: >
+        Seeds a ProcessPath read model (id, name, an ordered non-empty list
+        of step process types) directly, since there is no event-driven
+        sync from process-path-management yet (a later phase). Re-posting
+        an existing id replaces the stored path wholesale.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterProcessPathRequest"
+      responses:
+        "201":
+          description: ProcessPath registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPathResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: Empty step list.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /process-paths/{id}/capacity:
+    get:
+      operationId: getProcessPathCapacity
+      summary: Get a ProcessPath's normalized, end-to-end capacity
+      tags: [process-paths]
+      description: >
+        Loads the ProcessPath identified by id, loads each of its steps'
+        ProcessCapacity for the given location and window (matched by
+        COVERAGE, see below), normalizes each
+        step's effective rate into ORDER/period via the WorkloadProfile
+        factors supplied on the request (Phase 2 simplification: there is
+        no dedicated WorkloadProfile persistence yet), and returns the
+        minimum normalized rate plus which step is the bottleneck.
+
+        Each step's candidate constraints are (a) the constraints of the
+        ProcessCapacity aggregates of (process, location) whose window
+        COVERS [window_start, window_end) -- registered window start <=
+        window_start AND registered window end >= window_end, so an equal
+        window covers it -- taking, per constraint type, the one from the
+        covering window with the LATEST start (tie: the narrower window);
+        older or wider covering windows' constraints of the same type are
+        shadowed, other types still apply (docs/adr/0003), and (b)
+        a DERIVED STATION constraint = the stations facility-layout tallied
+        across the zones of the site (zone ids starting with `<location>-`) x
+        the declared StationStandard, when both a station count above zero
+        and a standard exist. EVERY candidate is normalized to ORDER/hour
+        before the minimum is taken. With stations but no declared standard
+        the step uses (a) only and `warnings` says so. `step_breakdown` and
+        `warnings` are additive fields.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: pick-rebin-pack
+        - name: location
+          in: query
+          required: true
+          schema:
+            type: string
+          example: PATH-ZONE-A
+        - name: window_start
+          in: query
+          required: true
+          description: Planning window start; a registered window applies to a step when it covers [window_start, window_end).
+          schema:
+            type: string
+            format: date-time
+        - name: window_end
+          in: query
+          required: true
+          description: Planning window end (exclusive); must be after window_start.
+          schema:
+            type: string
+            format: date-time
+        - name: units_per_order
+          in: query
+          required: false
+          schema:
+            type: number
+            format: double
+            exclusiveMinimum: true
+            minimum: 0
+          example: 2.5
+        - name: packages_per_order
+          in: query
+          required: false
+          schema:
+            type: number
+            format: double
+            exclusiveMinimum: true
+            minimum: 0
+          example: 1
+      responses:
+        "200":
+          description: Normalized ProcessPathCapacity and bottleneck step.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPathCapacityResponse"
+        "400":
+          description: Malformed window_start/window_end/units_per_order/packages_per_order, or a window whose end is not after its start.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "404":
+          description: No ProcessPath registered under id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            A path step has neither a registered ProcessCapacity whose window covers
+            the requested window at this location nor a derived STATION constraint, or the WorkloadProfile is missing a needed
+            conversion factor / has an invalid one / cannot normalize a
+            step's native unit.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /capacity-plans:
+    get:
+      operationId: listCapacityPlans
+      summary: List the most recent CapacityPlans
+      tags: [capacity-plans]
+      description: >
+        The most recently created plans, newest first (ties broken by id,
+        descending), each in exactly the shape of GET /capacity-plans/{id}.
+        `location` restricts the list to one location; omitted means every
+        location (and the response then carries no `location`). `limit`
+        defaults to 20 and is capped at 100: a larger value is served as 100,
+        a value that is not a positive integer is rejected with 400
+        malformed-limit. 200 with an empty list when nothing matches.
+        Read-only; there is no MCP tool for it.
+      parameters:
+        - name: location
+          in: query
+          required: false
+          schema:
+            type: string
+          example: SIM1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+      responses:
+        "200":
+          description: The plans, newest first (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityPlansResponse"
+        "400":
+          description: limit is not a positive integer (malformed-limit).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+    post:
+      operationId: createCapacityPlan
+      summary: Create a DRAFT CapacityPlan and compute its shortage
+      tags: [capacity-plans]
+      description: >
+        Evaluates the ProcessPath path_id against assigned_demand (orders)
+        for the warehouse's location over [window_start, window_end):
+        loads each step's ProcessCapacity, normalizes it with the
+        WorkloadProfile factors supplied in the body (same shape and
+        validation as GET /process-paths/{id}/capacity -- there is no
+        WorkloadProfile persistence yet), and computes path_capacity
+        (ORDER per HOUR), bottleneck_step, capacity_over_window
+        (path_capacity x window hours) and shortage
+        (max(0, assigned_demand - capacity_over_window), never negative).
+        The window is both the plan's planning window AND the window every
+        step's ProcessCapacity is looked up for: a registered window applies
+        to a step when it COVERS [window_start, window_end), exactly as in
+        GET /process-paths/{id}/capacity (docs/adr/0003). The plan stores
+        its own requested window.
+        site_id is REQUIRED: the canonical site (a facility-layout Site
+        site_code, the same identifier its SiteCapabilityChanged event
+        publishes) the plan is scoped to. It is a stated planning fact,
+        never inferred from warehouse_id or location, and a blank or absent
+        one is rejected with 422 missing-required-field.
+        assigned_demand is OPTIONAL (docs/adr/0004). An explicit value
+        (including 0) is used exactly as stated and the plan's demand_source
+        is "request". When it is OMITTED the demand defaults to the number of
+        orders the local read model -- fed by order-management's published
+        OrderAllocated / OrderPartiallyAllocated events, never by a live call --
+        expects at `location` in [window_start, window_end) (see GET /demand),
+        the plan's demand_source is "orders", and assigned_demand in the
+        response is that figure. When the read model has no order for that
+        location and window the request is rejected with 422
+        missing-assigned-demand: absence never silently means zero demand.
+        The plan is saved and its
+        CapacityPlanCreated event is queued in the transactional outbox in
+        ONE database transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCapacityPlanRequest"
+      responses:
+        "201":
+          description: Plan created (status DRAFT).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityPlanResponse"
+        "400":
+          description: Malformed JSON body, malformed window_start/window_end, or a window whose end is not after its start.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "404":
+          description: No ProcessPath registered under path_id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            A path step has no ProcessCapacity registered for this
+            location/window; a WorkloadProfile factor is missing, not
+            positive, or cannot normalize a step's unit; assigned_demand is
+            negative, or is omitted and the order-demand read model has no
+            order for this location and window (missing-assigned-demand);
+            site_id is absent/blank; or warehouse_id/location/path_id is
+            blank.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /capacity-plans/{id}:
+    get:
+      operationId: getCapacityPlan
+      summary: Get a CapacityPlan
+      tags: [capacity-plans]
+      description: >
+        Returns the stored plan, including its computed shortage, status, the
+        constraint type binding the bottleneck step and the composition
+        warnings.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+      responses:
+        "200":
+          description: The plan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityPlanResponse"
+        "404":
+          description: No CapacityPlan exists under id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /capacity-plans/{id}/publish:
+    post:
+      operationId: publishCapacityPlan
+      summary: Publish a DRAFT CapacityPlan
+      tags: [capacity-plans]
+      description: >
+        Moves the plan DRAFT -> PUBLISHED, saves it and queues, in the same
+        database transaction, CapacityPlanPublished plus -- only when the
+        plan has a shortage -- CapacityShortageDetected and
+        BottleneckDetected in the transactional outbox. A relay publishes
+        them to Kafka as CloudEvents (see asyncapi.yaml). Publishing twice
+        is never silent: the second call is a 409 and queues nothing.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+      responses:
+        "200":
+          description: Plan published.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityPlanResponse"
+        "404":
+          description: No CapacityPlan exists under id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: The plan is already PUBLISHED.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /station-standards/{location}/{process_type}:
+    put:
+      operationId: declareStationStandard
+      summary: Declare the throughput of ONE station of a process at a site
+      tags: [station-capacity]
+      description: >
+        Upserts the StationStandard keyed by (location, process_type): the
+        throughput of a single station in the process's natural unit, e.g.
+        180 PACKAGE per 3600 s for PACK at SIM1. The count of stations comes
+        from facility-layout; count x standard is composed with the step's
+        registered constraints when a path capacity or capacity plan is
+        computed (nothing derived is stored, so a late declaration applies on
+        the next read). `location` is the site (building) code, the first
+        dash-separated segment of the facility zone ids.
+      parameters:
+        - name: location
+          in: path
+          required: true
+          schema:
+            type: string
+          example: SIM1
+        - name: process_type
+          in: path
+          required: true
+          schema:
+            type: string
+          example: PACK
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeclareStationStandardRequest"
+      responses:
+        "200":
+          description: An existing standard was replaced.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StationStandardResponse"
+        "201":
+          description: A new standard was declared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StationStandardResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            Invalid declaration: non-positive or negative quantity, non-positive
+            period, or a unit that cannot be normalized to ORDER (only UNIT,
+            PACKAGE and ORDER are accepted).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /station-standards:
+    get:
+      operationId: listStationStandards
+      summary: List the declared station standards
+      tags: [station-capacity]
+      description: The standards of one site, or every standard when `location` is omitted, ordered by location then process type.
+      parameters:
+        - name: location
+          in: query
+          required: false
+          schema:
+            type: string
+          example: SIM1
+      responses:
+        "200":
+          description: The declared standards (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StationStandardsResponse"
+  /storage-capacity:
+    get:
+      operationId: getStorageCapacity
+      summary: Storage positions and stations of a site (read model)
+      tags: [station-capacity]
+      description: >
+        The facility-layout tally of one site: storage positions per zone and
+        locationType and work-center station counts per zone and activity,
+        over the zones whose id starts with `<location>-`. It is a READ MODEL,
+        not a throughput (storage positions are not process capacity), and it
+        has no "consumed" figure: stock is never read from inventory-storage.
+        200 with empty lists when nothing is tallied for the site.
+      parameters:
+        - name: location
+          in: query
+          required: true
+          schema:
+            type: string
+          example: SIM1
+      responses:
+        "200":
+          description: The site's storage positions and station counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageCapacityResponse"
+        "400":
+          description: location is missing.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /demand:
+    get:
+      operationId: getExpectedDemand
+      summary: Expected demand of a site over a window (order-management read model)
+      tags: [demand]
+      description: >
+        The orders order-management has promised at a site for a window, read
+        from the LOCAL read model this service builds from order-management's
+        published OrderAllocated / OrderPartiallyAllocated CloudEvents
+        (docs/adr/0004; never a live call). `orders` counts the distinct orders
+        whose promise cutoff (the event's promise_date) falls in the half-open
+        window [window_start, window_end): a cutoff exactly at window_start
+        counts, one exactly at window_end belongs to the next window. An order
+        is counted once, at the promise of its latest event (last writer wins on
+        the CloudEvents time). `released_lines` sums the lines their latest
+        allocation pass released; it is NOT units -- order-management's events
+        carry no quantities. order-management orders carry no fulfillment
+        site, so every consumed order is attributed to the ONE site configured
+        on this service (DEMAND_SITE_ID); any other location reads 0. Cancellations
+        are not published on the integration topic and are not netted, and an
+        OrderRepromised event carries no new cutoff, so it is ignored. 200 with
+        orders 0 and as_of null when nothing is known -- an empty answer that
+        POST /capacity-plans never turns into a zero-demand plan.
+      parameters:
+        - name: location
+          in: query
+          required: true
+          schema:
+            type: string
+          example: SIM1
+        - name: window_start
+          in: query
+          required: true
+          description: RFC 3339; inclusive.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T08:00:00Z"
+        - name: window_end
+          in: query
+          required: true
+          description: RFC 3339; exclusive, must be after window_start.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T16:00:00Z"
+      responses:
+        "200":
+          description: The expected demand (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExpectedDemandResponse"
+        "400":
+          description: location missing, window_start/window_end missing or not RFC 3339, or a window whose end is not after its start.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /reports/bottleneck-frequency:
+    servers:
+      - url: http://localhost:8092
+        description: planning-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getBottleneckFrequencyReport
+      summary: How often each bottleneck step (and binding constraint) bound a PUBLISHED plan, by site
+      tags: [reports]
+      description: >
+        For the plans PUBLISHED in the half-open range [from, to) (by the CloudEvents time of
+        CapacityPlanPublished: from inclusive, to exclusive), counts, per site (warehouse_id + location),
+        how many had each bottleneck_step bound by each binding_constraint (LABOR, STATION, ...; empty
+        for a plan created before the constraint was recorded), and `share`: that count as a fraction of
+        the site's published plans in the range. Rows are ordered by site, then count descending. Drafts
+        never count. Built from the analytics stream only (ADR 0005). `from` / `to` are optional RFC 3339
+        timestamps: both omitted means the 30 days ending now; only `to` means the 30 days before it;
+        only `from` means from..now; the range must be non-empty and at most 366 days. 200 with `rows: []`
+        when nothing matches.
+      parameters:
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+      responses:
+        "200":
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BottleneckFrequencyReport"
+        "400":
+          description: from or to is not RFC 3339, the range is empty or inverted, or it exceeds 366 days.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          description: The analytical database query failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /reports/shortage-trend:
+    servers:
+      - url: http://localhost:8092
+        description: planning-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getShortageTrendReport
+      summary: Published plans with shortage and total shortage by site per day
+      tags: [reports]
+      description: >
+        For the plans PUBLISHED in [from, to) (from inclusive, to exclusive), per site and UTC day of the
+        publication: how many were published (ALL of them, with or without shortage, so the rate is
+        meaningful), how many had a shortage (> 0), the total shortage in orders, and `shortage_rate`
+        (plans_with_shortage / plans_published). Days without a published plan are omitted. Ordered by
+        day, then site. `from` / `to` as in /reports/bottleneck-frequency. 200 with `days: []` when
+        nothing matches.
+      parameters:
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+      responses:
+        "200":
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShortageTrendReport"
+        "400":
+          description: from or to is not RFC 3339, the range is empty or inverted, or it exceeds 366 days.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          description: The analytical database query failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /reports/plan-throughput:
+    servers:
+      - url: http://localhost:8092
+        description: planning-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getPlanThroughputReport
+      summary: Plans created vs published per day, and create-to-publish latency by site
+      tags: [reports]
+      description: >
+        `days`: per site and UTC day, the plans created (by the CloudEvents time of CapacityPlanCreated) and
+        the plans published (by CapacityPlanPublished) in [from, to) (from inclusive, to exclusive).
+        `latency`: per site, over the plans published in the range whose creation was also observed, the
+        median and 95th percentile (continuous, linear interpolation) of published - created, in seconds.
+        Ordered by day, then site. `from` / `to` as in /reports/bottleneck-frequency. 200 with empty arrays
+        when nothing matches.
+      parameters:
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+      responses:
+        "200":
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanThroughputReport"
+        "400":
+          description: from or to is not RFC 3339, the range is empty or inverted, or it exceeds 366 days.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          description: The analytical database query failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /reports/freshness:
+    servers:
+      - url: http://localhost:8092
+        description: planning-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getReportsFreshness
+      summary: How far the analytics projection is behind
+      tags: [reports]
+      description: >
+        The freshness lag of the projection all three reports read: `as_of` is the CloudEvents
+        time of the newest event the projector has applied and `lag_seconds` is now minus
+        `as_of` (never negative). Both are null until the first event is applied. A growing
+        lag means the projector is down or behind, not that a report is wrong: it catches up
+        when the projector does.
+      responses:
+        "200":
+          description: The freshness (null fields while nothing was projected).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportsFreshness"
+        "500":
+          description: The analytical database query failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+components:
+  parameters:
+    ReportFrom:
+      name: from
+      in: query
+      required: false
+      description: RFC 3339; inclusive. Defaults to `to` minus 30 days.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-05T00:00:00Z"
+    ReportTo:
+      name: to
+      in: query
+      required: false
+      description: RFC 3339; exclusive. Defaults to now.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-07T00:00:00Z"
+  schemas:
+    ReportsFreshness:
+      type: object
+      required: [as_of, lag_seconds]
+      properties:
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: CloudEvents time of the newest event applied; null when none.
+        lag_seconds:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          description: now - as_of, in seconds; null when nothing was applied.
+          example: 4.2
+    ReportSite:
+      type: object
+      required: [warehouse_id, location]
+      properties:
+        warehouse_id:
+          type: string
+          example: WH-1
+        location:
+          type: string
+          description: The planning location (site code).
+          example: SIM1
+    BottleneckFrequencyRow:
+      allOf:
+        - $ref: "#/components/schemas/ReportSite"
+        - type: object
+          required: [bottleneck_step, binding_constraint, plans, share]
+          properties:
+            bottleneck_step:
+              type: string
+              example: REBIN
+            binding_constraint:
+              type: string
+              description: The constraint type binding the step (LABOR, STATION, ...); empty when unknown.
+              example: LABOR
+            plans:
+              type: integer
+              minimum: 1
+              example: 3
+            share:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              description: plans / all published plans of this site in the range.
+              example: 0.75
+    BottleneckFrequencyReport:
+      type: object
+      required: [from, to, rows]
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: The effective inclusive start.
+        to:
+          type: string
+          format: date-time
+          description: The effective exclusive end.
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/BottleneckFrequencyRow"
+    ShortageTrendDay:
+      allOf:
+        - $ref: "#/components/schemas/ReportSite"
+        - type: object
+          required: [day, plans_published, plans_with_shortage, total_shortage, shortage_rate]
+          properties:
+            day:
+              type: string
+              format: date
+              description: UTC calendar day of the publication.
+              example: "2026-10-05"
+            plans_published:
+              type: integer
+              minimum: 1
+              example: 8
+            plans_with_shortage:
+              type: integer
+              minimum: 0
+              example: 2
+            total_shortage:
+              type: number
+              format: double
+              description: Sum of the plans' shortage, in orders.
+              example: 5600
+            shortage_rate:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              example: 0.25
+    ShortageTrendReport:
+      type: object
+      required: [from, to, days]
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShortageTrendDay"
+    PlanThroughputDay:
+      allOf:
+        - $ref: "#/components/schemas/ReportSite"
+        - type: object
+          required: [day, plans_created, plans_published]
+          properties:
+            day:
+              type: string
+              format: date
+              example: "2026-10-05"
+            plans_created:
+              type: integer
+              minimum: 0
+              example: 5
+            plans_published:
+              type: integer
+              minimum: 0
+              example: 4
+    PlanLatency:
+      allOf:
+        - $ref: "#/components/schemas/ReportSite"
+        - type: object
+          required: [plans, median_seconds, p95_seconds]
+          properties:
+            plans:
+              type: integer
+              minimum: 1
+              description: Published plans in the range whose creation was also observed.
+              example: 4
+            median_seconds:
+              type: number
+              format: double
+              example: 390
+            p95_seconds:
+              type: number
+              format: double
+              example: 1620
+    PlanThroughputReport:
+      type: object
+      required: [from, to, days, latency]
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanThroughputDay"
+        latency:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanLatency"
+    ExpectedDemandResponse:
+      type: object
+      required: [location, window_start, window_end, orders, released_lines, source, as_of]
+      properties:
+        location:
+          type: string
+          example: SIM1
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        orders:
+          type: integer
+          minimum: 0
+          description: Distinct orders whose promise cutoff is in [window_start, window_end).
+          example: 3
+        released_lines:
+          type: integer
+          minimum: 0
+          description: Lines released by those orders' latest allocation pass. NOT units.
+          example: 6
+        source:
+          type: string
+          enum: [order-management]
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: CloudEvents time of the newest order event the site's model reflects (whole site, not only the window); null when none.
+    DeclareStationStandardRequest:
+      type: object
+      required:
+        - quantity
+        - unit
+        - period_seconds
+      properties:
+        quantity:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: Throughput of ONE station per period.
+          example: 180
+        unit:
+          type: string
+          enum: [UNIT, PACKAGE, ORDER]
+          example: PACKAGE
+        period_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: The period the quantity is measured over, in seconds (3600 = per hour).
+          example: 3600
+    StationStandardResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          example: SIM1
+        process_type:
+          type: string
+          example: PACK
+        quantity:
+          type: number
+          format: double
+          example: 180
+        unit:
+          type: string
+          example: PACKAGE
+        period_seconds:
+          type: number
+          format: double
+          example: 3600
+    StationStandardsResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          description: The location filter, when one was given.
+        standards:
+          type: array
+          items:
+            $ref: "#/components/schemas/StationStandardResponse"
+    StorageCapacityResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          example: SIM1
+        storage_positions:
+          type: array
+          items:
+            type: object
+            properties:
+              zone_id:
+                type: string
+                example: SIM1-STOR-AMB
+              location_type:
+                type: string
+                example: SimShelf
+              positions:
+                type: integer
+                example: 24
+        stations:
+          type: array
+          items:
+            type: object
+            properties:
+              zone_id:
+                type: string
+                example: SIM1-OPS-WC
+              activity:
+                type: string
+                example: PACK
+              stations:
+                type: integer
+                example: 11
+    RegisterConstraintRequest:
+      type: object
+      required:
+        - process_type
+        - location
+        - window_start
+        - window_end
+        - constraint_type
+        - quantity
+        - unit
+        - period_seconds
+      properties:
+        process_type:
+          type: string
+          example: PICK
+        location:
+          type: string
+          example: PICK-ZONE-A
+        window_start:
+          type: string
+          format: date-time
+          example: "2026-10-05T08:00:00Z"
+          description: Start of the registered window (part of the aggregate's identity; exact key).
+        window_end:
+          type: string
+          format: date-time
+          example: "2026-10-05T09:00:00Z"
+          description: End of the registered window (exclusive; part of the aggregate's identity).
+        constraint_type:
+          type: string
+          enum: [LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT]
+        quantity:
+          type: number
+          format: double
+          minimum: 0
+          example: 3500
+        unit:
+          type: string
+          enum: [UNIT, LINE, ORDER, PACKAGE]
+        period_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          example: 3600
+    EffectiveCapacityResponse:
+      type: object
+      properties:
+        effective_rate:
+          type: number
+          format: double
+          example: 3500
+        effective_unit:
+          type: string
+          example: UNIT
+        binding_constraint:
+          type: string
+          example: LOCATION
+        constraints:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConstraintEntry"
+    ConstraintEntry:
+      type: object
+      properties:
+        constraint_type:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit:
+          type: string
+        period_seconds:
+          type: number
+          format: double
+    ProblemDetail:
+      type: object
+      description: RFC 7807 problem detail.
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+    RegisterProcessPathRequest:
+      type: object
+      required:
+        - id
+        - name
+        - steps
+      properties:
+        id:
+          type: string
+          example: pick-rebin-pack
+        name:
+          type: string
+          example: Pick-Rebin-Pack
+        steps:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          example: ["PICK", "REBIN", "PACK"]
+    ProcessPathResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        steps:
+          type: array
+          items:
+            type: string
+    ProcessPathsResponse:
+      type: object
+      properties:
+        process_paths:
+          type: array
+          description: Every registered path, ordered by id.
+          items:
+            $ref: "#/components/schemas/ProcessPathResponse"
+    CapacityPlansResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          description: The location filter, when one was given.
+        capacity_plans:
+          type: array
+          description: Most recently created first.
+          items:
+            $ref: "#/components/schemas/CapacityPlanResponse"
+    ProcessPathCapacityResponse:
+      type: object
+      properties:
+        normalized_rate:
+          type: number
+          format: double
+          example: 1000
+        normalized_unit:
+          type: string
+          example: ORDER
+        bottleneck_step:
+          type: string
+          example: REBIN
+        step_breakdown:
+          type: array
+          description: Additive. Each step's composed capacity in path order.
+          items:
+            type: object
+            properties:
+              step:
+                type: string
+                example: PACK
+              normalized_rate:
+                type: number
+                format: double
+                description: The step's effective rate, ORDER per HOUR.
+                example: 1800
+              binding_constraint:
+                type: string
+                enum: [LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT]
+                example: STATION
+        warnings:
+          type: array
+          description: Additive. Composition warnings (never null), e.g. stations tallied but no station standard declared.
+          items:
+            type: string
+    CreateCapacityPlanRequest:
+      type: object
+      required:
+        - warehouse_id
+        - site_id
+        - location
+        - window_start
+        - window_end
+        - path_id
+      properties:
+        warehouse_id:
+          type: string
+          example: WH-1
+        site_id:
+          type: string
+          description: >-
+            REQUIRED. Canonical site the plan is scoped to: a facility-layout
+            Site site_code (the same identifier its SiteCapabilityChanged
+            event publishes). A stated planning fact, never inferred from
+            warehouse_id or location.
+          example: SIM1
+        location:
+          type: string
+          description: The ProcessCapacity location every path step is looked up under.
+          example: PATH-ZONE-A
+        window_start:
+          type: string
+          format: date-time
+          example: "2026-10-05T08:00:00Z"
+          description: Plan window start. A registered capacity window applies when it covers [window_start, window_end).
+        window_end:
+          type: string
+          format: date-time
+          example: "2026-10-05T16:00:00Z"
+          description: Plan window end (exclusive); must be after window_start.
+        path_id:
+          type: string
+          description: id of a registered ProcessPath.
+          example: pick-rebin-pack
+        assigned_demand:
+          type: number
+          format: double
+          minimum: 0
+          description: >
+            OPTIONAL. Orders assigned to the window. When present (even 0) it
+            is used exactly as stated and the plan's demand_source is
+            "request". When omitted it defaults to the orders order-management
+            expects at `location` in the window (GET /demand; demand_source
+            "orders"), or the request is rejected with 422
+            missing-assigned-demand when there are none -- never silently 0.
+          example: 12000
+        units_per_order:
+          type: number
+          format: double
+          description: WorkloadProfile factor (UNIT per ORDER); needed only if a step is measured in UNIT.
+          example: 2.5
+        packages_per_order:
+          type: number
+          format: double
+          description: WorkloadProfile factor (PACKAGE per ORDER); needed only if a step is measured in PACKAGE.
+          example: 1
+    CapacityPlanResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: UUID.
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+        warehouse_id:
+          type: string
+          example: WH-1
+        site_id:
+          type: string
+          description: >-
+            Additive. Canonical site the plan is scoped to (a facility-layout
+            Site site_code); empty for plans stored before migration 0008.
+          example: SIM1
+        location:
+          type: string
+          example: PATH-ZONE-A
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        path_id:
+          type: string
+          example: pick-rebin-pack
+        assigned_demand:
+          type: number
+          format: double
+          description: The demand the plan was evaluated against (see demand_source), in orders.
+          example: 12000
+        demand_source:
+          type: string
+          enum: [request, orders]
+          description: >
+            Additive (docs/adr/0004). "request": assigned_demand was stated by
+            the caller (also every plan created before demand ingestion);
+            "orders": it was omitted and defaulted from the order-management
+            read model.
+          example: request
+        status:
+          type: string
+          enum: [DRAFT, PUBLISHED]
+        path_capacity:
+          type: number
+          format: double
+          description: Normalized path capacity, ORDER per HOUR.
+          example: 1000
+        bottleneck_step:
+          type: string
+          example: REBIN
+        capacity_over_window:
+          type: number
+          format: double
+          description: path_capacity x window hours, in orders.
+          example: 8000
+        shortage:
+          type: number
+          format: double
+          description: max(0, assigned_demand - capacity_over_window), in orders.
+          example: 4000
+        created_at:
+          type: string
+          format: date-time
+        published_at:
+          type: string
+          format: date-time
+          description: Present only once PUBLISHED.
+        bottleneck_constraint:
+          type: string
+          description: >
+            Additive. The constraint type binding the bottleneck step (e.g.
+            LABOR or STATION); empty for plans created before it was recorded.
+          example: STATION
+        warnings:
+          type: array
+          description: Additive. Composition warnings raised when the plan was created (never null).
+          items:
+            type: string

@@ -1,0 +1,172 @@
+{
+  "description": "CloudEvents envelope for a StockRelocated domain event (ADR 0039).",
+  "allOf": [
+    {
+      "type": "object",
+      "description": "The CloudEvents 1.0 context attributes shared by every message this bounded context emits, in structured-mode JSON. Each concrete event schema composes this with `allOf` and pins `type` to a single value.\n",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "description": "CloudEvents specification version. Always \"1.0\".",
+          "enum": [
+            "1.0"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-1>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this event occurrence, a UUID v4. Together with `source` it uniquely identifies the event, which is what consumers deduplicate on.\n",
+          "x-parser-schema-id": "<anonymous-schema-2>"
+        },
+        "source": {
+          "type": "string",
+          "description": "The context that emitted the event. Always `/warehouse/inventory-storage` for this service.\n",
+          "enum": [
+            "/warehouse/inventory-storage"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-3>"
+        },
+        "type": {
+          "type": "string",
+          "description": "Reverse-DNS event type, of the form `com.warehouse.wms.inventory-storage.<entity>.<EventName>`. Pinned to a single value by each concrete event schema.\n",
+          "x-parser-schema-id": "<anonymous-schema-4>"
+        },
+        "subject": {
+          "type": "string",
+          "description": "The id of the aggregate instance this event is about — a reservation id, a StockUnit id, a bin id, or a SKU, depending on the event. Never empty.\n",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp of when the event occurred in the domain, taken from the injected Clock port, not from wall-clock time at publish.\n",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "description": "Media type of the `data` member. Always application/json.",
+          "enum": [
+            "application/json"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "Absolute URI naming the payload shape and version: `urn:warehouse:inventory-storage:<events|analytics>:<EventName>:v<N>`. Pinned per message by each concrete event schema (the `events` variant for StockReserved/ReservationRevoked, `analytics` for the rest; StockReserved and ReservationRevoked also appear on the analytics topic with the `analytics` variant).\n",
+          "pattern": "^urn:warehouse:inventory-storage:(events|analytics):[A-Za-z]+:v[0-9]+$",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "data": {
+          "type": "object",
+          "description": "The event payload. Shape is fixed by `dataschema`.",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        }
+      },
+      "x-parser-schema-id": "CloudEventBase"
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Fixed event type for StockRelocated.",
+          "const": "com.warehouse.wms.inventory-storage.stock.StockRelocated",
+          "x-parser-schema-id": "<anonymous-schema-86>"
+        },
+        "dataschema": {
+          "type": "string",
+          "description": "urn:warehouse:inventory-storage:events:StockRelocated:v1",
+          "pattern": "^urn:warehouse:inventory-storage:events:StockRelocated:v1$",
+          "x-parser-schema-id": "<anonymous-schema-87>"
+        },
+        "data": {
+          "type": "object",
+          "description": "Business payload for StockRelocated (v1, frozen). `quantity` units of `sku` left `from_bin` and are now in `to_bin`, both bins of `site_code`.",
+          "required": [
+            "relocation_id",
+            "site_code",
+            "sku",
+            "from_bin",
+            "to_bin",
+            "quantity",
+            "reason",
+            "source_ref",
+            "occurred_at"
+          ],
+          "properties": {
+            "relocation_id": {
+              "type": "string",
+              "description": "The Relocation's id (GET /relocations/{id}); also the Kafka key and `subject`.",
+              "x-parser-schema-id": "<anonymous-schema-89>"
+            },
+            "site_code": {
+              "type": "string",
+              "description": "The site both bins belong to.",
+              "x-parser-schema-id": "<anonymous-schema-90>"
+            },
+            "sku": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-91>"
+            },
+            "from_bin": {
+              "type": "string",
+              "description": "The source bin's location code.",
+              "x-parser-schema-id": "<anonymous-schema-92>"
+            },
+            "to_bin": {
+              "type": "string",
+              "description": "The destination bin's location code (never equal to from_bin).",
+              "x-parser-schema-id": "<anonymous-schema-93>"
+            },
+            "quantity": {
+              "type": "integer",
+              "minimum": 1,
+              "x-parser-schema-id": "<anonymous-schema-94>"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "SLOTTING",
+                "CONSOLIDATION",
+                "MANUAL"
+              ],
+              "description": "Why the stock moved. A RELOCATE task is always SLOTTING (it executes a slot plan).",
+              "x-parser-schema-id": "<anonymous-schema-95>"
+            },
+            "source_ref": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "The caller's reference (a slot-plan move, the task's relocation_ref, or the task id); always present, \"\" when none.",
+              "x-parser-schema-id": "<anonymous-schema-96>"
+            },
+            "occurred_at": {
+              "type": "string",
+              "format": "date-time",
+              "x-parser-schema-id": "<anonymous-schema-97>"
+            }
+          },
+          "x-parser-schema-id": "<anonymous-schema-88>"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-85>"
+    }
+  ],
+  "x-parser-schema-id": "StockRelocatedEvent"
+}

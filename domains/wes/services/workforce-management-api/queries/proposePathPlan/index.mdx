@@ -1,0 +1,65 @@
+---
+id: workforce-management-api-proposePathPlan
+version: 1.0.0
+name: proposePathPlan
+summary: 'Propose planned heads for a path (pure computation, not committed)'
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Shift Plans'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/paths/{pathId}/plan/propose'
+  statusCodes:
+    - '200'
+    - '400'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Computes `heads = ceil(charge / plannedRate)` for one path and raises ShiftPlanProposed for visibility — it persists nothing and commits nothing. A human must still call POST /shift-plans to commit an actual ShiftPlan. This is why the response is 200, not 201: no resource is created. When a high observed idle share (idleness-as-staffing-signal, fed back from labor-performance via `LABOR_PERFORMANCE_MODE=kafka-cache`) is available for this path's task type and exceeds `IDLE_SHARE_TRIM_THRESHOLD` (default 0.30), the computed heads are further trimmed (floored at 1 head minimum) and `trimReason` explains why — fail-open: no idle-share signal available applies no trim.
+
+
+
+
+## POST `(/paths/{pathId}/plan/propose)`
+
+### Parameters
+- **pathId** (path) (required): The process path's identity (e.g. "pack", "pick", "stow"). By convention, the Certification required to be assigned to a path has the same name as the PathId.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

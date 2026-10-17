@@ -1,0 +1,198 @@
+{
+  "allOf": [
+    {
+      "type": "object",
+      "description": "CloudEvents 1.0 context attributes; every attribute is required in this fleet.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "description": "CloudEvents spec version.",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "UUID v4, minted once per occurrence and stable across outbox redelivery.",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "Producing service, `/warehouse/<repo>`.",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "type": {
+          "type": "string",
+          "description": "`com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Aggregate instance id; equal to the Kafka message key.",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Domain occurred-at, UTC, RFC 3339.",
+          "x-parser-schema-id": "<anonymous-schema-10>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "description": "Content type of `data`.",
+          "x-parser-schema-id": "<anonymous-schema-11>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.",
+          "x-parser-schema-id": "<anonymous-schema-12>"
+        },
+        "data": {
+          "type": "object",
+          "description": "Event payload (snake_case keys).",
+          "x-parser-schema-id": "<anonymous-schema-13>"
+        }
+      },
+      "x-parser-schema-id": "CloudEvent"
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "source",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.warehouse.wes.fulfillment-execution.task.TaskCompleted",
+          "x-parser-schema-id": "<anonymous-schema-15>"
+        },
+        "source": {
+          "type": "string",
+          "const": "/warehouse/fulfillment-execution",
+          "x-parser-schema-id": "<anonymous-schema-16>"
+        },
+        "dataschema": {
+          "type": "string",
+          "const": "urn:warehouse:fulfillment-execution:events:TaskCompleted:v1",
+          "x-parser-schema-id": "<anonymous-schema-17>"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "task_id",
+            "station_id",
+            "work_unit_id"
+          ],
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "description": "Completed task id.",
+              "x-parser-schema-id": "<anonymous-schema-19>"
+            },
+            "station_id": {
+              "type": "string",
+              "description": "Station that completed the task.",
+              "x-parser-schema-id": "<anonymous-schema-20>"
+            },
+            "work_unit_id": {
+              "type": "string",
+              "description": "The completed task's order reference (empty only when the task can no longer be found at publish time).",
+              "x-parser-schema-id": "<anonymous-schema-21>"
+            },
+            "associate_id": {
+              "type": "string",
+              "description": "Occupant checked into the completing station at publish time; omitted when none (e.g. a robot station).",
+              "x-parser-schema-id": "<anonymous-schema-22>"
+            },
+            "duration_seconds": {
+              "type": "integer",
+              "description": "Seconds between claim and completion; omitted when the claim time is unknown.",
+              "format": "int64",
+              "x-parser-schema-id": "<anonymous-schema-23>"
+            },
+            "task_type": {
+              "type": "string",
+              "enum": [
+                "PICK",
+                "PACK",
+                "SLAM",
+                "REBIN",
+                "DISPATCH",
+                "ARRIVAL",
+                "RELOCATE"
+              ],
+              "description": "The completed task's own type; omitted only when the task can no longer be found.",
+              "x-parser-schema-id": "<anonymous-schema-24>"
+            },
+            "order_ref": {
+              "type": "string",
+              "description": "The order the completed task belongs to; the key inventory-storage uses to confirm picks. Optional and additive (the event stays v1) and omitted when the task has no order reference. Distinct from work_unit_id, which for order work is the per-line work unit id.",
+              "x-parser-schema-id": "<anonymous-schema-25>"
+            },
+            "line_no": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1,
+              "maximum": 2147483647,
+              "description": "The 1-based order line the completed task's work was released for (copied from WorkReleased.line_no, ADR-0041); with order_ref it lets inventory-storage confirm the pick of exactly that line's reservation. Optional and additive (the event stays v1) and omitted when unknown (transfer work, a release without line_no, or an older task). Never derived from the work_unit_id.",
+              "x-parser-schema-id": "<anonymous-schema-26>"
+            },
+            "sku": {
+              "type": "string",
+              "minLength": 1,
+              "description": "RELOCATE only (ADR-0047; additive, the event stays v1). The SKU the executed slot-plan move relocated, from WorkReleased.data.relocation.sku. Omitted on every other task type.",
+              "x-parser-schema-id": "<anonymous-schema-27>"
+            },
+            "from_bin": {
+              "type": "string",
+              "minLength": 1,
+              "description": "RELOCATE only. The bin the stock left - the planned from_bin, or for an Assign move the bin the operator scanned at completion.",
+              "x-parser-schema-id": "<anonymous-schema-28>"
+            },
+            "to_bin": {
+              "type": "string",
+              "minLength": 1,
+              "description": "RELOCATE only. The bin the stock went to - the planned to_bin, or for a Vacate move the reserve bin the operator scanned at completion. Always different from from_bin.",
+              "x-parser-schema-id": "<anonymous-schema-29>"
+            },
+            "quantity": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1,
+              "description": "RELOCATE only. The units the operator counted and confirmed at completion (v1 moves the whole on-hand quantity of the SKU at from_bin).",
+              "x-parser-schema-id": "<anonymous-schema-30>"
+            },
+            "relocation_ref": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 200,
+              "description": "RELOCATE only. The move reference `<plan_id>:<move_seq>` copied from WorkReleased.data.relocation; inventory-storage records it as the StockRelocated source_ref, and slotting-optimization matches it back to the plan's move.",
+              "x-parser-schema-id": "<anonymous-schema-31>"
+            }
+          },
+          "x-parser-schema-id": "<anonymous-schema-18>"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-14>"
+    }
+  ],
+  "x-parser-schema-id": "<anonymous-schema-4>"
+}

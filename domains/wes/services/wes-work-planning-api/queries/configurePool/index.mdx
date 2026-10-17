@@ -1,0 +1,76 @@
+---
+id: wes-work-planning-api-configurePool
+version: 1.0.0
+name: configurePool
+summary: Configure a process path's work pool (feed mode and WIP limit)
+schemaPath: request-body.json
+badges:
+  - content: PUT
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Pool Configuration'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: PUT
+  path: '/paths/{pathId}/pool'
+  statusCodes:
+    - '200'
+    - '400'
+    - '409'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: PUT
+---
+## Overview
+The ConfigurePool command (ADR-0034): sets the pool's feed mode (`ReleaseFed` or `FlowFed`) and its WIP limit, creating the pool when none exists yet. This is the only way to obtain a flow-fed pool; a path nobody configured keeps the fallback `EnqueueWorkUnit` seeds on first enqueue (`ReleaseFed`, WIP limit 1000).
+
+**Idempotent.** `PUT` fully describes the desired configuration: the same body always yields the same result, and an identical repeat writes nothing. The alarm threshold and the pool's entries are not part of this command and are never touched.
+
+**Lowering a limit never evicts work.** If the new `wipLimit` is below the current `wip`, nothing is cancelled or taken back: the pool is simply saturated and `POST /paths/{pathId}/release` answers `409 wip-limit-reached` until completions bring `wip` strictly below the new limit. Raising the limit takes effect on the next release. The response reports the live `wip` so the caller can see the overshoot. On a `FlowFed` pool the limit is stored but not enforced (flow-fed pools only alarm, see ADR-0003).
+
+Raises no event. REST only: no MCP tool exposes this command.
+
+
+
+
+
+## PUT `(/paths/{pathId}/pool)`
+
+### Parameters
+- **pathId** (path) (required): The process path's identifier — a named station that owns a queue (unit-in → unit-out), e.g. a pick zone or pack line. Must belong to a process-path family declared in this deployment's process-path catalogue (ADR-0012; today the fleet's sortable-fc topology declares the pick/pack/rebin/slam families, each optionally carrying a "-"-delimited station/zone suffix, e.g. pick-a or pack-station-1). The write endpoints (receiveChargeForecast, commitShiftPlan, enqueueWorkUnit) reject ids outside the declared families with `400 unknown-path-id`; read endpoints surface a missing pool/projection as `404` instead.
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

@@ -1,0 +1,69 @@
+---
+id: workforce-management-api-listStaffingGapsForShift
+version: 1.0.0
+name: listStaffingGapsForShift
+summary: >-
+  DEPRECATED -- use GET /sites/\{siteCode\}/shifts/\{shiftId\}/staffing-gap.
+  List the staffing gap for every path planned within one committed shift plan
+  (fleet-wide, all-paths view)
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Staffing'
+    textColor: blue
+    backgroundColor: blue
+deprecated: true
+operation:
+  method: GET
+  path: '/buildings/{buildingId}/shifts/{shiftId}/staffing-gap'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+DEPRECATED alias of GET /sites/\{siteCode\}/shifts/\{shiftId\}/staffing-gap (ADR 0035): buildingId is the legacy name of the plan key. Every response carries the header `Deprecation: true`. It keeps working, unchanged, until a later breaking ADR removes it; a call that gives only the buildingId path segment is NOT scoped by site.
+ADR-0011's deferred fast-follow: a fleet-wide "all paths, one building/shift" list endpoint, for contexts that need every path's staffing gap for a building+shift in one call rather than one request per path. Reuses the exact same per-path computation as GET /paths/\{pathId\}/staffing-gap — the two can never disagree for a given path — and raises PathUnderstaffed for every understaffed path in the plan. This surfaces the gaps only — it never decides or performs a rebalance; that stays a human call recorded via POST /associates/\{id\}/assignments. The optional siteCode query parameter scopes every path's activeHeads to one canonical site (ADR 0034); without it the list is fleet-wide, as before.
+
+
+
+
+## GET `(/buildings/{buildingId}/shifts/{shiftId}/staffing-gap)`
+
+### Parameters
+- **buildingId** (path) (required): DEPRECATED -- the legacy name of the plan key; use the /sites/\{siteCode\}/... route (ADR 0035). The building whose committed shift plan to read. NOT auto-scoped by site.
+- **shiftId** (path) (required): The shift (within the site) whose committed plan to read.
+- **siteCode** (query): ADDITIVE and optional (ADR 0034). The canonical Site code (the facility-layout Site code, e.g. WH1). When given, activeHeads counts only assignments whose associate has an active (not-ended) shift at that site; associates started without a site (including every row that predates this parameter) never match a site. Absent or blank keeps the original behaviour exactly: a fleet-wide count across every site. The code is accepted as given, never validated against facility-layout, so an unknown code simply counts 0.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

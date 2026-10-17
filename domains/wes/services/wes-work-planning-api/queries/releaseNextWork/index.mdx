@@ -1,0 +1,73 @@
+---
+id: wes-work-planning-api-releaseNextWork
+version: 1.0.0
+name: releaseNextWork
+summary: Release the next highest-priority work unit on a process path
+schemaPath: ''
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Release'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/paths/{pathId}/release'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '409'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Applies the release policy to a process path's `WorkPool` — the ReleaseNextWork use case. Admits the pending work unit with the earliest (most urgent) CPT, transitioning it Pending → Released. This is continuous, priority-ordered admission (waveless), not a batch/wave release. A release-fed pool enforces its WIP limit as a hard invariant: releasing past the limit fails with `409`. Publishes `WorkReleased`, which downstream fulfillment-execution consumes to create a Task. This is a collection-level command on the path's work pool (not scoped to a single work unit id, since the caller does not choose which unit is released — the priority policy does), analogous in REST terms to a resource-scoped bulk action.
+
+
+
+
+
+## POST `(/paths/{pathId}/release)`
+
+### Parameters
+- **pathId** (path) (required): The process path's identifier — a named station that owns a queue (unit-in → unit-out), e.g. a pick zone or pack line. Must belong to a process-path family declared in this deployment's process-path catalogue (ADR-0012; today the fleet's sortable-fc topology declares the pick/pack/rebin/slam families, each optionally carrying a "-"-delimited station/zone suffix, e.g. pick-a or pack-station-1). The write endpoints (receiveChargeForecast, commitShiftPlan, enqueueWorkUnit) reject ids outside the declared families with `400 unknown-path-id`; read endpoints surface a missing pool/projection as `404` instead.
+
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

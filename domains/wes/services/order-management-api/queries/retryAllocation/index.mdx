@@ -1,0 +1,82 @@
+---
+id: order-management-api-retryAllocation
+version: 2.0.0
+name: retryAllocation
+summary: 'Re-attempt allocation for backordered lines, then release'
+schemaPath: ''
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Allocation'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/orders/{id}/retry-allocation'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '409'
+    - '500'
+    - '503'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+The RetryAllocation use case. Re-attempts allocation for the order's `Backordered` lines and ONLY those lines — it is the single sanctioned route from `Backordered` back to `Allocated`, and it is what unblocks a ship-complete order held back by BR3. UNLIKE the implicit allocation attempt folded into `POST /orders`, this is an explicit, on-purpose operator/recovery action: a hard (non-409) failure here fails the call with `503` rather than being swallowed — invoking this endpoint IS asking for allocation right now.
+
+A line still short of stock stays `Backordered` (no error). The same fail-closed rule as intake's implicit allocation applies to any non-409 failure. An order with no backordered line at all is rejected with `409`: retrying an order that is not backordered is a caller mistake, not a no-op.
+
+On success, this ALSO attempts release in the same call — the same allocation-then-release flow `POST /orders` uses — announced via the enriched `OrderAllocated` / `OrderPartiallyAllocated` Kafka events rather than any synchronous call to a Supplier.
+
+
+
+
+
+## POST `(/orders/{id}/retry-allocation)`
+
+### Parameters
+- **id** (path) (required): The order's identifier, as returned by receiveOrder.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+#### <span className="text-red-500">503 Service Unavailable</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service — the same shape the other five services in this platform emit.
+
+<SchemaViewer file="response-503.json" maxHeight="500" id="response-503" />
+
+
+
+## Architecture
+
+<NodeGraph />

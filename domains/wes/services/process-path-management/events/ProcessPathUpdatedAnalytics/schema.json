@@ -1,0 +1,199 @@
+{
+  "title": "CloudEvent + ProcessPathUpdated data (analytics stream)",
+  "allOf": [
+    {
+      "type": "object",
+      "title": "CloudEvents 1.0 envelope (structured mode, ADR 0016)",
+      "description": "Every attribute is REQUIRED in this fleet. Kafka header `content-type: application/cloudevents+json; charset=UTF-8`.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "x-parser-schema-id": "<anonymous-schema-1>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Minted once per domain event, persisted with the outbox row; stable across redelivery. Consumer dedupe key.",
+          "x-parser-schema-id": "<anonymous-schema-2>"
+        },
+        "source": {
+          "type": "string",
+          "const": "/warehouse/process-path-management",
+          "x-parser-schema-id": "<anonymous-schema-3>"
+        },
+        "type": {
+          "type": "string",
+          "description": "com.warehouse.wes.process-path-management.<entity>.<EventName>",
+          "x-parser-schema-id": "<anonymous-schema-4>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Aggregate id (path_id or site_id) — equal to the Kafka key.",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The domain event's occurred-at instant, UTC.",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "data": {
+          "type": "object",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        }
+      },
+      "x-parser-schema-id": "CloudEventEnvelope"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated",
+          "x-parser-schema-id": "<anonymous-schema-52>"
+        },
+        "dataschema": {
+          "const": "urn:warehouse:process-path-management:analytics:ProcessPathUpdated:v1",
+          "x-parser-schema-id": "<anonymous-schema-53>"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "path_id"
+          ],
+          "properties": {
+            "path_id": {
+              "type": "string",
+              "description": "The canonical identity of the path.",
+              "example": "PICK",
+              "x-parser-schema-id": "<anonymous-schema-13>"
+            },
+            "match_prefix": {
+              "type": "string",
+              "description": "Lower-case prefix a consumer matches a caller-supplied id against: id == match_prefix OR id starts with match_prefix + \"-\".",
+              "example": "pick",
+              "x-parser-schema-id": "<anonymous-schema-14>"
+            },
+            "direct": {
+              "type": "boolean",
+              "description": "A structural fact about this path's routing shape. Omitted from the payload when `false` (the Go field is `omitempty`); it is present, as `true`, only for a direct path. Consumers must treat an absent `direct` as `false`.",
+              "x-parser-schema-id": "<anonymous-schema-15>"
+            },
+            "required_capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "x-parser-schema-id": "<anonymous-schema-17>"
+              },
+              "example": [
+                "pick"
+              ],
+              "x-parser-schema-id": "<anonymous-schema-16>"
+            },
+            "destination_location_role": {
+              "type": "string",
+              "description": "Optional declaration of what kind of facility-layout LocationRole this path's completed work is destined for (ADR 0006). Omitted entirely (not empty-stringed) when no destination role was declared for this path — the default, most common case.",
+              "enum": [
+                "Drop",
+                "WorkCenter",
+                "Shipping"
+              ],
+              "example": "Drop",
+              "x-parser-schema-id": "<anonymous-schema-18>"
+            },
+            "cycle_time_p95": {
+              "type": "string",
+              "description": "The operator-declared p95 end-to-end cycle time from release into the path to manifest (ADR 0010). Encoded as a Go duration string (e.g. \"2h0m0s\").",
+              "example": "24h0m0s",
+              "x-parser-schema-id": "<anonymous-schema-19>"
+            },
+            "eligibility": {
+              "type": "object",
+              "description": "Rules a unit of work must satisfy to be routed to this path (ADR 0010). Every field is omitted (not zero-valued) when unset; a fully permissive eligibility still appears as an empty object `{}`, never an absent field.",
+              "properties": {
+                "max_units_per_line": {
+                  "type": "integer",
+                  "description": "Omitted means unbounded; 1 is how a singles path is declared.",
+                  "example": 1,
+                  "x-parser-schema-id": "<anonymous-schema-20>"
+                },
+                "required_product_attributes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "x-parser-schema-id": "<anonymous-schema-22>"
+                  },
+                  "example": [
+                    "giftWrap"
+                  ],
+                  "x-parser-schema-id": "<anonymous-schema-21>"
+                },
+                "excluded_product_attributes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "x-parser-schema-id": "<anonymous-schema-24>"
+                  },
+                  "example": [
+                    "hazmat"
+                  ],
+                  "x-parser-schema-id": "<anonymous-schema-23>"
+                },
+                "non_sortable": {
+                  "type": "boolean",
+                  "example": true,
+                  "x-parser-schema-id": "<anonymous-schema-25>"
+                }
+              },
+              "x-parser-schema-id": "EligibilityData"
+            },
+            "intake": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "CUSTOMER_ORDER",
+                  "STOCK_TRANSFER",
+                  "SLOT_RELOCATION",
+                  "INVENTORY_CONTROL"
+                ],
+                "x-parser-schema-id": "<anonymous-schema-27>"
+              },
+              "description": "The set of demand sources allowed to route work onto this path (ADR 0034), in canonical (sorted) order. Always present on ProcessPathCreated/Updated; `[]` means the path is reached only by an explicit path id from an upstream stage (PACK, REBIN, SLAM) and no demand source may select it. CUSTOMER_ORDER is order-management's order lines, STOCK_TRANSFER network-inventory-planning's transfer legs (via WES), SLOT_RELOCATION approved slot-plan moves (via WES), INVENTORY_CONTROL internal amnesty/damage/problem-solve work. A consumer that receives no `intake` (a producer older than ADR 0034) must treat it as unknown, not as `[]`.",
+              "example": [
+                "CUSTOMER_ORDER"
+              ],
+              "x-parser-schema-id": "<anonymous-schema-26>"
+            }
+          },
+          "x-parser-schema-id": "ProcessPathData"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-51>"
+    }
+  ],
+  "x-parser-schema-id": "ProcessPathUpdatedAnalyticsCloudEvent"
+}

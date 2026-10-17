@@ -1,0 +1,165 @@
+---
+id: workforce-management
+name: Workforce Management (events)
+version: 1.0.0
+summary: ''
+badges:
+  - content: workforce-management
+    textColor: blue
+    backgroundColor: blue
+  - content: associate
+    textColor: blue
+    backgroundColor: blue
+  - content: shiftplan
+    textColor: blue
+    backgroundColor: blue
+  - content: assignment
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: ShiftPlanCommitted
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.events
+        version: 1.0.0
+  - id: ShiftPlanCommittedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+  - id: ShiftPlanProposed
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+  - id: PathUnderstaffed
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+  - id: AssociateShiftStarted
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+  - id: AssociateCertified
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+  - id: AssociateBreakStarted
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+  - id: AssociateBreakEnded
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+  - id: AssociateShiftEnded
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+  - id: LaborAssigned
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+  - id: LaborReassigned
+    version: 1.0.0
+    to:
+      - id: warehouse.workforce.analytics
+        version: 1.0.0
+receives: []
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+Domain-event catalog for **Workforce Management**, a Supporting bounded
+context in the WES (Warehouse Execution Systems) subdomain. It owns "who
+is on shift, on which process path, at what rate; direct vs indirect
+hours" — the shift-start planning horizon (a human commits a split of
+headcount across paths) plus intra-shift assignment tracking (moving
+associates between paths as backlogs deviate). It stops at the path
+boundary: it never links an associate to a specific task, and it never
+decides a rebalance — it makes the labor picture legible and enforces its
+invariants.
+
+Three aggregates raise the events documented here:
+
+- `AssociateShift` (package `internal/domain/associate`) — roster entry:
+  who is on, their certifications, their break state, their logged hours.
+  Raises `AssociateShiftStarted`, `AssociateCertified`,
+  `AssociateBreakStarted`, `AssociateBreakEnded`, `AssociateShiftEnded`.
+- `ShiftPlan` (package `internal/domain/shiftplan`) — the committed split
+  of headcount across paths for one site's shift (`siteCode`; `buildingId`
+  is its deprecated alias, ADR 0035), made of `PathPlan`
+  lines. Raises `ShiftPlanProposed`, `ShiftPlanCommitted` and the
+  staffing-gap flag `PathUnderstaffed`.
+- `LaborAssignment` (package `internal/domain/assignment`) — one
+  associate on one path for an interval, with exactly one ACTIVE
+  assignment per associate at a time. Raises `LaborAssigned` and
+  `LaborReassigned`.
+
+**Envelope (mandatory).** Every Kafka message this service produces or
+consumes is a CloudEvents 1.0 event in *structured content mode*
+(ADR-0026, superseding the envelope half of ADR-0004): the Kafka message
+value is the JSON event format, content type
+`application/cloudevents+json`, and every message carries the Kafka header
+`content-type: application/cloudevents+json; charset=UTF-8` alongside the
+W3C `traceparent`/`tracestate` headers. All of `specversion` (`1.0`),
+`id`, `source` (`/warehouse/workforce-management`), `type`, `subject`,
+`time`, `datacontenttype` (`application/json`) and `dataschema` are
+REQUIRED; the bounded context's own payload sits under `data`. There is
+no flat envelope and no envelope toggle.
+
+**Type naming convention.** The CloudEvents `type` attribute is
+reverse-DNS dotted and follows the exact shape
+`com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`, all
+lowercase except the final PascalCase event name. For this context the
+subdomain is `wes` and the bounded context is `workforce-management`, so
+for example a committed shift plan is published as
+`com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted`.
+The `entity` segment is the aggregate that raises the event —
+`associate`, `shiftplan` or `assignment`. `PathUnderstaffed` uses
+`shiftplan`, since the gap is measured against a committed `ShiftPlan`'s
+planned heads. A breaking payload change gets a new `.v2` type and a new
+`dataschema` version, never a mutation of the old one.
+
+**dataschema.** `urn:warehouse:workforce-management:<stream>:<EventName>:v1`
+where `<stream>` is `events` for `warehouse.workforce.events` and
+`analytics` for `warehouse.workforce.analytics`. The same occurrence keeps
+the same `type` on both topics; `dataschema` names the payload shape.
+
+**Subject.** The aggregate instance id: the associate id for
+`associate`/`assignment` events, the path id for `PathUnderstaffed` and
+`ShiftPlanProposed`, and the ShiftPlan aggregate id
+`<buildingId>/<shiftId>` for `ShiftPlanCommitted` (the same value as the
+integration message's Kafka key). The first segment of that id IS the site
+code (ADR 0035): the subject and the Kafka key are unchanged by the
+siteCode convergence, so no consumer's partitioning or ordering moves.
+
+**siteCode / buildingId (ADR 0035).** The ShiftPlan key has one canonical
+name, `siteCode` (the facility-layout Site code), and one deprecated alias,
+`buildingId`, with the SAME value. `ShiftPlanProposed` and
+`ShiftPlanCommitted` (v1, both topics where published) therefore carry
+`site_code` next to the unchanged, now deprecated, `building_id`. The
+change is additive: no `.v2`, nothing removed, `site_code` is not
+`required` in the schema because messages produced before the addition lack
+it. Removing `building_id` is a future breaking change with its own ADR.
+
+**Which events leave the process on which topic.** The integration topic
+`warehouse.workforce.events` carries **only** `ShiftPlanCommitted`, fanned
+out into one message per `PathPlan` line. Every event in this catalog is
+published to the internal analytics topic
+`warehouse.workforce.analytics` (consumed by this service's own analytics
+projector, ADR-0010). Each message below pins its exact `type` and
+`dataschema` and documents the payload actually on the wire.
+
+
+## Architecture diagram
+<NodeGraph />

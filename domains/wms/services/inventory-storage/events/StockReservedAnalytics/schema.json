@@ -1,0 +1,164 @@
+{
+  "description": "CloudEvents envelope for a StockReserved domain event, on both topics; `dataschema` selects the `data` shape.\n",
+  "allOf": [
+    {
+      "type": "object",
+      "description": "The CloudEvents 1.0 context attributes shared by every message this bounded context emits, in structured-mode JSON. Each concrete event schema composes this with `allOf` and pins `type` to a single value.\n",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "description": "CloudEvents specification version. Always \"1.0\".",
+          "enum": [
+            "1.0"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-1>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this event occurrence, a UUID v4. Together with `source` it uniquely identifies the event, which is what consumers deduplicate on.\n",
+          "x-parser-schema-id": "<anonymous-schema-2>"
+        },
+        "source": {
+          "type": "string",
+          "description": "The context that emitted the event. Always `/warehouse/inventory-storage` for this service.\n",
+          "enum": [
+            "/warehouse/inventory-storage"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-3>"
+        },
+        "type": {
+          "type": "string",
+          "description": "Reverse-DNS event type, of the form `com.warehouse.wms.inventory-storage.<entity>.<EventName>`. Pinned to a single value by each concrete event schema.\n",
+          "x-parser-schema-id": "<anonymous-schema-4>"
+        },
+        "subject": {
+          "type": "string",
+          "description": "The id of the aggregate instance this event is about — a reservation id, a StockUnit id, a bin id, or a SKU, depending on the event. Never empty.\n",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp of when the event occurred in the domain, taken from the injected Clock port, not from wall-clock time at publish.\n",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "description": "Media type of the `data` member. Always application/json.",
+          "enum": [
+            "application/json"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "Absolute URI naming the payload shape and version: `urn:warehouse:inventory-storage:<events|analytics>:<EventName>:v<N>`. Pinned per message by each concrete event schema (the `events` variant for StockReserved/ReservationRevoked, `analytics` for the rest; StockReserved and ReservationRevoked also appear on the analytics topic with the `analytics` variant).\n",
+          "pattern": "^urn:warehouse:inventory-storage:(events|analytics):[A-Za-z]+:v[0-9]+$",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "data": {
+          "type": "object",
+          "description": "The event payload. Shape is fixed by `dataschema`.",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        }
+      },
+      "x-parser-schema-id": "CloudEventBase"
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Fixed event type for StockReserved.",
+          "const": "com.warehouse.wms.inventory-storage.reservation.StockReserved",
+          "x-parser-schema-id": "<anonymous-schema-11>"
+        },
+        "dataschema": {
+          "type": "string",
+          "description": "urn:warehouse:inventory-storage:events:StockReserved:v1 on the integration topic, ...:analytics:StockReserved:v1 on the analytics topic.",
+          "pattern": "^urn:warehouse:inventory-storage:(events|analytics):StockReserved:v1$",
+          "x-parser-schema-id": "<anonymous-schema-12>"
+        },
+        "data": {
+          "description": "One shape per dataschema: the integration payload on warehouse.inventory.events, the analytics payload on warehouse.inventory.analytics.\n",
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "Business payload for StockReserved, matching the adapter's `reservationData` struct field-for-field.\n",
+              "required": [
+                "sku",
+                "quantity",
+                "demand_ref"
+              ],
+              "properties": {
+                "sku": {
+                  "type": "string",
+                  "description": "The stock keeping unit the quantity was reserved against.",
+                  "x-parser-schema-id": "<anonymous-schema-15>"
+                },
+                "quantity": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Quantity bound to the demand. Never exceeds usable inventory for the SKU at reserve time.\n",
+                  "x-parser-schema-id": "<anonymous-schema-16>"
+                },
+                "demand_ref": {
+                  "type": "string",
+                  "description": "Opaque reference to the demand this reservation serves, supplied by the caller — typically an order or shipment id.\n",
+                  "x-parser-schema-id": "<anonymous-schema-17>"
+                }
+              },
+              "x-parser-schema-id": "<anonymous-schema-14>"
+            },
+            {
+              "type": "object",
+              "title": "analytics",
+              "description": "Analytics payload (dataschema ...:analytics:StockReserved:v1).",
+              "required": [
+                "sku",
+                "reservation_id",
+                "quantity"
+              ],
+              "properties": {
+                "sku": {
+                  "type": "string",
+                  "x-parser-schema-id": "<anonymous-schema-19>"
+                },
+                "reservation_id": {
+                  "type": "string",
+                  "x-parser-schema-id": "<anonymous-schema-20>"
+                },
+                "quantity": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "x-parser-schema-id": "<anonymous-schema-21>"
+                }
+              },
+              "x-parser-schema-id": "<anonymous-schema-18>"
+            }
+          ],
+          "x-parser-schema-id": "<anonymous-schema-13>"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-10>"
+    }
+  ],
+  "x-parser-schema-id": "StockReservedEvent"
+}

@@ -1,0 +1,55 @@
+---
+id: warehouse-planning-api-getExpectedDemand
+version: 0.1.0
+name: getExpectedDemand
+summary: Expected demand of a site over a window (order-management read model)
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:demand'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: /demand
+  statusCodes:
+    - '200'
+    - '400'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+The orders order-management has promised at a site for a window, read from the LOCAL read model this service builds from order-management's published OrderAllocated / OrderPartiallyAllocated CloudEvents (docs/adr/0004; never a live call). `orders` counts the distinct orders whose promise cutoff (the event's promise_date) falls in the half-open window [window_start, window_end): a cutoff exactly at window_start counts, one exactly at window_end belongs to the next window. An order is counted once, at the promise of its latest event (last writer wins on the CloudEvents time). `released_lines` sums the lines their latest allocation pass released; it is NOT units -- order-management's events carry no quantities. order-management orders carry no fulfillment site, so every consumed order is attributed to the ONE site configured on this service (DEMAND_SITE_ID); any other location reads 0. Cancellations are not published on the integration topic and are not netted, and an OrderRepromised event carries no new cutoff, so it is ignored. 200 with orders 0 and as_of null when nothing is known -- an empty answer that POST /capacity-plans never turns into a zero-demand plan.
+
+
+
+
+
+## GET `(/demand)`
+
+### Parameters
+- **location** (query) (required)
+- **window_start** (query) (required): RFC 3339; inclusive.
+- **window_end** (query) (required): RFC 3339; exclusive, must be after window_start.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+
+
+## Architecture
+
+<NodeGraph />

@@ -1,0 +1,64 @@
+---
+id: warehouse-planning-api-createCapacityPlan
+version: 0.1.0
+name: createCapacityPlan
+summary: Create a DRAFT CapacityPlan and compute its shortage
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:capacity-plans'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /capacity-plans
+  statusCodes:
+    - '201'
+    - '400'
+    - '404'
+    - '422'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Evaluates the ProcessPath path_id against assigned_demand (orders) for the warehouse's location over [window_start, window_end): loads each step's ProcessCapacity, normalizes it with the WorkloadProfile factors supplied in the body (same shape and validation as GET /process-paths/\{id\}/capacity -- there is no WorkloadProfile persistence yet), and computes path_capacity (ORDER per HOUR), bottleneck_step, capacity_over_window (path_capacity x window hours) and shortage (max(0, assigned_demand - capacity_over_window), never negative). The window is both the plan's planning window AND the window every step's ProcessCapacity is looked up for: a registered window applies to a step when it COVERS [window_start, window_end), exactly as in GET /process-paths/\{id\}/capacity (docs/adr/0003). The plan stores its own requested window. site_id is REQUIRED: the canonical site (a facility-layout Site site_code, the same identifier its SiteCapabilityChanged event publishes) the plan is scoped to. It is a stated planning fact, never inferred from warehouse_id or location, and a blank or absent one is rejected with 422 missing-required-field. assigned_demand is OPTIONAL (docs/adr/0004). An explicit value (including 0) is used exactly as stated and the plan's demand_source is "request". When it is OMITTED the demand defaults to the number of orders the local read model -- fed by order-management's published OrderAllocated / OrderPartiallyAllocated events, never by a live call -- expects at `location` in [window_start, window_end) (see GET /demand), the plan's demand_source is "orders", and assigned_demand in the response is that figure. When the read model has no order for that location and window the request is rejected with 422 missing-assigned-demand: absence never silently means zero demand. The plan is saved and its CapacityPlanCreated event is queued in the transactional outbox in ONE database transaction.
+
+
+
+
+
+## POST `(/capacity-plans)`
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+
+
+## Architecture
+
+<NodeGraph />

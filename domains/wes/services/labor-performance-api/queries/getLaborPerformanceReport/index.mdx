@@ -1,0 +1,64 @@
+---
+id: labor-performance-api-getLaborPerformanceReport
+version: 1.0.0
+name: getLaborPerformanceReport
+summary: 'Labor Performance Report, keyed by TaskType and UTC hour'
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:reports'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: /reports/performance
+  statusCodes:
+    - '200'
+    - '400'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+Returns the labor performance rollup for a half-open time window [from, to), as raw (taskType, hour) rows, a per-TaskType breakdown suitable for a bar chart, and window totals.
+Rows are bucketed by the BUSINESS time of the underlying event (a task's completedAt, a standard's effectiveFrom), never by ingestion time, so a replayed or late-projected event lands in the hour the work actually happened.
+Note that `taskType` may legitimately be `UNCLASSIFIED`: a completion whose task_type was absent or unrecognized (e.g. REBIN, which this service does not model) is labelled explicitly rather than dropped or given an invented type. Since fulfillment-execution's ADR-0023 put task_type on the wire, most completions classify; UNCLASSIFIED remains a real, chartable bucket for older payloads and lookup misses.
+
+
+
+
+
+## GET `(/reports/performance)`
+
+### Parameters
+- **from** (query) (required): Inclusive start of the window, RFC 3339.
+- **to** (query) (required): Exclusive end of the window, RFC 3339. Must be strictly after `from`.
+- **taskType** (query): Optional exact-match filter. Omit for every task type; pass `UNCLASSIFIED` to select only the unclassified bucket.
+
+- **granularity** (query): Bucket resolution. Only hourly buckets are modelled in this round.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem detail, identical in shape to the OLTP API's.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem detail, identical in shape to the OLTP API's.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

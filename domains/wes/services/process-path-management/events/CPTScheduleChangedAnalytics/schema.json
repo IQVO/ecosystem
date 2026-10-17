@@ -1,0 +1,181 @@
+{
+  "title": "CloudEvent + CPTScheduleChanged data (analytics stream)",
+  "allOf": [
+    {
+      "type": "object",
+      "title": "CloudEvents 1.0 envelope (structured mode, ADR 0016)",
+      "description": "Every attribute is REQUIRED in this fleet. Kafka header `content-type: application/cloudevents+json; charset=UTF-8`.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "x-parser-schema-id": "<anonymous-schema-1>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Minted once per domain event, persisted with the outbox row; stable across redelivery. Consumer dedupe key.",
+          "x-parser-schema-id": "<anonymous-schema-2>"
+        },
+        "source": {
+          "type": "string",
+          "const": "/warehouse/process-path-management",
+          "x-parser-schema-id": "<anonymous-schema-3>"
+        },
+        "type": {
+          "type": "string",
+          "description": "com.warehouse.wes.process-path-management.<entity>.<EventName>",
+          "x-parser-schema-id": "<anonymous-schema-4>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Aggregate id (path_id or site_id) — equal to the Kafka key.",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The domain event's occurred-at instant, UTC.",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "data": {
+          "type": "object",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        }
+      },
+      "x-parser-schema-id": "CloudEventEnvelope"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged",
+          "x-parser-schema-id": "<anonymous-schema-58>"
+        },
+        "dataschema": {
+          "const": "urn:warehouse:process-path-management:analytics:CPTScheduleChanged:v1",
+          "x-parser-schema-id": "<anonymous-schema-59>"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "site_id",
+            "timezone",
+            "cutoffs"
+          ],
+          "properties": {
+            "site_id": {
+              "type": "string",
+              "description": "The fulfillment site this schedule belongs to. Uses facility-layout's site identifier vocabulary but is not validated against it (this service has zero inbound dependency, ADR 0001).",
+              "example": "sp1",
+              "x-parser-schema-id": "<anonymous-schema-38>"
+            },
+            "timezone": {
+              "type": "string",
+              "description": "IANA zone, e.g. America/Sao_Paulo.",
+              "example": "America/Sao_Paulo",
+              "x-parser-schema-id": "<anonymous-schema-39>"
+            },
+            "cutoffs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "cpt_id",
+                  "local_time",
+                  "days_of_week",
+                  "ship_method",
+                  "eligible_path_ids"
+                ],
+                "properties": {
+                  "cpt_id": {
+                    "type": "string",
+                    "description": "Stable id, unique within the site.",
+                    "example": "sp1-1500",
+                    "x-parser-schema-id": "<anonymous-schema-41>"
+                  },
+                  "local_time": {
+                    "type": "string",
+                    "description": "Recurring daily cutoff, \"HH:MM\" 24-hour form.",
+                    "example": "15:00",
+                    "x-parser-schema-id": "<anonymous-schema-42>"
+                  },
+                  "days_of_week": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "Mon",
+                        "Tue",
+                        "Wed",
+                        "Thu",
+                        "Fri",
+                        "Sat",
+                        "Sun"
+                      ],
+                      "x-parser-schema-id": "<anonymous-schema-44>"
+                    },
+                    "example": [
+                      "Mon",
+                      "Tue",
+                      "Wed",
+                      "Thu",
+                      "Fri"
+                    ],
+                    "x-parser-schema-id": "<anonymous-schema-43>"
+                  },
+                  "ship_method": {
+                    "type": "string",
+                    "description": "Free-form label (\"ground\", \"same-day\"); no carrier integration exists in this fleet.",
+                    "example": "ground",
+                    "x-parser-schema-id": "<anonymous-schema-45>"
+                  },
+                  "eligible_path_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "x-parser-schema-id": "<anonymous-schema-47>"
+                    },
+                    "description": "The path families that can make this cutoff. Consumers compute the next concrete occurrence of a cutoff themselves from (local_time, days_of_week, timezone) — this service never publishes absolute timestamps for a recurring rule.",
+                    "example": [
+                      "PICK",
+                      "PACK"
+                    ],
+                    "x-parser-schema-id": "<anonymous-schema-46>"
+                  }
+                },
+                "x-parser-schema-id": "CutoffData"
+              },
+              "x-parser-schema-id": "<anonymous-schema-40>"
+            }
+          },
+          "x-parser-schema-id": "CPTScheduleData"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-57>"
+    }
+  ],
+  "x-parser-schema-id": "CPTScheduleChangedAnalyticsCloudEvent"
+}

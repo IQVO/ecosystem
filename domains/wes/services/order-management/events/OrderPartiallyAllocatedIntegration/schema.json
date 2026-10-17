@@ -1,0 +1,200 @@
+{
+  "allOf": [
+    {
+      "type": "object",
+      "description": "CloudEvents 1.0 structured-mode event (JSON event format), the ONLY envelope on every channel this service produces or consumes (ADR 0030, fleet standard). Every attribute below is REQUIRED in this fleet. Kafka header `content-type` is `application/cloudevents+json; charset=UTF-8`; W3C trace context stays in the `traceparent`/`tracestate` headers. Consumers dispatch on the FULL `type`, ignore unknown types, and dedupe on `id`.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Minted once per domain event and persisted with the outbox row, so a redelivery carries the same id. `(source, id)` is the consumer idempotency key.",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "/warehouse/<repo-name>, e.g. /warehouse/order-management.",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^com\\.warehouse\\.[a-z]+\\.[a-z-]+\\.[a-z]+\\.[A-Z][A-Za-z]+(\\.v[0-9]+)?$",
+          "description": "com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Id of the aggregate instance the event is about (order id for every event this service publishes).",
+          "x-parser-schema-id": "<anonymous-schema-10>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The domain event's occurred-at instant, UTC, RFC 3339.",
+          "x-parser-schema-id": "<anonymous-schema-11>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "x-parser-schema-id": "<anonymous-schema-12>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "urn:warehouse:<repo-name>:<events|analytics>:<EventName>:v<N>",
+          "x-parser-schema-id": "<anonymous-schema-13>"
+        },
+        "data": {
+          "type": "object",
+          "description": "The event payload — see each message's own data schema.",
+          "x-parser-schema-id": "<anonymous-schema-14>"
+        }
+      },
+      "x-parser-schema-id": "CloudEvent"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "source": {
+          "const": "/warehouse/order-management",
+          "x-parser-schema-id": "<anonymous-schema-38>"
+        },
+        "type": {
+          "const": "com.warehouse.wes.order-management.order.OrderPartiallyAllocated",
+          "x-parser-schema-id": "<anonymous-schema-39>"
+        },
+        "dataschema": {
+          "const": "urn:warehouse:order-management:events:OrderPartiallyAllocated:v1",
+          "x-parser-schema-id": "<anonymous-schema-40>"
+        },
+        "data": {
+          "type": "object",
+          "description": "Frozen wire shape shared verbatim with wes-work-planning's Kafka consumer (see CLAUDE.md's Kafka integration section). promise_cpt_id/promise_basis are ADR 0014's additive fields (the CPT identity a Capability-basis promise targets, and which policy produced the promise) -- optional, since a LeadTime-basis promise has no CPT identity and older consumers may ignore both.",
+          "additionalProperties": false,
+          "required": [
+            "order_id",
+            "promise_date",
+            "lines"
+          ],
+          "properties": {
+            "order_id": {
+              "type": "string",
+              "pattern": "^ord-[0-9a-f-]{36}$",
+              "description": "The OrderId this context owns and mints.",
+              "x-parser-schema-id": "<anonymous-schema-19>"
+            },
+            "promise_date": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The promise's cutoff instant. Computed by order.PromisePolicy (ADR 0014): a real CPT window's cutoff when promise_basis is \"Capability\", or the per-path lead-time policy's computed instant when promise_basis is \"LeadTime\" (or absent, for events predating ADR 0014).",
+              "x-parser-schema-id": "<anonymous-schema-20>"
+            },
+            "promise_cpt_id": {
+              "type": "string",
+              "description": "The CPT identity (e.g. \"sp1-1800\") this promise targets. Present only when promise_basis is \"Capability\" -- a LeadTime-basis promise has no departure identity.",
+              "x-parser-schema-id": "<anonymous-schema-21>"
+            },
+            "promise_basis": {
+              "type": "string",
+              "enum": [
+                "Capability",
+                "LeadTime",
+                "Network"
+              ],
+              "description": "Which policy produced promise_date (ADR 0014). \"Network\" (ADR 0020) means the date was DICTATED by an external party's deadline (requiredShipBy) rather than chosen by this service, and is a separate bucket in the analytics promise- basis distribution (ADR 0019). Absent on events published before this ADR.",
+              "x-parser-schema-id": "<anonymous-schema-22>"
+            },
+            "lines": {
+              "type": "array",
+              "description": "Exactly the lines released in this pass (may be empty).",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "line_no",
+                  "sku",
+                  "path_id",
+                  "gift_wrap",
+                  "fulfillment_class"
+                ],
+                "properties": {
+                  "line_no": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-parser-schema-id": "<anonymous-schema-24>"
+                  },
+                  "sku": {
+                    "type": "string",
+                    "x-parser-schema-id": "<anonymous-schema-25>"
+                  },
+                  "path_id": {
+                    "type": "string",
+                    "description": "The process path the line was released onto (default \"pick\").",
+                    "x-parser-schema-id": "<anonymous-schema-26>"
+                  },
+                  "gift_wrap": {
+                    "type": "boolean",
+                    "x-parser-schema-id": "<anonymous-schema-27>"
+                  },
+                  "fulfillment_class": {
+                    "type": "string",
+                    "enum": [
+                      "SINGLE",
+                      "SAME_SKU_MULTI",
+                      "MULTI_LINE_MULTI"
+                    ],
+                    "description": "Classifies the whole order (ADR 0008); additive field.",
+                    "x-parser-schema-id": "<anonymous-schema-28>"
+                  },
+                  "promise_cpt_id": {
+                    "type": "string",
+                    "description": "ADR 0017's additive per-line promise field: the CPT identity (e.g. \"sp1-1200\") the PromiseGroup this line belongs to targets. Present only when that group's basis is \"Capability\" and the group has a CPT identity. Absent when the order's promise has no per-group breakdown to attribute this line to (a promise set via the legacy, pre-ADR-0017 single-Promise path). Older consumers can safely ignore it.",
+                    "x-parser-schema-id": "<anonymous-schema-29>"
+                  },
+                  "promise_basis": {
+                    "type": "string",
+                    "enum": [
+                      "Capability",
+                      "LeadTime",
+                      "Network"
+                    ],
+                    "description": "ADR 0017's additive per-line promise field: which policy produced the PromiseGroup this line belongs to. Absent under the same condition as promise_cpt_id.",
+                    "x-parser-schema-id": "<anonymous-schema-30>"
+                  },
+                  "promise_cutoff_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "ADR 0017's additive per-line promise field: the cutoff instant of the PromiseGroup this line belongs to -- may differ from the order-level promise_date on a partial-shipment order whose lines split across multiple groups (promise_date is always the LATEST group's cutoff; an individual line's own group may cut off earlier). Absent under the same condition as promise_cpt_id.",
+                    "x-parser-schema-id": "<anonymous-schema-31>"
+                  }
+                },
+                "x-parser-schema-id": "ReleasedLine"
+              },
+              "x-parser-schema-id": "<anonymous-schema-23>"
+            }
+          },
+          "x-parser-schema-id": "AllocationData"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-37>"
+    }
+  ],
+  "x-parser-schema-id": "<anonymous-schema-36>"
+}

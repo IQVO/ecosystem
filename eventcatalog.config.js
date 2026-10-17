@@ -1,12 +1,53 @@
+import path from 'node:path';
+import url from 'node:url';
+import fs from 'node:fs';
+
+import { CONTEXTS, SUBDOMAINS as SUBDOMAIN_META } from './catalog.contexts.mjs';
+
+const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+const spec = (ctx, file) => path.join(__dirname, '.generated-specs', ctx, file);
+
+// Bounded contexts per subdomain live in catalog.contexts.mjs.
+// Specs are synced from each repo's origin/develop by scripts/sync-specs.sh.
+const contextsOf = (subdomain) => Object.entries(CONTEXTS).filter(([, c]) => c.subdomain === subdomain).map(([id]) => id);
+const SUBDOMAINS = Object.fromEntries(
+  Object.entries(SUBDOMAIN_META).map(([id, meta]) => [id, { ...meta, contexts: contextsOf(id) }]),
+);
+
+const title = (ctx) => ctx.split('-').map((w) => (w === 'wes' ? 'WES' : w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
+const OWNERS = ['claudioed'];
+const domainFor = (id, { name }) => ({ id, name, version: '1.0.0', owners: OWNERS });
+const reportsSpec = (ctx) => (fs.existsSync(spec(ctx, 'openapi-reports.yaml')) ? [spec(ctx, 'openapi-reports.yaml')] : []);
+
+const asyncapiGenerators = Object.entries(SUBDOMAINS).map(([id, sd]) => [
+  '@eventcatalog/generator-asyncapi',
+  {
+    services: sd.contexts.map((ctx) => ({ id: ctx, name: `${title(ctx)} (events)`, path: spec(ctx, 'asyncapi.yaml'), owners: OWNERS })),
+    domain: domainFor(id, sd),
+    parseChannels: true,
+    saveParsedSpecFile: true,
+  },
+]);
+
+const openapiGenerators = Object.entries(SUBDOMAINS).map(([id, sd]) => [
+  '@eventcatalog/generator-openapi',
+  {
+    services: sd.contexts.map((ctx) => ({ id: `${ctx}-api`, name: `${title(ctx)} API`, path: [spec(ctx, 'openapi.yaml'), ...reportsSpec(ctx)], owners: OWNERS })),
+    domain: domainFor(id, sd),
+    sidebarBadgeType: 'HTTP_METHOD',
+    // operationIds repeat across services (getHealthz, ...); keep message ids globally unique.
+    messages: { id: { prefixWithServiceId: true } },
+  },
+]);
+
 /** @type {import('@eventcatalog/core/bin/eventcatalog.config').Config} */
 export default {
-  title: 'EventCatalog',
+  title: 'Warehouse Systems Ecosystem',
   tagline:
-    'This internal platform provides a comprehensive view of our event-driven architecture across all systems. Use this portal to discover existing domains, explore services and their dependencies, and understand the message contracts that connect our infrastructure',
+    'Event-driven architecture of the warehouse-systems ecosystem: WMS and WES domains, their bounded-context services, REST contracts and CloudEvents 1.0 messages on Kafka.',
   organizationName: 'Warehouse Systems',
   theme: 'sunset',
-  homepageLink: 'https://eventcatalog.dev/',
-  editUrl: 'https://github.com/boyney123/eventcatalog-demo/edit/master',
+  homepageLink: 'https://github.com/IQVO',
   // Supports static or server. Static renders a static site, server renders a server side rendered site
   // large catalogs may benefit from server side rendering
   output: 'static',
@@ -27,9 +68,9 @@ export default {
   },
   // Customize the logo, add your logo to public/ folder
   logo: {
-    alt: 'EventCatalog Logo',
+    alt: 'Warehouse Systems',
     src: '/logo.png',
-    text: 'EventCatalog',
+    text: 'Warehouse Systems',
   },
   // This lets you copy markdown contents from EventCatalog to your clipboard
   // Including schemas for your events and services
@@ -41,6 +82,7 @@ export default {
   // exports: {
   //   html: { enabled: false },
   // },
+  generators: [...asyncapiGenerators, ...openapiGenerators],
   // required random generated id used by eventcatalog
   cId: 'f047ad66-5d28-4c16-961a-0e1cebafe682',
   // required by eventcatalog

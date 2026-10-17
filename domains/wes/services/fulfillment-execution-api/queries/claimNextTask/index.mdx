@@ -1,0 +1,78 @@
+---
+id: fulfillment-execution-api-claimNextTask
+version: 1.0.0
+name: claimNextTask
+summary: PULL-dispatch the best-fit pending task to this station
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Stations'
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Tasks'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/stations/{stationId}/claim-next'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '409'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Implements this service's core dispatch rule: **pull, not push**. The station calls claimNext; the system — never the caller — selects which task to hand it. Among Pending tasks of `taskType` that this station's registered capabilities satisfy, the **earliest-CPT** task is selected and leased to `stationId` for a fixed duration (5 minutes by default). Assignment is **at-most-once**: a task with an active, unexpired lease cannot be claimed by anyone else, and this endpoint will simply skip it and try the next-best candidate. If the lease is not renewed or the task completed before it expires, the task automatically returns to the pool (see `POST /tasks/expire-leases`) rather than being lost. This call is not idempotent in the way a PUT would be — every successful call claims a *different* task (or the same task again only after its prior lease was released); that's intended PULL semantics, not a bug.
+
+
+
+
+
+## POST `(/stations/{stationId}/claim-next)`
+
+### Parameters
+- **stationId** (path) (required): The station pulling work, e.g. as registered via `POST /stations`.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

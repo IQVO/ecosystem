@@ -1,0 +1,71 @@
+---
+id: wes-work-planning-api-sampleBacklog
+version: 1.0.0
+name: sampleBacklog
+summary: Sample live backlog telemetry for a process path
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Telemetry'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: '/paths/{pathId}/telemetry'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+Returns the current backlog depth/WIP read model for a process path's work pool — the SampleBacklog use case. This is a projection built from live `WorkPool` state, not persisted aggregate state. Side effect: if the pool is over its alarm threshold, publishes `BacklogThresholdBreached` (an existing, documented telemetry side effect of sampling — it does not mutate the `WorkPool` or `WorkUnit` aggregates themselves, so this remains a safe GET).
+
+When the optional `cutoffAt` query parameter is supplied, this same read additionally reports — and publishes — the path's current remaining admission capacity for that CPT cutoff window (`PathCapacityChanged`, see ADR-0018). `remainingCapacityKnown` is `false` for a FlowFed path (no hard admission ceiling) or a ReleaseFed path with no WIP limit provisioned; `remainingCapacityUnits` is present only when `remainingCapacityKnown` is `true`. Omitting `cutoffAt` entirely skips capacity reporting and publishing, keeping every existing caller's behavior unchanged.
+
+
+
+
+
+## GET `(/paths/{pathId}/telemetry)`
+
+### Parameters
+- **pathId** (path) (required): The process path's identifier — a named station that owns a queue (unit-in → unit-out), e.g. a pick zone or pack line. Must belong to a process-path family declared in this deployment's process-path catalogue (ADR-0012; today the fleet's sortable-fc topology declares the pick/pack/rebin/slam families, each optionally carrying a "-"-delimited station/zone suffix, e.g. pick-a or pack-station-1). The write endpoints (receiveChargeForecast, commitShiftPlan, enqueueWorkUnit) reject ids outside the declared families with `400 unknown-path-id`; read endpoints surface a missing pool/projection as `404` instead.
+
+- **cutoffAt** (query): Optional RFC3339 CPT cutoff timestamp. When supplied, the response additionally reports remaining admission capacity for this path correlated against this cutoff, and a `PathCapacityChanged` event is published (ADR-0018). Must be non-empty when present — `?cutoffAt=` (present but empty) is a `400`, not "omitted".
+
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Every error response in this service uses this shape with Content-Type application/problem+json.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

@@ -1,0 +1,136 @@
+{
+  "title": "PathCapacityChanged CloudEvent",
+  "description": "CloudEvent envelope for a reported remaining-admission-capacity figure for a process path, correlated against a CPT cutoff timestamp (see ADR-0018).",
+  "allOf": [
+    {
+      "type": "object",
+      "title": "CloudEvent 1.0 context attributes",
+      "description": "The CloudEvents 1.0 structured-mode context attributes common to every message this service publishes (integration AND analytics topics). Every attribute below is REQUIRED in this fleet (ADR-0027); there is no other envelope.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "description": "The CloudEvents specification version. Always \"1.0\".",
+          "enum": [
+            "1.0"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-1>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this event occurrence, a UUID v4 minted once per domain event and persisted with the transactional outbox row, so a redelivery carries the same id. Combined with `source` it is the de-duplication key consumers must use for at-least-once delivery.",
+          "minLength": 1,
+          "x-parser-schema-id": "<anonymous-schema-2>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "The context that emitted the event: `/warehouse/wes-work-planning` for messages this service PUBLISHES; the producer's own source (e.g. `/warehouse/network-inventory-planning`) for CONSUMED messages.",
+          "pattern": "^/warehouse/[a-z0-9-]+$",
+          "x-parser-schema-id": "<anonymous-schema-3>"
+        },
+        "type": {
+          "type": "string",
+          "description": "The event type, in the form `com.warehouse.wes.work-planning.<entity>.<EventName>`.",
+          "x-parser-schema-id": "<anonymous-schema-4>"
+        },
+        "subject": {
+          "type": "string",
+          "description": "The identifier of the aggregate instance the event is about — a process path id for charge/plan/work-pool events, a work unit id for work unit events.",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC3339 timestamp of when the domain event occurred, taken from the domain clock rather than from publish time.",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "description": "Media type of the `data` member. Always \"application/json\".",
+          "enum": [
+            "application/json"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "Identifies the `data` payload shape: `urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>` — this repo's own urns when PUBLISHED (wes-work-planning), the producer's urn when CONSUMED (e.g. network-inventory-planning). The same occurrence carries the same `type` on both topics; the `dataschema` distinguishes the integration payload from the analytics payload.",
+          "pattern": "^urn:warehouse:[a-z0-9-]+:(events|analytics):[A-Za-z]+:v[0-9]+$",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        }
+      },
+      "x-parser-schema-id": "CloudEventBase"
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Fixed event type for this message.",
+          "const": "com.warehouse.wes.work-planning.workpool.PathCapacityChanged",
+          "x-parser-schema-id": "<anonymous-schema-78>"
+        },
+        "dataschema": {
+          "type": "string",
+          "description": "Fixed integration-payload schema id for this message.",
+          "const": "urn:warehouse:wes-work-planning:events:PathCapacityChanged:v1",
+          "x-parser-schema-id": "<anonymous-schema-79>"
+        },
+        "data": {
+          "type": "object",
+          "description": "Payload published by the outbound Kafka adapter.",
+          "required": [
+            "path_id",
+            "cutoff_at",
+            "remaining_units",
+            "known"
+          ],
+          "properties": {
+            "path_id": {
+              "type": "string",
+              "description": "Identifier of the process path this capacity figure applies to.",
+              "x-parser-schema-id": "<anonymous-schema-81>"
+            },
+            "cutoff_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "RFC3339 CPT cutoff timestamp this remaining-capacity figure applies to — this service's own native CPT currency, NOT process-path-management's site-schedule `cptId` string (see ADR-0018's correlation-by-timestamp discussion). A consumer must correlate this timestamp against its own cached CPT-window schedule to resolve which `cptId` it corresponds to.",
+              "x-parser-schema-id": "<anonymous-schema-82>"
+            },
+            "remaining_units": {
+              "type": "integer",
+              "format": "int32",
+              "description": "How many more units this path can admit right now (WIP limit minus current WIP; always non-negative since the aggregate never admits past its own limit). Meaningful only when `known` is `true`; always `0` when `known` is `false`.",
+              "x-parser-schema-id": "<anonymous-schema-83>"
+            },
+            "known": {
+              "type": "boolean",
+              "description": "`false` when this path is FlowFed (no hard admission ceiling — only a backlog alarm threshold, not a capacity figure) or when it is ReleaseFed with no WIP limit provisioned. `true` otherwise.",
+              "x-parser-schema-id": "<anonymous-schema-84>"
+            }
+          },
+          "x-parser-schema-id": "<anonymous-schema-80>"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-77>"
+    }
+  ],
+  "x-parser-schema-id": "PathCapacityChangedEvent"
+}

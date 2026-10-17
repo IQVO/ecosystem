@@ -1,0 +1,80 @@
+---
+id: facility-layout-api-registerLocationSlot
+version: 1.0.0
+name: registerLocationSlot
+summary: Register one coded location slot
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Locations'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /locations
+  statusCodes:
+    - '201'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+The core operation of this service. Registering a LocationSlot is a chain-of-custody check, not a bare insert: the Site, Zone and Aisle implied by the LocationCode's segments must all resolve to existing, Active aggregates (404 if any link is missing, 409 if one exists but is no longer Active), and the slot's LocationType must satisfy every PlacementRule applicable to its Zone (422, naming the violated rule, if not). There are no orphan slots, ever.
+
+`capacityOverride` is optional; omit it to inherit the LocationType's default envelope. The LocationCode is the slot's identity, so re-registering one already in use is a 409 — including when the existing slot is Decommissioned, since decommission is one-way and a retired code is never resurrected by re-registration. Publishes LocationSlotRegistered.
+
+
+
+
+
+## POST `(/locations)`
+
+### Parameters
+- **Idempotency-Key** (header): Caller-generated unique key (a UUID per logical submit) that makes a retried request safe (ADR 0019). Clients MUST always send a non-empty, unique-per-submit key: the header is required whenever the service runs with Postgres — i.e. in every deployment — and an absent or empty key is answered 400 `idempotency-key-required`. A replay with the same key and the same body returns the original response verbatim; the same key with a different body is 422 `idempotency-key-reused`. It is declared `required: false` here only because the in-memory development mode (no DATABASE_URL) does not enforce the middleware and the Schemathesis contract run boots that mode.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+The coded leaf location. Its identity IS its LocationCode. It owns whether the code exists, is active, and is legal for a given kind of storage unit — never what is stored in it.
+
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

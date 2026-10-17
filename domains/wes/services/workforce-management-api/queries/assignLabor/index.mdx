@@ -1,0 +1,76 @@
+---
+id: workforce-management-api-assignLabor
+version: 1.0.0
+name: assignLabor
+summary: Assign an associate to a path
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Assignments'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/associates/{id}/assignments'
+  statusCodes:
+    - '201'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Puts an associate on pathId for a new interval, raising LaborAssigned (first assignment) or LaborReassigned (an assignment was already active). The "exactly one ACTIVE assignment per associate" invariant is enforced by construction, not by rejecting a second call: if the associate already has an active assignment, it is closed first (its hours are logged against the associate's shift) and the new one starts — this matches how rebalancing actually happens on the floor, a supervisor moves someone without first "unassigning" them. The assignment requires the associate hold the path's required certification (by convention, the Certification with the same name as the PathId — e.g. path "pack" requires certification "pack"), and is rejected if the associate is currently on a logged break or their shift has ended. Because each call closes the prior interval and raises an event, a blind retry would double-apply it, so this route is protected by the Idempotency-Key header (ADR-0027): a retried request with the same key and body replays the first response.
+
+
+
+
+## POST `(/associates/{id}/assignments)`
+
+### Parameters
+- **id** (path) (required): The associate's identity (AssociateId).
+- **Idempotency-Key** (header): Caller-generated key (e.g. a UUID v4) that makes a retried request safe (ADR-0027). Clients MUST always send a non-empty value on the routes that declare it: a deployment backed by Postgres (every real deployment) rejects a request without it with 400 idempotency-key-required. It is declared optional here only because the in-memory development mode (which the contract test boots) does not enforce it. Reuse the SAME key for retries of one logical request (same body) — the first response, success or business error, is stored and replayed byte-for-byte for the key's TTL (24h by default) — and a NEW key for each new logical request. Reusing a key with a different body is rejected with 422 idempotency-key-reused.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

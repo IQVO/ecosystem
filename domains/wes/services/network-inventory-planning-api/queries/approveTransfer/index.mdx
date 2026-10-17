@@ -1,0 +1,80 @@
+---
+id: network-inventory-planning-api-approveTransfer
+version: 1.0.0
+name: approveTransfer
+summary: Approve a transfer proposal and start the allocation saga.
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:transfers'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/v1/transfers:approve'
+  statusCodes:
+    - '200'
+    - '400'
+    - '409'
+    - '422'
+    - '503'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Takes a proposal snapshot (origin, destination, SKU, quantity, policy
+version) and validates it against the CURRENT fail-closed read
+models. On success the InterWarehouseTransfer saga persists through
+PROPOSED → APPROVED → ALLOCATING and, in the same transaction,
+enqueue TransferPlanApproved and TransferAllocationRequested into the
+transactional outbox; a relay publishes them to Kafka and
+inventory-storage's reply later drives the transfer to ALLOCATED or
+UNFULFILLABLE. Idempotent per the required Idempotency-Key header:
+replaying the same key with the same payload returns the ORIGINAL
+transfer (replayed: true); the same key with a different payload is a
+409. Fail-closed validation failures (missing/stale/disabled facts)
+return 422; unusable read models return 503.
+
+
+
+
+
+## POST `(/v1/transfers:approve)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Transfer-level idempotency key; a fresh key per logical approval.
+Replaying a key replays the FIRST transfer it created.
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">503 Service Unavailable</span>
+<SchemaViewer file="response-503.json" maxHeight="500" id="response-503" />
+
+
+
+## Architecture
+
+<NodeGraph />

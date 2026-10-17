@@ -1,0 +1,69 @@
+---
+id: warehouse-planning-api-getProcessPathCapacity
+version: 0.1.0
+name: getProcessPathCapacity
+summary: 'Get a ProcessPath''s normalized, end-to-end capacity'
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:process-paths'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: '/process-paths/{id}/capacity'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '422'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+Loads the ProcessPath identified by id, loads each of its steps' ProcessCapacity for the given location and window (matched by COVERAGE, see below), normalizes each step's effective rate into ORDER/period via the WorkloadProfile factors supplied on the request (Phase 2 simplification: there is no dedicated WorkloadProfile persistence yet), and returns the minimum normalized rate plus which step is the bottleneck.
+Each step's candidate constraints are (a) the constraints of the ProcessCapacity aggregates of (process, location) whose window COVERS [window_start, window_end) -- registered window start \<= window_start AND registered window end >= window_end, so an equal window covers it -- taking, per constraint type, the one from the covering window with the LATEST start (tie: the narrower window); older or wider covering windows' constraints of the same type are shadowed, other types still apply (docs/adr/0003), and (b) a DERIVED STATION constraint = the stations facility-layout tallied across the zones of the site (zone ids starting with `<location>-`) x the declared StationStandard, when both a station count above zero and a standard exist. EVERY candidate is normalized to ORDER/hour before the minimum is taken. With stations but no declared standard the step uses (a) only and `warnings` says so. `step_breakdown` and `warnings` are additive fields.
+
+
+
+
+
+## GET `(/process-paths/{id}/capacity)`
+
+### Parameters
+- **id** (path) (required)
+- **location** (query) (required)
+- **window_start** (query) (required): Planning window start; a registered window applies to a step when it covers [window_start, window_end).
+- **window_end** (query) (required): Planning window end (exclusive); must be after window_start.
+- **units_per_order** (query)
+- **packages_per_order** (query)
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+
+
+## Architecture
+
+<NodeGraph />

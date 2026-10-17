@@ -1,0 +1,65 @@
+---
+id: inventory-storage-api-getFlowAccuracyReport
+version: 1.0.0
+name: getFlowAccuracyReport
+summary: Inventory Flow & Accuracy report (hourly)
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Reports'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: /reports/flow-accuracy
+  statusCodes:
+    - '200'
+    - '400'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+Read-only analytical report over the inventory-storage event stream (ADR 0011): per (SKU, bin, hour) received/stowed/picked quantities, reservation lifecycle counts, and cycle-count accuracy signals. Served by the `inventory-reports` deployment from its own read-only pool (ADR 0020 §CQRS split); the OLTP `inventory` binary does not serve this path. `from` and `to` are required RFC 3339 timestamps; `sku` and `binId` narrow the result; `granularity` is currently only `hour`. Side-effect-free and unauthenticated (ADR 0015).
+
+
+
+
+
+## GET `(/reports/flow-accuracy)`
+
+### Parameters
+- **from** (query) (required): Inclusive start of the window, RFC 3339.
+- **to** (query) (required): End of the window, RFC 3339.
+- **sku** (query): Restrict to one SKU.
+- **binId** (query): Restrict to one bin.
+- **granularity** (query): Bucket size. Only `hour` is supported (the default).
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+The Inventory Flow & Accuracy report for a window.
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

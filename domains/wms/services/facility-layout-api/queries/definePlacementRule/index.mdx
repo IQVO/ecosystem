@@ -1,0 +1,81 @@
+---
+id: facility-layout-api-definePlacementRule
+version: 1.0.0
+name: definePlacementRule
+summary: Declare which location types are legal in which zones
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Placement Rules'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /placement-rules
+  statusCodes:
+    - '201'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Defines a PlacementRule: a LocationType, an Effect (Allow or Deny), and a zone predicate matching on zoneCode, temperatureClass and/or hazmat. Every field set on the predicate must match for it to apply (AND semantics); unset fields are wildcards; at least one must be set.
+
+Evaluation at slot-registration time runs in order: any matching Deny rule naming the slot's LocationType rejects it (Deny always wins); if any matching Allow rule exists for the zone at all, the zone becomes an allow-list and the LocationType must be named by one of them; otherwise the zone is unconstrained. The rejection error always names the specific rule violated.
+
+The referenced LocationType must already exist. Publishes PlacementRuleDefined.
+
+
+
+
+
+## POST `(/placement-rules)`
+
+### Parameters
+- **Idempotency-Key** (header): Caller-generated unique key (a UUID per logical submit) that makes a retried request safe (ADR 0019). Clients MUST always send a non-empty, unique-per-submit key: the header is required whenever the service runs with Postgres — i.e. in every deployment — and an absent or empty key is answered 400 `idempotency-key-required`. A replay with the same key and the same body returns the original response verbatim; the same key with a different body is 422 `idempotency-key-reused`. It is declared `required: false` here only because the in-memory development mode (no DATABASE_URL) does not enforce the middleware and the Schemathesis contract run boots that mode.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+Declares a LocationType legal (Allow) or illegal (Deny) in matching zones.
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

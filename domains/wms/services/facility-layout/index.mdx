@@ -1,0 +1,184 @@
+---
+id: facility-layout
+name: Facility Layout (events)
+version: 1.0.0
+summary: ''
+badges:
+  - content: facility-layout
+    textColor: blue
+    backgroundColor: blue
+  - content: site
+    textColor: blue
+    backgroundColor: blue
+  - content: zone
+    textColor: blue
+    backgroundColor: blue
+  - content: aisle
+    textColor: blue
+    backgroundColor: blue
+  - content: locationtype
+    textColor: blue
+    backgroundColor: blue
+  - content: placementrule
+    textColor: blue
+    backgroundColor: blue
+  - content: locationslot
+    textColor: blue
+    backgroundColor: blue
+  - content: structure
+    textColor: blue
+    backgroundColor: blue
+  - content: crossaisle
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: SiteRegistered
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: SiteCapabilityChanged
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: SiteRoleChanged
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: ZoneRegistered
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: AisleRegistered
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationTypeRegistered
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: PlacementRuleDefined
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationSlotRegistered
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationSlotDecommissioned
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: FacilityLayoutImported
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationGeometryUpdated
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: AisleGeometryUpdated
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: FixedStructureRegistered
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: CrossAisleRegistered
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: SiteRegisteredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: ZoneRegisteredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: AisleRegisteredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: LocationTypeRegisteredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: PlacementRuleDefinedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: LocationSlotRegisteredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: LocationSlotDecommissionedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: FacilityLayoutImportedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: LocationGeometryUpdatedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: AisleGeometryUpdatedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: FixedStructureRegisteredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+  - id: CrossAisleRegisteredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.facility.analytics
+        version: 1.0.0
+receives: []
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+Domain-event catalog for the **facility-layout** bounded context, the system of record for where things physically are in the building: the site's structural hierarchy (Site, Area, Zone, Aisle) and the coded storage slots inside it. This context is a Generic Subdomain and an **Open Host Service** — these events ARE its Published Language, and every downstream service is a Conformist to them. Unlike a service that forwards a curated subset, this context's Kafka publisher (`internal/adapters/outbound/kafka/publisher.go`) emits **every** domain event to the integration topic — the whole Published Language.
+
+**Envelope: CloudEvents 1.0 (mandatory, ADR-0024).** Every message on this channel is a CloudEvents 1.0 event in **structured content mode** (CloudEvents Kafka protocol binding): the Kafka message value is the JSON event format and every message carries the Kafka header `content-type: application/cloudevents+json; charset=UTF-8`. All of `specversion` (`1.0`), `id` (UUID, minted once per domain event and stable across outbox redelivery), `source` (`/warehouse/facility-layout`), `type`, `subject` (the aggregate instance id), `time` (the domain occurred-at, UTC), `datacontenttype` (`application/json`) and `dataschema` (`urn:warehouse:facility-layout:events:<EventName>:v1`) are required. `data` carries the domain event's own JSON verbatim — note it also carries `eventName`, `eventType` and `occurredAt` fields, because the domain event's struct tags are the wire shape. There is no other envelope: consumers must reject (DLQ/skip) anything that fails CloudEvents validation.
+
+**The `type` attribute** follows the platform-wide reverse-DNS convention `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>` — all lowercase except the final PascalCase event name, and the entity segment carries no hyphen even for multi-word aggregate names. This service's subdomain segment is `wms`: bin-accurate location is WMS-tier in the domain reference. Consumers dispatch on the FULL `type` string. Example: `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered`. A breaking payload change is published as a new `.v2` type with a `:v2` dataschema, never by mutating an existing one.
+
+**Partitioning and ordering.** The Kafka message key is the identity of the aggregate that raised the event (site code, zone id, aisle id, location code, rule id, location type name, structure id, or a cross-aisle's composite identity), so all events for one aggregate land on the same partition and per-aggregate order is preserved (ADR-0032 extended this to the ADR-0017 geometry / structure / cross-aisle events, which were previously keyed by their event type and so shared one partition per type). The single exception is `FacilityLayoutImported`, a batch outcome with no aggregate: it is keyed by its CloudEvents `id` and carries no ordering guarantee. The CloudEvents `subject` is the aggregate instance (`layout-import` for `FacilityLayoutImported`).
+
+**Live consumer.** `inventory-storage` maintains a local read model of location classifications fed by this topic (`internal/adapters/outbound/facilitycache/`, selected with `LOCATION_LOOKUP_MODE=kafka`), replacing its per-stow synchronous `GET /locations/{locationCode}/classification` call. It consumes **ZoneRegistered**, **LocationSlotRegistered** and **LocationSlotDecommissioned**, replaying the topic from the first offset on every process start under a per-instance-unique consumer group, and gates its readiness on that replay completing. `warehouse-planning` also consumes this topic (own fixed consumer group, at-least-once): **LocationSlotRegistered** and **LocationSlotDecommissioned** feed its storage-position / work-center-station tally. Every other event is published but has no wired consumer today — they are Published Language available for future Conformists, stated so a downstream team cannot mistake an available event for a consumed one. See facility-layout ADR-0009 (integration publishing) and inventory-storage ADR-0013 (the location-classification cache).
+
+
+## Architecture diagram
+<NodeGraph />

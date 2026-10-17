@@ -1,0 +1,73 @@
+---
+id: inventory-storage-api-stowTransferStock
+version: 1.0.0
+name: stowTransferStock
+summary: Stow a staged transfer receipt into destination bins
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Transfers'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/transfers/{transferLineId}/stow'
+  statusCodes:
+    - '200'
+    - '400'
+    - '409'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Places a STAGED transfer receipt's goods into destination-site bins (ADR 0031) — the ONLY path that raises the destination site's usable stock for a transfer, exactly once per transfer_line_id. Every requested bin must be registered at the receipt's destination site (the site-custody fact fails closed: another site's bin or a legacy site-less bin is a 409), and the bin quantities must sum EXACTLY to the receipt's receivedQuantity. One StockUnit per bin leg is created AT the destination site, the receipt moves STAGED -> STOWED, and TransferStockStowed is published through the same transactional outbox.
+
+Idempotent at the database level: a replayed stow for an already-STOWED receipt answers 200 with the ORIGINAL outcome (replay: true, the original allocations), creates NO second StockUnit and publishes nothing new. Stowing a line with no staged receipt (stow-before-stage) is a 409 receipt-not-staged.
+
+
+
+
+## POST `(/transfers/{transferLineId}/stow)`
+
+### Parameters
+- **transferLineId** (path) (required): The planning context's transfer line id (`<transfer_id>:<line>`), the DB-unique key both the origin-side transfer_allocations ledger and the destination-side transfer_receipts row are anchored on (ADR 0031).
+- **Idempotency-Key** (header): Caller-generated unique key (a UUID per logical submit) that makes a retried request safe (ADR 0018). Required whenever the service runs with Postgres — i.e. in every deployment — and answered with 400 `idempotency-key-required` when absent; a replay with the same key and the same body returns the original response, while the same key with a different body is 422 `idempotency-key-reused`. The in-memory development mode (no DATABASE_URL) does not enforce it, which is why the header is not marked `required` here (the Schemathesis contract run boots that mode).
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+The STOWED receipt plus the destination StockUnits the stow created.
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

@@ -1,0 +1,169 @@
+{
+  "allOf": [
+    {
+      "type": "object",
+      "description": "CloudEvents 1.0 structured-mode event (JSON event format), the ONLY envelope on every channel this service produces or consumes (ADR 0030, fleet standard). Every attribute below is REQUIRED in this fleet. Kafka header `content-type` is `application/cloudevents+json; charset=UTF-8`; W3C trace context stays in the `traceparent`/`tracestate` headers. Consumers dispatch on the FULL `type`, ignore unknown types, and dedupe on `id`.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Minted once per domain event and persisted with the outbox row, so a redelivery carries the same id. `(source, id)` is the consumer idempotency key.",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "/warehouse/<repo-name>, e.g. /warehouse/order-management.",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^com\\.warehouse\\.[a-z]+\\.[a-z-]+\\.[a-z]+\\.[A-Z][A-Za-z]+(\\.v[0-9]+)?$",
+          "description": "com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Id of the aggregate instance the event is about (order id for every event this service publishes).",
+          "x-parser-schema-id": "<anonymous-schema-10>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The domain event's occurred-at instant, UTC, RFC 3339.",
+          "x-parser-schema-id": "<anonymous-schema-11>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "x-parser-schema-id": "<anonymous-schema-12>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "urn:warehouse:<repo-name>:<events|analytics>:<EventName>:v<N>",
+          "x-parser-schema-id": "<anonymous-schema-13>"
+        },
+        "data": {
+          "type": "object",
+          "description": "The event payload — see each message's own data schema.",
+          "x-parser-schema-id": "<anonymous-schema-14>"
+        }
+      },
+      "x-parser-schema-id": "CloudEvent"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "source": {
+          "const": "/warehouse/order-management",
+          "x-parser-schema-id": "<anonymous-schema-60>"
+        },
+        "type": {
+          "const": "com.warehouse.wes.order-management.siteskudemand.SiteSkuDemandChanged",
+          "x-parser-schema-id": "<anonymous-schema-61>"
+        },
+        "dataschema": {
+          "const": "urn:warehouse:order-management:events:SiteSkuDemandChanged:v1",
+          "x-parser-schema-id": "<anonymous-schema-62>"
+        },
+        "subject": {
+          "type": "string",
+          "pattern": "^.+/line/[1-9][0-9]*$",
+          "examples": [
+            "ord-7c9e6679-7d5a-4b37-b2f1-93b0c4a1d8f2/line/3"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-63>"
+        },
+        "data": {
+          "type": "object",
+          "description": "The `data` payload shape for SiteSkuDemandChanged (ADR 0035): a PII-free snapshot of one source order line's demand at the explicitly configured static site. Deliberately does NOT reuse the frozen allocationData shape shared with wes-work-planning — this is a new, additive consumer contract.",
+          "additionalProperties": false,
+          "required": [
+            "source_order_id",
+            "line_no",
+            "site_id",
+            "sku",
+            "demanded_units",
+            "due_at",
+            "state",
+            "assignment_version"
+          ],
+          "properties": {
+            "source_order_id": {
+              "type": "string",
+              "pattern": "^ord-[0-9a-f-]{36}$",
+              "description": "The order whose line this demand derives from.",
+              "x-parser-schema-id": "<anonymous-schema-64>"
+            },
+            "line_no": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The 1-based line number within the source order.",
+              "x-parser-schema-id": "<anonymous-schema-65>"
+            },
+            "site_id": {
+              "type": "string",
+              "description": "The static demand site this deployment projects every line to (`DEMAND_PROJECTION_SITE_ID`) — application configuration, never an Order field.",
+              "x-parser-schema-id": "<anonymous-schema-66>"
+            },
+            "sku": {
+              "type": "string",
+              "description": "The line's SKU. No product attributes, no customer data.",
+              "x-parser-schema-id": "<anonymous-schema-67>"
+            },
+            "demanded_units": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The line's quantity.",
+              "x-parser-schema-id": "<anonymous-schema-68>"
+            },
+            "due_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The line's own promise-group cutoff (ADR 0017) where one is recorded, else the order-level promise date. RFC 3339, UTC.",
+              "x-parser-schema-id": "<anonymous-schema-69>"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "ACTIVE",
+                "REMOVED"
+              ],
+              "description": "ACTIVE — the line's demand exists at the site (create / allocate / re-promise). REMOVED — cancellation took it away.",
+              "x-parser-schema-id": "<anonymous-schema-70>"
+            },
+            "assignment_version": {
+              "type": "string",
+              "enum": [
+                "static-site-v1"
+              ],
+              "description": "The assignment regime that produced this fact. Phase-1 is the static `static-site-v1`; dynamic assignment must introduce a NEW value, never change this one's meaning.",
+              "x-parser-schema-id": "<anonymous-schema-71>"
+            }
+          },
+          "x-parser-schema-id": "SiteSkuDemandData"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-59>"
+    }
+  ],
+  "x-parser-schema-id": "<anonymous-schema-58>"
+}

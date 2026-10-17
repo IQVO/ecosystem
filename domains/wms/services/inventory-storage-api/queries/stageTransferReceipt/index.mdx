@@ -1,0 +1,85 @@
+---
+id: inventory-storage-api-stageTransferReceipt
+version: 1.0.0
+name: stageTransferReceipt
+summary: Stage a destination transfer receipt (count an arrival)
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Transfers'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/transfers/{transferLineId}/receipt'
+  statusCodes:
+    - '200'
+    - '201'
+    - '400'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+A destination site counted received goods against a transfer line (ADR 0031). The transfer_line_id is looked up in the transfer_allocations ledger: a recognized ALLOCATED line answers 201 with a STAGED transfer receipt (expected_quantity from the ledger, received_quantity as counted, variance = received - expected, SIGNED: positive is over, negative is short) and publishes TransferReceiptStaged through the transactional outbox. NO usable stock moves at this step.
+
+An UNRECOGNIZED scan — no ledger row for the line (this service never allocated it), a row that was REJECTED, a transfer_id mismatch, or a destination equal to the transfer's own origin site — is QUARANTINED: an inventory_exceptions row is written (kind UNKNOWN_TRANSFER or UNRECOGNIZED_TRANSFER), nothing that could raise usable stock is published, and the 422 problem body carries the exception's coordinates in its `exception` extension member so an operator can resolve it.
+
+Idempotent on transfer_line_id at the database level: an identical replay answers 200 with the ORIGINAL receipt (replay: true) and republishes nothing; the same line id with a DIFFERENT payload is a 409 transfer-receipt-conflict (the original receipt is immutable).
+
+
+
+
+## POST `(/transfers/{transferLineId}/receipt)`
+
+### Parameters
+- **transferLineId** (path) (required): The planning context's transfer line id (`<transfer_id>:<line>`), the DB-unique key both the origin-side transfer_allocations ledger and the destination-side transfer_receipts row are anchored on (ADR 0031).
+- **Idempotency-Key** (header): Caller-generated unique key (a UUID per logical submit) that makes a retried request safe (ADR 0018). Required whenever the service runs with Postgres — i.e. in every deployment — and answered with 400 `idempotency-key-required` when absent; a replay with the same key and the same body returns the original response, while the same key with a different body is 422 `idempotency-key-reused`. The in-memory development mode (no DATABASE_URL) does not enforce it, which is why the header is not marked `required` here (the Schemathesis contract run boots that mode).
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+The destination-side custody record for one transfer line (ADR 0031), keyed DB-unique on transferLineId. STAGED means counted but not yet placed (no usable stock); STOWED means placed — the destination site's usable rose exactly once.
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-green-500">201 Created</span>
+The destination-side custody record for one transfer line (ADR 0031), keyed DB-unique on transferLineId. STAGED means counted but not yet placed (no usable stock); STOWED means placed — the destination site's usable rose exactly once.
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem for a QUARANTINED destination scan (ADR 0031): the standard members plus an `exception` extension object carrying the inventory_exceptions row's coordinates. The scan raised no stock; a human resolves the exception.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

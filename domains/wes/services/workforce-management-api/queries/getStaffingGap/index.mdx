@@ -1,0 +1,65 @@
+---
+id: workforce-management-api-getStaffingGap
+version: 1.0.0
+name: getStaffingGap
+summary: Get the staffing gap for a path within a committed shift plan
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Staffing'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: '/paths/{pathId}/staffing-gap'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+Read-model projection: plannedHeads (from the committed ShiftPlan for siteCode+shiftId) vs. currently active LaborAssignment count for pathId. Raises PathUnderstaffed when active assignments fall short of plannedHeads. This surfaces the gap only — it never decides or performs a rebalance; that stays a human call recorded via POST /associates/\{id\}/assignments. ShiftPlan is keyed by site+shift, so both are needed as query parameters alongside the path in the URL — a path's planned heads only make sense within one committed plan. `siteCode` is the canonical name (ADR 0035): it is the plan lookup key AND the associate scope (activeHeads counts only associates with an active shift at that site, ADR 0034). `buildingId` is the DEPRECATED alias for the plan lookup ONLY: a call that gives just buildingId is NOT scoped by site and counts fleet-wide, exactly as before. One of the two is required (neither is 400 missing-building-id). When both are given, buildingId is the plan key and siteCode the scope, as ADR 0034 defined.
+
+
+
+
+## GET `(/paths/{pathId}/staffing-gap)`
+
+### Parameters
+- **pathId** (path) (required): The process path's identity (e.g. "pack", "pick", "stow"). By convention, the Certification required to be assigned to a path has the same name as the PathId.
+- **siteCode** (query): The canonical Site code (the facility-layout Site code, e.g. WH1): plan lookup key AND associate scope. Required unless the deprecated buildingId is given. Accepted as given, never validated against facility-layout, so an unknown code simply counts 0.
+- **buildingId** (query): DEPRECATED -- use siteCode. The legacy name of the plan key: alias for the plan lookup ONLY (same stored value). A call that gives only buildingId is not scoped by site. Required unless siteCode is given.
+- **shiftId** (query) (required): The shift (within the site) whose committed plan to read.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

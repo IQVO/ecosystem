@@ -1,0 +1,160 @@
+{
+  "title": "ShiftPlanCommitted CloudEvent",
+  "description": "CloudEvent for one `PathPlan` line of a committed\n`ShiftPlan`. The `data` fields mirror exactly what the Kafka\npublisher emits per line.\n",
+  "allOf": [
+    {
+      "type": "object",
+      "title": "CloudEvents 1.0 context attributes",
+      "description": "The CloudEvents 1.0 structured-mode context attributes shared by\nevery message (ADR-0026). Every attribute is REQUIRED. Each event\nschema below composes this base with an `allOf` and pins its own\n`type` const and `dataschema` const.\n",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "description": "CloudEvents specification version. Always \"1.0\" on this channel.",
+          "enum": [
+            "1.0"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-1>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier of this event occurrence, a UUID v4 minted once\nby the publisher and persisted with the outbox row, so a\nredelivery carries the same id. `(source, id)` is the consumer\nidempotency key.\n",
+          "x-parser-schema-id": "<anonymous-schema-2>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "The producing context. Always \"/warehouse/workforce-management\".",
+          "enum": [
+            "/warehouse/workforce-management"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-3>"
+        },
+        "type": {
+          "type": "string",
+          "description": "Reverse-DNS event type,\n`com.warehouse.wes.workforce-management.<entity>.<EventName>`.\n",
+          "x-parser-schema-id": "<anonymous-schema-4>"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Identifier of the aggregate instance this occurrence is about —\nan associate id, a path id, or a `buildingId/shiftId` pair. Never\nempty.\n",
+          "minLength": 1,
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC3339 UTC timestamp of when the event occurred in the domain.",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "description": "Content type of the `data` member. Always \"application/json\".",
+          "enum": [
+            "application/json"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "Absolute URI naming the payload shape,\n`urn:warehouse:workforce-management:<events|analytics>:<EventName>:v<N>`.\n",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "data": {
+          "type": "object",
+          "description": "The event payload.",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        }
+      },
+      "x-parser-schema-id": "CloudEventBase"
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Fixed type for this event.",
+          "const": "com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted",
+          "x-parser-schema-id": "<anonymous-schema-11>"
+        },
+        "dataschema": {
+          "type": "string",
+          "description": "Fixed dataschema for this event.",
+          "const": "urn:warehouse:workforce-management:events:ShiftPlanCommitted:v1",
+          "x-parser-schema-id": "<anonymous-schema-12>"
+        },
+        "data": {
+          "type": "object",
+          "description": "One committed PathPlan line, in the context of its building and shift.",
+          "required": [
+            "building_id",
+            "shift_id",
+            "path_id",
+            "planned_heads",
+            "planned_rate",
+            "planned_hours"
+          ],
+          "properties": {
+            "site_code": {
+              "type": "string",
+              "description": "Canonical name of the shift-plan key (ADR 0035): the Site\ncode the shift plan was committed for. Carries the SAME\nvalue as `building_id`. Added after v1 shipped, so it is\ndeliberately not `required` -- messages produced before\nthe addition lack it; consumers must fall back to\n`building_id` when it is absent. The first segment of\n`subject` and of the Kafka key is this value.\n",
+              "x-parser-schema-id": "<anonymous-schema-14>"
+            },
+            "building_id": {
+              "type": "string",
+              "deprecated": true,
+              "description": "DEPRECATED -- use `site_code`; same value. Kept, not\nremoved (additive change, no `.v2`); removal needs a later\nbreaking ADR. Site the shift plan was committed for.\n",
+              "x-parser-schema-id": "<anonymous-schema-15>"
+            },
+            "shift_id": {
+              "type": "string",
+              "description": "Shift the plan covers. One ShiftPlan exists per site per shift.",
+              "x-parser-schema-id": "<anonymous-schema-16>"
+            },
+            "path_id": {
+              "type": "string",
+              "description": "Process path this line plans headcount for, e.g. \"pack\".",
+              "x-parser-schema-id": "<anonymous-schema-17>"
+            },
+            "planned_heads": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Heads committed to this path. Never exceeds the path's installed stations.",
+              "x-parser-schema-id": "<anonymous-schema-18>"
+            },
+            "planned_rate": {
+              "type": "number",
+              "description": "Planned units per hour per head used to size this line.",
+              "x-parser-schema-id": "<anonymous-schema-19>"
+            },
+            "planned_hours": {
+              "type": "number",
+              "description": "Total labor hours committed to this path for the shift.",
+              "x-parser-schema-id": "<anonymous-schema-20>"
+            }
+          },
+          "x-parser-schema-id": "<anonymous-schema-13>"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-10>"
+    }
+  ],
+  "x-parser-schema-id": "ShiftPlanCommittedEvent"
+}

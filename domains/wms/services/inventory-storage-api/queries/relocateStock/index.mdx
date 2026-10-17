@@ -1,0 +1,84 @@
+---
+id: inventory-storage-api-relocateStock
+version: 1.0.0
+name: relocateStock
+summary: Move stock of one SKU between two bins of the same site
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Stock'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /relocations
+  statusCodes:
+    - '201'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Records an intra-site relocation (ADR 0039; slotting-optimization ADR 0010): quantity units of sku leave fromBin and arrive in toBin, both bins of siteCode. Only the usable (unreserved) quantity of the SKU in fromBin can move. Both bins' occupancy, every touched StockUnit, a new StockUnit in toBin, the relocation record and the `StockRelocated` event (transactional outbox) commit in one transaction; a concurrent change to either bin or a touched unit is a 409 concurrent-modification and nothing moves.
+
+Behind the Idempotency-Key middleware like the other creating POSTs (ADR 0018): a replay with the same key and body returns the original 201 without moving stock again; the same key with a different body is 422 idempotency-key-reused.
+
+
+
+
+## POST `(/relocations)`
+
+### Parameters
+- **Idempotency-Key** (header): Caller-generated unique key (a UUID per logical submit) that makes a retried request safe (ADR 0018). Required whenever the service runs with Postgres — i.e. in every deployment — and answered with 400 `idempotency-key-required` when absent; a replay with the same key and the same body returns the original response, while the same key with a different body is 422 `idempotency-key-reused`. The in-memory development mode (no DATABASE_URL) does not enforce it, which is why the header is not marked `required` here (the Schemathesis contract run boots that mode).
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+An applied intra-site relocation (ADR 0039). Immutable.
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

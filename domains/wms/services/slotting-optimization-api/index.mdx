@@ -1,0 +1,84 @@
+---
+id: slotting-optimization-api
+version: 1.0.0
+name: Slotting Optimization API
+summary: ''
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Slotting Optimization API
+badges:
+  - content: Slot plans
+    textColor: blue
+    backgroundColor: blue
+  - content: Forward slots
+    textColor: blue
+    backgroundColor: blue
+  - content: Velocity
+    textColor: blue
+    backgroundColor: blue
+  - content: Health
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: slotting-optimization-api-generateSlotPlan
+    version: 1.0.0
+  - id: slotting-optimization-api-listSlotPlans
+    version: 1.0.0
+  - id: >-
+      slotting-optimization-api-slotting-optimization-api_PARAMETERS_slot-plans_{planId}
+    version: 1.0.0
+  - id: slotting-optimization-api-getSlotPlan
+    version: 1.0.0
+  - id: >-
+      slotting-optimization-api-slotting-optimization-api_PARAMETERS_slot-plans_{planId}_approve
+    version: 1.0.0
+  - id: slotting-optimization-api-approveSlotPlan
+    version: 1.0.0
+  - id: >-
+      slotting-optimization-api-slotting-optimization-api_PARAMETERS_slot-plans_{planId}_reject
+    version: 1.0.0
+  - id: slotting-optimization-api-rejectSlotPlan
+    version: 1.0.0
+  - id: slotting-optimization-api-listForwardSlots
+    version: 1.0.0
+  - id: slotting-optimization-api-listSkuVelocity
+    version: 1.0.0
+  - id: slotting-optimization-api-healthz
+    version: 1.0.0
+  - id: slotting-optimization-api-readyz
+    version: 1.0.0
+---
+The WMS-tier planner of forward pick slots in the warehouse-systems platform
+(ADR 0001, ADR 0002). It proposes which SKUs get a forward pick slot and
+which slot, as a reviewable **slot plan**, and records the human decision on
+it. Policy `abc-velocity-v1`: rank SKUs by order-line picks over a lookback
+window, class them A/B/C, and assign eligible forward slots with stickiness
+(a SKU that still fits its current slot keeps it).
+
+A plan is created as a `Draft`. Only `approve` makes it the site's forward
+slot map (at most one `Approved` plan per site; approving a new one
+supersedes the previous one in the same transaction). Approval publishes
+`SlotPlanApproved` with the full assignment map and the moves. This service
+moves no stock itself: wes-work-planning plans the moves as RELOCATE work and
+inventory-storage records them; the resulting `StockRelocated` comes back as
+the plan's `execution` progress on `GET /slot-plans/{planId}` (ADR 0010).
+
+Plans are computed from local copies fed by events (ADR 0003); this API never
+calls a sibling context. Events are published as CloudEvents on
+`warehouse.slotting-optimization.events` through a transactional outbox (see
+`apis/asyncapi.yaml`).
+
+Errors are RFC 7807 problem documents with
+`type = https://errors.slotting-optimization.warehouse-systems.dev/<slug>`.
+There is no authentication layer (fleet decision 2026-09-11).
+  
+
+## Architecture diagram
+<NodeGraph />

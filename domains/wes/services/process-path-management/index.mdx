@@ -1,0 +1,155 @@
+---
+id: process-path-management
+name: Process Path Management (events)
+version: 1.0.0
+summary: ''
+badges:
+  - content: process-path-management
+    textColor: blue
+    backgroundColor: blue
+  - content: process-path
+    textColor: blue
+    backgroundColor: blue
+  - content: cpt-schedule
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: ProcessPathCreated
+    version: 2.0.0
+    to:
+      - id: warehouse.process-path-management.events
+        version: 1.0.0
+  - id: ProcessPathUpdated
+    version: 2.0.0
+    to:
+      - id: warehouse.process-path-management.events
+        version: 1.0.0
+  - id: ProcessPathDeactivated
+    version: 2.0.0
+    to:
+      - id: warehouse.process-path-management.events
+        version: 1.0.0
+  - id: CPTScheduleChanged
+    version: 1.0.0
+    to:
+      - id: warehouse.process-path-management.events
+        version: 1.0.0
+  - id: ProcessPathCreatedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.process-path-management.analytics
+        version: 1.0.0
+  - id: ProcessPathUpdatedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.process-path-management.analytics
+        version: 1.0.0
+  - id: ProcessPathDeactivatedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.process-path-management.analytics
+        version: 1.0.0
+  - id: CPTScheduleChangedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.process-path-management.analytics
+        version: 1.0.0
+receives: []
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+Publisher-side event contract for the **Process Path Management**
+bounded context. Unlike `labor-performance`'s own `apis/asyncapi.yaml`
+(which documents what that service SUBSCRIBES TO), this document
+describes what this service PUBLISHES: it is the SOURCE of the
+process-path published language for the fleet, never a consumer of
+anyone else's events.
+
+## Message format: CloudEvents 1.0 (mandatory, ADR 0016)
+
+Every message on `warehouse.process-path-management.events` AND
+`warehouse.process-path-management.analytics` is a CloudEvents 1.0
+event in structured content mode (Kafka protocol binding). The Kafka
+message value is the JSON event format and every message carries the
+Kafka header `content-type: application/cloudevents+json; charset=UTF-8`.
+W3C trace context travels in the `traceparent` (and, when present,
+`tracestate`) Kafka headers of every message raised inside a traced
+operation (ADR 0027); a message raised outside any trace carries no
+trace headers. Baggage is never propagated. The CloudEvent body does
+not carry the trace context.
+There is no other envelope, no dual-write and no envelope toggle.
+
+```json
+{
+  "specversion": "1.0",
+  "id": "4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90",
+  "source": "/warehouse/process-path-management",
+  "type": "com.warehouse.wes.process-path-management.processpath.ProcessPathCreated",
+  "subject": "PICK",
+  "time": "2026-09-06T00:00:00Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:process-path-management:events:ProcessPathCreated:v1",
+  "data": { "path_id": "PICK", "...": "..." }
+}
+```
+
+- `id` is minted once per domain event and persisted with the outbox
+  row, so a redelivery carries the same `id`; `(source, id)` is the
+  consumer idempotency key.
+- `subject` is the aggregate id (`path_id` for ProcessPath* events,
+  `site_id` for CPTScheduleChanged) — the same value as the Kafka key.
+- `type` = `com.warehouse.wes.process-path-management.<entity>.<EventName>`.
+  These exact strings are a cross-service contract (consumed by
+  fulfillment-execution, wes-work-planning, workforce-management and
+  order-management); consumers dispatch on the FULL `type`.
+- `dataschema` = `urn:warehouse:process-path-management:<events|analytics>:<EventName>:v1`
+  distinguishes the integration payload from the analytics payload of
+  the same occurrence (today both carry the identical `data` shape).
+- A breaking payload change ships as a new `.v2` type with a new
+  dataschema version, never by mutating an existing one.
+
+## Single, shared topic for four event types
+
+A single topic (not one per event type) per stream. Consumers dispatch
+on the CloudEvents `type`. `ProcessPathCreated`, `ProcessPathUpdated`,
+and `ProcessPathDeactivated` are keyed by `path_id`;
+`CPTScheduleChanged` (ADR 0010) is keyed by `site_id` — a different
+aggregate on the same topic, so a consumer replaying the topic sees a
+given path's or a given site's events in publish order, never
+interleaved with another aggregate's out of order.
+
+## ADR 0010: the fulfillment capability contract
+
+`ProcessPathCreated`/`ProcessPathUpdated` gained two additive fields —
+`cycle_time_p95` (the operator-declared p95 end-to-end cycle time) and
+`eligibility` (the rules a unit of work must satisfy to be routed to
+this path) — and this topic now also carries `CPTScheduleChanged`, a
+new event type for the site-scoped Critical Pull Time schedule. Every
+consumer's decoder must tolerate an unknown `type` (ignore it,
+not fail) and tolerate unknown/absent fields on the payloads it
+already knows, exactly as it already must for any future addition —
+see ADR 0010's Consequences section.
+
+## ADR 0034: process-path intake
+
+`ProcessPathCreated`/`ProcessPathUpdated` gained an additive `intake`
+array: the demand sources (`CUSTOMER_ORDER`, `STOCK_TRANSFER`,
+`SLOT_RELOCATION`, `INVENTORY_CONTROL`) allowed to route work onto the
+path. order-management's path selection considers only paths whose
+intake contains `CUSTOMER_ORDER`; `[]` means the path is reached only by
+an explicit path id (PACK, REBIN, SLAM).
+
+## Consumers
+
+`fulfillment-execution`, `wes-work-planning`, `workforce-management`
+(ProcessPath* catalogue caches) and `order-management` (ProcessPath*
+and CPTScheduleChanged) consume the integration topic. The analytics
+topic is consumed only by this service's own projector
+(`cmd/pathmgmt-projector`). See `docs/docs/ecosystem/context-map.md`.
+
+
+## Architecture diagram
+<NodeGraph />

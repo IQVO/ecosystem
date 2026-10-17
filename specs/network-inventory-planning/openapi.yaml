@@ -1,0 +1,1227 @@
+openapi: 3.1.0
+info:
+  title: Network Inventory Planning API
+  version: 1.0.0
+  contact:
+    name: warehouse-systems
+    url: https://github.com/IQVO/network-inventory-planning
+  description: |
+    Advisory network inventory balancing for the warehouse-systems fleet.
+
+    Network Inventory Planning projects sibling-context facts (site capability,
+    site-SKU demand, published capacity) into local read models and proposes
+    inter-warehouse transfers. It never mutates physical stock: approval,
+    reservation and physical execution live in their owning contexts.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: health
+    description: Process probes.
+  - name: planning
+    description: Advisory planning and simulation.
+  - name: transfers
+    description: Inter-warehouse transfer saga (approval and lifecycle).
+  - name: rebalance
+    description: >-
+      Scheduled (observe-only) rebalance run history (ADR 0007) and the
+      operator-managed Rebalance Policy and Transfer Lane catalogues the
+      scheduled pass plans from (ADR 0015).
+  - name: reports
+    description: >-
+      Read-only saga-health analytics reports (ADR 0009) served by the separate
+      nip-reports binary on port 8092, from the analytical database the
+      nip-projector builds from this service's analytics topic. Not part of the
+      OLTP API on port 8080.
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness probe.
+      description: Returns 204 when the process is up. Carries no dependency state.
+      responses:
+        '204':
+          description: The service is up.
+  /v1/transfer-proposals:generate:
+    post:
+      operationId: generateTransferProposals
+      tags: [planning]
+      summary: Generate advisory transfer proposals from an explicit snapshot.
+      description: |
+        Deterministic, explainable proposal generation over a caller-provided
+        coherent planning snapshot. Validation failures return RFC 7807
+        problem+json. Diagnostic boundary: production planning consumes local
+        read models via the simulation endpoint instead.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRequest'
+      responses:
+        '200':
+          description: Advisory proposals, score-ordered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateResponse'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+  /v1/transfer-simulations:
+    get:
+      operationId: simulateTransferOptions
+      tags: [planning]
+      summary: Simulate advisory transfer options from local read models.
+      description: |
+        Serves an advisory-only simulation built from the service's projected
+        network facts. Fail-closed: returns 503 problem+json when the read
+        models are unconfigured, incomplete or stale, rather than proposing
+        from partial state.
+      responses:
+        '200':
+          description: Advisory simulation from current local read models.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulationResponse'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /v1/transfers:approve:
+    post:
+      operationId: approveTransfer
+      tags: [transfers]
+      summary: Approve a transfer proposal and start the allocation saga.
+      description: |
+        Takes a proposal snapshot (origin, destination, SKU, quantity, policy
+        version) and validates it against the CURRENT fail-closed read
+        models. On success the InterWarehouseTransfer saga persists through
+        PROPOSED → APPROVED → ALLOCATING and, in the same transaction,
+        enqueue TransferPlanApproved and TransferAllocationRequested into the
+        transactional outbox; a relay publishes them to Kafka and
+        inventory-storage's reply later drives the transfer to ALLOCATED or
+        UNFULFILLABLE. Idempotent per the required Idempotency-Key header:
+        replaying the same key with the same payload returns the ORIGINAL
+        transfer (replayed: true); the same key with a different payload is a
+        409. Fail-closed validation failures (missing/stale/disabled facts)
+        return 422; unusable read models return 503.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: |
+            Transfer-level idempotency key; a fresh key per logical approval.
+            Replaying a key replays the FIRST transfer it created.
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveTransferRequest'
+      responses:
+        '200':
+          description: |
+            The persisted saga state (200, not 201: a replay of the same
+            idempotency key returns the original transfer).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApproveTransferResponse'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /v1/rebalance-runs:
+    get:
+      operationId: listRebalanceRuns
+      tags: [rebalance]
+      summary: List scheduled rebalance runs, newest first.
+      description: |
+        The observe-only scheduled-rebalance run history (ADR 0007): one
+        row per NIP_REBALANCE_SCHEDULE tick, recording the snapshot
+        watermark the pass planned from, the proposal/rejected counts,
+        and the outcome — a fail-closed snapshot refusal is a FAILED run
+        carrying its reason, never a hidden error. Runs never approve
+        anything and never emit an allocation command.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Page size, clamped to [1, 200]; default 50.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: The run history, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebalanceRunsResponse'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+
+  /v1/rebalance-policies:
+    get:
+      operationId: listRebalancePolicies
+      tags: [rebalance]
+      summary: List the Rebalance Policy catalogue.
+      description: |
+        The operator-managed Rebalance Policy catalogue (ADR 0015), one entry
+        per site + SKU, ordered by site then SKU. Each entry embeds the SAME
+        Policy shape POST /v1/transfer-proposals:generate accepts, plus its
+        revision (the optimistic-concurrency token). The scheduled rebalance
+        pass plans from this catalogue.
+      responses:
+        '200':
+          description: Every policy in the catalogue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebalancePolicyList'
+        '503':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: putRebalancePolicy
+      tags: [rebalance]
+      summary: Create or revise one Rebalance Policy (idempotent).
+      description: |
+        Upserts the Policy in the body, keyed by its Site + SKU. Idempotent:
+        a PUT carrying exactly the stored policy writes nothing and answers
+        200 with outcome UNCHANGED. A changed policy bumps the revision
+        (outcome UPDATED); a new one is created at revision 1 (201,
+        outcome CREATED). Optimistic concurrency: send the entry's ETag in
+        If-Match to update only that revision (412 when it moved on);
+        without If-Match the PUT applies to the current revision. Two
+        writers racing on the same revision: one wins, the other gets 409.
+        422 for an entry refused on its face (missing key, negative
+        quantity, TargetStock below SafetyStock).
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Policy'
+      responses:
+        '200':
+          description: Updated (or unchanged, on an idempotent replay).
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebalancePolicyEntry'
+        '201':
+          description: Created at revision 1.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebalancePolicyEntry'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '412':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /v1/transfer-lanes:
+    get:
+      operationId: listTransferLanes
+      tags: [rebalance]
+      summary: List the Transfer Lane catalogue.
+      description: |
+        The operator-managed Transfer Lane catalogue (ADR 0015), one entry
+        per directed origin → destination, ordered by origin then
+        destination. Each entry embeds the SAME Lane shape the generate
+        endpoint accepts, plus its revision. The scheduled pass uses a lane
+        only when it is Enabled AND site_capability lets its origin send and
+        its destination receive.
+      responses:
+        '200':
+          description: Every lane in the catalogue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferLaneList'
+        '503':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: putTransferLane
+      tags: [rebalance]
+      summary: Create or revise one Transfer Lane (idempotent).
+      description: |
+        Upserts the Lane in the body, keyed by its Origin → Destination
+        (directed: WH1→WH2 and WH2→WH1 are two lanes). Same idempotency,
+        If-Match, 409 and 422 rules as PUT /v1/rebalance-policies; a lane
+        whose Origin equals its Destination, or with a negative LeadTime or
+        UnitHandlingCost, is a 422. Disable a lane with Enabled: false
+        (there is no DELETE).
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Lane'
+      responses:
+        '200':
+          description: Updated (or unchanged, on an idempotent replay).
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferLaneEntry'
+        '201':
+          description: Created at revision 1.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferLaneEntry'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '412':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+
+  /v1/transfers:
+    get:
+      operationId: listTransfers
+      tags: [transfers]
+      summary: List transfers, newest first.
+      description: |
+        Read-only page of inter-warehouse transfers from the saga store,
+        newest created first, optionally filtered by lifecycle state and by
+        origin and/or destination site. Never mutates anything. 400 for an
+        unknown state or out-of-range paging; 503 problem+json when the
+        instance runs without a database.
+      parameters:
+        - name: state
+          in: query
+          required: false
+          description: Only transfers currently in this lifecycle state (case-insensitive).
+          schema:
+            $ref: '#/components/schemas/TransferState'
+        - name: originSiteId
+          in: query
+          required: false
+          description: Only transfers leaving this origin site.
+          schema:
+            $ref: '#/components/schemas/SiteID'
+        - name: destinationSiteId
+          in: query
+          required: false
+          description: Only transfers going to this destination site.
+          schema:
+            $ref: '#/components/schemas/SiteID'
+        - name: limit
+          in: query
+          required: false
+          description: Page size, 1 to 200 (default 50).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          description: Number of matching transfers to skip (default 0).
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: One page of transfers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferList'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /v1/transfers/{id}:
+    get:
+      operationId: getTransfer
+      tags: [transfers]
+      summary: Get one transfer with its audit trail.
+      description: |
+        Read-only view of one transfer: its current state and facts plus the
+        immutable audit trail of state transitions (timestamp and cause of
+        each). 404 problem+json for an unknown id; 503 problem+json when the
+        instance runs without a database.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The transfer id (the transferId returned by approval).
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: The transfer and its audit trail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferDetail'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /reports/transfer-funnel:
+    servers:
+      - url: http://localhost:8092
+        description: nip-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getTransferFunnelReport
+      summary: How many distinct transfers reached each saga state, per day
+      tags: [reports]
+      description: |
+        For the TransferStateAdvanced analytics occurrences in the half-open range [from, to) (by the
+        CloudEvents time: from inclusive, to exclusive), counts per UTC day and state `to` the DISTINCT
+        transfers that reached it. Ordered by day, then state. Built from the analytics stream only
+        (ADR 0009). `from` / `to` are optional RFC 3339 timestamps: both omitted means the 30 days
+        ending now; only `to` means the 30 days before it; only `from` means from..now; the range must
+        be non-empty and at most 366 days. 200 with `days: []` when nothing matches.
+      parameters:
+        - $ref: '#/components/parameters/ReportFrom'
+        - $ref: '#/components/parameters/ReportTo'
+      responses:
+        '200':
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferFunnelReport'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '500':
+          $ref: '#/components/responses/Problem'
+  /reports/state-dwell:
+    servers:
+      - url: http://localhost:8092
+        description: nip-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getStateDwellReport
+      summary: Saga age percentiles at the moment of leaving each state, per day
+      tags: [reports]
+      description: |
+        For the TransferStateAdvanced occurrences in [from, to), per UTC day and state `from` (the state
+        the transition LEFT), the number of transitions and the continuous p50/p95 (linear
+        interpolation) of `age_seconds`. `age_seconds` is the saga's age since creation at the moment of
+        the transition, so it is how far along the saga was when it left the state, not a per-state
+        duration; the difference between consecutive states approximates the time spent. Creation
+        entries (empty `from`) leave no state and are not counted. Ordered by day, then state. `from` /
+        `to` as in /reports/transfer-funnel. 200 with `days: []` when nothing matches.
+      parameters:
+        - $ref: '#/components/parameters/ReportFrom'
+        - $ref: '#/components/parameters/ReportTo'
+      responses:
+        '200':
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StateDwellReport'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '500':
+          $ref: '#/components/responses/Problem'
+  /reports/stuck-transfers:
+    servers:
+      - url: http://localhost:8092
+        description: nip-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getStuckTransfersReport
+      summary: TransferStuckDetected occurrences per state per day, plus the latest ones
+      tags: [reports]
+      description: |
+        For the TransferStuckDetected occurrences in [from, to), `days`: per UTC day and `state`, the
+        detections (the health ticker re-detects a transfer on every pass while it stays stuck) and the
+        distinct transfers; `latest`: the newest occurrences, most recent first (ties by transfer id),
+        at most `limit`. `from` / `to` as in /reports/transfer-funnel. 200 with empty arrays when
+        nothing matches.
+      parameters:
+        - $ref: '#/components/parameters/ReportFrom'
+        - $ref: '#/components/parameters/ReportTo'
+        - name: limit
+          in: query
+          required: false
+          description: How many latest occurrences to return, 1 to 100 (default 20).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StuckTransfersReport'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '500':
+          $ref: '#/components/responses/Problem'
+  /reports/rebalance-runs:
+    servers:
+      - url: http://localhost:8092
+        description: nip-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getRebalanceRunsReport
+      summary: Scheduled rebalance runs, proposals against rejected, per day
+      tags: [reports]
+      description: |
+        For the RebalanceRunCompleted occurrences in [from, to), per UTC day: the runs, the proposals the
+        planner produced in total, how many of them the runs' own safety checks rejected (never an
+        operator rejection: the run approves nothing), `rejection_rate` (rejected / proposals, 0 when
+        there were no proposals) and the stale facts seen. Ordered by day. `from` / `to` as in
+        /reports/transfer-funnel. 200 with `days: []` when nothing matches.
+      parameters:
+        - $ref: '#/components/parameters/ReportFrom'
+        - $ref: '#/components/parameters/ReportTo'
+      responses:
+        '200':
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebalanceRunsReport'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '500':
+          $ref: '#/components/responses/Problem'
+  /reports/freshness:
+    servers:
+      - url: http://localhost:8092
+        description: nip-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getReportsFreshness
+      summary: How far the analytics projection is behind
+      tags: [reports]
+      description: |
+        The freshness lag of the projection all the reports read: `as_of` is the CloudEvents time of the
+        newest event the projector has applied and `lag_seconds` is now minus `as_of` (never negative).
+        Both are null until the first event is applied. A growing lag means the projector is down or
+        behind, not that a report is wrong: it catches up when the projector does.
+      responses:
+        '200':
+          description: The freshness (null fields while nothing was projected).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportsFreshness'
+        '500':
+          $ref: '#/components/responses/Problem'
+components:
+  parameters:
+    ReportFrom:
+      name: from
+      in: query
+      required: false
+      description: RFC 3339; inclusive. Defaults to `to` minus 30 days.
+      schema:
+        type: string
+        format: date-time
+      example: '2026-10-05T00:00:00Z'
+    ReportTo:
+      name: to
+      in: query
+      required: false
+      description: RFC 3339; exclusive. Defaults to now.
+      schema:
+        type: string
+        format: date-time
+      example: '2026-10-07T00:00:00Z'
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        Optimistic concurrency for a catalogue PUT (ADR 0015): the entry's
+        current revision, as its ETag ("3") or bare (3). The PUT applies only
+        while the stored revision still equals it (412 version-mismatch
+        otherwise, including when the entry does not exist). Omit it to
+        apply the PUT to whatever revision is current.
+      schema:
+        type: string
+      example: '"3"'
+  headers:
+    ETag:
+      description: The catalogue entry's revision as a strong ETag (send it back in If-Match).
+      schema:
+        type: string
+      example: '"2"'
+  responses:
+    Problem:
+      description: RFC 7807 problem+json error.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          description: Stable machine-readable problem identifier.
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+    SiteID:
+      type: string
+      minLength: 1
+      description: Facility-layout Site code identifying one warehouse.
+    SKU:
+      type: string
+      minLength: 1
+    Position:
+      type: object
+      required: [Site, SKU, Available, AsOf]
+      properties:
+        Site:
+          $ref: '#/components/schemas/SiteID'
+        SKU:
+          $ref: '#/components/schemas/SKU'
+        Available:
+          type: integer
+          minimum: 0
+        CustomerReservations:
+          type: integer
+          minimum: 0
+        ConfirmedInbound:
+          type: integer
+          minimum: 0
+        CommittedOutbound:
+          type: integer
+          minimum: 0
+        AsOf:
+          type: string
+          format: date-time
+    Policy:
+      type: object
+      required: [Version, Site, SKU]
+      properties:
+        Version:
+          type: string
+        Site:
+          $ref: '#/components/schemas/SiteID'
+        SKU:
+          $ref: '#/components/schemas/SKU'
+        SafetyStock:
+          type: integer
+          minimum: 0
+        TargetStock:
+          type: integer
+          minimum: 0
+        UnitPriority:
+          type: integer
+    Lane:
+      type: object
+      required: [Origin, Destination, Enabled]
+      properties:
+        Origin:
+          $ref: '#/components/schemas/SiteID'
+        Destination:
+          $ref: '#/components/schemas/SiteID'
+        LeadTime:
+          type: integer
+          description: Lead time in nanoseconds (Go time.Duration wire shape).
+        UnitHandlingCost:
+          type: integer
+        Enabled:
+          type: boolean
+    CatalogueOutcome:
+      type: string
+      enum: [CREATED, UPDATED, UNCHANGED]
+      description: What a catalogue PUT did (UNCHANGED = idempotent replay, nothing written).
+    RebalancePolicyEntry:
+      type: object
+      required: [policy, revision, updatedAt]
+      properties:
+        policy:
+          $ref: '#/components/schemas/Policy'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Optimistic-concurrency token (also the ETag); 1 on creation, +1 per change.
+        updatedAt:
+          type: string
+          format: date-time
+        outcome:
+          $ref: '#/components/schemas/CatalogueOutcome'
+    RebalancePolicyList:
+      type: object
+      required: [policies]
+      properties:
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/RebalancePolicyEntry'
+    TransferLaneEntry:
+      type: object
+      required: [lane, revision, updatedAt]
+      properties:
+        lane:
+          $ref: '#/components/schemas/Lane'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Optimistic-concurrency token (also the ETag); 1 on creation, +1 per change.
+        updatedAt:
+          type: string
+          format: date-time
+        outcome:
+          $ref: '#/components/schemas/CatalogueOutcome'
+    TransferLaneList:
+      type: object
+      required: [lanes]
+      properties:
+        lanes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransferLaneEntry'
+    GenerateRequest:
+      type: object
+      required: [asOf, positions, policies, lanes]
+      properties:
+        asOf:
+          type: string
+          format: date-time
+        positions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Position'
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/Policy'
+        lanes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Lane'
+    Proposal:
+      type: object
+      required: [Origin, Destination, SKU, Quantity, PolicyVersion, PositionAsOf, Reasons, ScoreBreakdown]
+      properties:
+        Origin:
+          $ref: '#/components/schemas/SiteID'
+        Destination:
+          $ref: '#/components/schemas/SiteID'
+        SKU:
+          $ref: '#/components/schemas/SKU'
+        Quantity:
+          type: integer
+          minimum: 1
+        PolicyVersion:
+          type: string
+        PositionAsOf:
+          type: string
+          format: date-time
+        Reasons:
+          type: array
+          items:
+            type: string
+            enum: [DESTINATION_BELOW_TARGET, ORIGIN_ABOVE_SAFETY_STOCK, APPROVED_LANE]
+        ScoreBreakdown:
+          type: object
+          required: [PriorityBenefit, HandlingPenalty, LeadTimePenalty]
+          properties:
+            PriorityBenefit:
+              type: integer
+            HandlingPenalty:
+              type: integer
+            LeadTimePenalty:
+              type: integer
+    GenerateResponse:
+      type: object
+      required: [proposals]
+      properties:
+        proposals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Proposal'
+    SimulationResponse:
+      type: object
+      required: [advisory, asOf, sites]
+      properties:
+        advisory:
+          type: boolean
+          description: Always true. The simulation reserves and moves nothing.
+        asOf:
+          type: string
+          format: date-time
+          description: Oldest watermark among the facts the simulation used.
+        sites:
+          type: array
+          description: |
+            One advisory view per site, built from the local read models. This
+            endpoint does NOT propose transfers; proposals come from
+            POST /v1/transfer-proposals:generate over an explicit snapshot, and
+            an operator approves one with POST /v1/transfers:approve.
+          items:
+            $ref: '#/components/schemas/SiteSimulation'
+    SiteSimulation:
+      type: object
+      required:
+        - site
+        - originEnabled
+        - destinationEnabled
+        - totalDemand
+        - capacityOverWindow
+        - capacityHeadroom
+        - windowStart
+        - windowEnd
+      properties:
+        site:
+          type: string
+        originEnabled:
+          type: boolean
+          description: The site may originate transfers.
+        destinationEnabled:
+          type: boolean
+          description: The site may receive transfers.
+        totalDemand:
+          type: integer
+          description: Demand over the plan window.
+        capacityOverWindow:
+          type: number
+          description: Published capacity over the plan window.
+        capacityHeadroom:
+          type: integer
+          description: Capacity minus demand. Negative means the site is short.
+        windowStart:
+          type: string
+          format: date-time
+        windowEnd:
+          type: string
+          format: date-time
+    ApproveTransferRequest:
+      type: object
+      required: [originSiteId, destinationSiteId, sku, quantity, policyVersion, proposalAsOf]
+      properties:
+        originSiteId:
+          $ref: '#/components/schemas/SiteID'
+        destinationSiteId:
+          $ref: '#/components/schemas/SiteID'
+        sku:
+          $ref: '#/components/schemas/SKU'
+        quantity:
+          type: integer
+          minimum: 1
+        policyVersion:
+          type: string
+          minLength: 1
+          description: The policy version the advisory proposal was scored under.
+        operatorReason:
+          type: string
+          description: The operator's captured approval reason (audit trail).
+        proposalAsOf:
+          type: string
+          format: date-time
+          description: The advisory proposal snapshot's as-of watermark.
+    ApproveTransferResponse:
+      type: object
+      required: [transferId, state, originSiteId, destinationSiteId, sku, quantity, policyVersion, replayed, expiresAt, transferLineId]
+      properties:
+        transferId:
+          type: string
+          description: The saga aggregate id.
+        state:
+          type: string
+          enum: [DRAFT, PROPOSED, APPROVED, ALLOCATING, ALLOCATED, PICKED, IN_TRANSIT, ARRIVED, RECEIVED, UNFULFILLABLE, CANCELLED]
+          description: |
+            The persisted saga state at response time — ALLOCATING
+            immediately after a fresh approval (awaiting inventory-storage's
+            reply). PICKED/IN_TRANSIT/ARRIVED/RECEIVED are driven later by
+            fulfillment-execution's transfer facts and inventory-storage's
+            destination facts (ADR 0005); RECEIVED is terminal.
+        originSiteId:
+          $ref: '#/components/schemas/SiteID'
+        destinationSiteId:
+          $ref: '#/components/schemas/SiteID'
+        sku:
+          $ref: '#/components/schemas/SKU'
+        quantity:
+          type: integer
+        policyVersion:
+          type: string
+        reservationId:
+          type: string
+          description: inventory-storage's reservation id, present once ALLOCATED.
+        rejectionReason:
+          type: string
+          enum: [ORIGIN_SITE_UNKNOWN, INSUFFICIENT_USABLE, IDEMPOTENCY_CONFLICT]
+          description: The closed rejection reason, present once UNFULFILLABLE.
+        replayed:
+          type: boolean
+          description: True when the idempotency key already existed (the original transfer is returned).
+        expiresAt:
+          type: string
+          format: date-time
+          description: The approval's expiry deadline (24h in v1).
+        transferLineId:
+          type: string
+          description: |
+            The v1 single transfer line id, "<transferId>:1" — the
+            inventory-storage allocation ledger key and the reply subject.
+    RebalanceRun:
+      type: object
+      required: [id, startedAt, proposalCount, rejectedCount, outcome]
+      properties:
+        id:
+          type: integer
+          format: int64
+        startedAt:
+          type: string
+          format: date-time
+        snapshotAsOf:
+          type: string
+          format: date-time
+          description: The planning-facts watermark the pass planned from; absent on a FAILED run that never reached a watermark.
+        proposalCount:
+          type: integer
+        rejectedCount:
+          type: integer
+        outcome:
+          type: string
+          enum: [COMPLETED, FAILED]
+        failClosedReason:
+          type: string
+          description: The fail-closed snapshot refusal; present only when outcome is FAILED.
+    RebalanceRunsResponse:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RebalanceRun'
+    TransferState:
+      type: string
+      enum: [DRAFT, PROPOSED, APPROVED, ALLOCATING, ALLOCATED, PICKED, IN_TRANSIT, ARRIVED, RECEIVED, UNFULFILLABLE, CANCELLED]
+      description: |
+        Saga lifecycle state. RECEIVED, UNFULFILLABLE and CANCELLED are
+        terminal; every other state is waiting for a next step.
+    TransferView:
+      type: object
+      required: [id, state, sku, quantity, originSiteId, destinationSiteId, policyVersion, expiresAt, createdAt, updatedAt, version]
+      properties:
+        id:
+          type: string
+          description: The transfer (saga aggregate) id.
+        state:
+          $ref: '#/components/schemas/TransferState'
+        sku:
+          $ref: '#/components/schemas/SKU'
+        quantity:
+          type: integer
+          description: Units planned to move.
+        pickedQuantity:
+          type: integer
+          description: Units the origin pick actually picked; present from PICKED onwards (may be short of quantity).
+        originSiteId:
+          $ref: '#/components/schemas/SiteID'
+        destinationSiteId:
+          $ref: '#/components/schemas/SiteID'
+        policyVersion:
+          type: string
+        reservationId:
+          type: string
+          description: inventory-storage's reservation id, present once ALLOCATED.
+        rejectionReason:
+          type: string
+          enum: [ORIGIN_SITE_UNKNOWN, INSUFFICIENT_USABLE, IDEMPOTENCY_CONFLICT]
+          description: The closed rejection reason, present once UNFULFILLABLE.
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          description: Time of the last state transition; a non-terminal transfer whose updatedAt is old is stuck.
+        version:
+          type: integer
+          format: int64
+          description: Optimistic-concurrency version (the number of persisted state transitions).
+    AuditEntry:
+      type: object
+      required: [seq, to, event, cause, occurredAt]
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: Per-transfer sequence, starting at 1.
+        from:
+          type: string
+          description: The previous state; absent on the creation entry.
+        to:
+          $ref: '#/components/schemas/TransferState'
+        event:
+          type: string
+          description: The domain event that caused the transition, e.g. TransferAllocationRequested.
+        cause:
+          type: string
+          description: Human-readable cause of the transition (operator reason, reservation id, rejection reason, ...).
+        occurredAt:
+          type: string
+          format: date-time
+    TransferDetail:
+      allOf:
+        - $ref: '#/components/schemas/TransferView'
+        - type: object
+          required: [audit]
+          properties:
+            audit:
+              type: array
+              description: The immutable state-transition trail, oldest first.
+              items:
+                $ref: '#/components/schemas/AuditEntry'
+    TransferList:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransferView'
+        total:
+          type: integer
+          description: Number of transfers matching the filter before paging.
+        limit:
+          type: integer
+        offset:
+          type: integer
+    ReportsFreshness:
+      type: object
+      required: [as_of, lag_seconds]
+      properties:
+        as_of:
+          type: [string, 'null']
+          format: date-time
+          description: CloudEvents time of the newest event applied; null when none.
+        lag_seconds:
+          type: [number, 'null']
+          format: double
+          minimum: 0
+          description: now - as_of, in seconds; null when nothing was applied.
+          example: 4.2
+    ReportRange:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: The effective inclusive start.
+        to:
+          type: string
+          format: date-time
+          description: The effective exclusive end.
+    TransferFunnelDay:
+      type: object
+      required: [day, state, transfers]
+      properties:
+        day:
+          type: string
+          format: date
+          description: UTC calendar day of the transition.
+          example: '2026-10-05'
+        state:
+          type: string
+          description: The saga state reached (TransferStateAdvanced `to`).
+          example: APPROVED
+        transfers:
+          type: integer
+          minimum: 1
+          description: Distinct transfers that reached the state that day.
+          example: 5
+    TransferFunnelReport:
+      allOf:
+        - $ref: '#/components/schemas/ReportRange'
+        - type: object
+          required: [days]
+          properties:
+            days:
+              type: array
+              items:
+                $ref: '#/components/schemas/TransferFunnelDay'
+    StateDwellDay:
+      type: object
+      required: [day, state, transitions, p50_age_seconds, p95_age_seconds]
+      properties:
+        day:
+          type: string
+          format: date
+          example: '2026-10-05'
+        state:
+          type: string
+          description: The state the transitions left (TransferStateAdvanced `from`).
+          example: PROPOSED
+        transitions:
+          type: integer
+          minimum: 1
+          example: 6
+        p50_age_seconds:
+          type: number
+          format: double
+          description: Median saga age (seconds since creation) when the state was left.
+          example: 200
+        p95_age_seconds:
+          type: number
+          format: double
+          description: 95th percentile (continuous) of the same.
+          example: 601.25
+    StateDwellReport:
+      allOf:
+        - $ref: '#/components/schemas/ReportRange'
+        - type: object
+          required: [days]
+          properties:
+            days:
+              type: array
+              items:
+                $ref: '#/components/schemas/StateDwellDay'
+    StuckDay:
+      type: object
+      required: [day, state, detections, transfers]
+      properties:
+        day:
+          type: string
+          format: date
+          example: '2026-10-05'
+        state:
+          type: string
+          example: ALLOCATING
+        detections:
+          type: integer
+          minimum: 1
+          description: TransferStuckDetected occurrences (a stuck transfer is re-detected every pass).
+          example: 2
+        transfers:
+          type: integer
+          minimum: 1
+          description: Distinct transfers detected.
+          example: 1
+    StuckOccurrence:
+      type: object
+      required: [transfer_id, state, age_seconds, threshold_seconds, detected_at]
+      properties:
+        transfer_id:
+          type: string
+        state:
+          type: string
+        age_seconds:
+          type: integer
+          format: int64
+          description: Seconds since the transfer's last transition when it was detected.
+        threshold_seconds:
+          type: integer
+          format: int64
+          description: The per-state threshold that was exceeded.
+        detected_at:
+          type: string
+          format: date-time
+    StuckTransfersReport:
+      allOf:
+        - $ref: '#/components/schemas/ReportRange'
+        - type: object
+          required: [days, latest]
+          properties:
+            days:
+              type: array
+              items:
+                $ref: '#/components/schemas/StuckDay'
+            latest:
+              type: array
+              items:
+                $ref: '#/components/schemas/StuckOccurrence'
+    RebalanceRunsDay:
+      type: object
+      required: [day, runs, proposals, rejected, rejection_rate, stale_facts]
+      properties:
+        day:
+          type: string
+          format: date
+          example: '2026-10-05'
+        runs:
+          type: integer
+          minimum: 1
+          example: 2
+        proposals:
+          type: integer
+          minimum: 0
+          description: Proposals the planner produced, summed over the day's runs.
+          example: 14
+        rejected:
+          type: integer
+          minimum: 0
+          description: Proposals the runs' own safety checks refused (never an operator rejection).
+          example: 2
+        rejection_rate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: rejected / proposals; 0 when there were no proposals.
+          example: 0.142857
+        stale_facts:
+          type: integer
+          minimum: 0
+          example: 1
+    RebalanceRunsReport:
+      allOf:
+        - $ref: '#/components/schemas/ReportRange'
+        - type: object
+          required: [days]
+          properties:
+            days:
+              type: array
+              items:
+                $ref: '#/components/schemas/RebalanceRunsDay'

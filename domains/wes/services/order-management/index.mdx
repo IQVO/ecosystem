@@ -1,0 +1,222 @@
+---
+id: order-management
+name: Order Management (events)
+version: 1.0.0
+summary: ''
+badges:
+  - content: order-management
+    textColor: blue
+    backgroundColor: blue
+  - content: analytics
+    textColor: blue
+    backgroundColor: blue
+  - content: order
+    textColor: blue
+    backgroundColor: blue
+  - content: order-line
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: OrderAllocatedIntegration
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.events
+        version: 1.0.0
+  - id: OrderPartiallyAllocatedIntegration
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.events
+        version: 1.0.0
+  - id: OrderRepromisedIntegration
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.events
+        version: 1.0.0
+  - id: SiteSkuDemandChangedIntegration
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.events
+        version: 1.0.0
+  - id: OrderReceivedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderLineAllocatedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderLineBackorderedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderAllocatedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderPartiallyAllocatedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderAllocationPartiallyFailedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderLineReleasedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderReleasedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderCancelledAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderRepromisedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+  - id: OrderReleaseUnconfirmedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.order-management.analytics
+        version: 1.0.0
+receives:
+  - id: TaskCPTMissedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: PackageManifestedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: ProcessPathCreatedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.process-path-management.events
+        version: 1.0.0
+  - id: ProcessPathUpdatedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.process-path-management.events
+        version: 1.0.0
+  - id: ProcessPathDeactivatedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.process-path-management.events
+        version: 1.0.0
+  - id: CPTScheduleChangedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.process-path-management.events
+        version: 1.0.0
+  - id: PathCapacityChangedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: WorkUnitCreatedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: CapacityPlanCreatedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.warehouse-planning.events
+        version: 0.5.0
+  - id: CapacityPlanPublishedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.warehouse-planning.events
+        version: 0.5.0
+  - id: CapacityShortageDetectedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.warehouse-planning.events
+        version: 0.5.0
+  - id: BottleneckDetectedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.warehouse-planning.events
+        version: 0.5.0
+  - id: ProductClassifiedInbound
+    version: 1.0.0
+    from:
+      - id: warehouse.product-master.events
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+Asynchronous event contract for the **Order Management** bounded context,
+the generic/supporting context that owns the Order and OrderLine
+aggregates: order intake, per-line stock allocation (via
+inventory-storage's reservation API), promise-date calculation, and
+choreographed release of allocated work (announced to
+wes-work-planning as facts on Kafka — see ADR 0005).
+
+## Message format: CloudEvents 1.0 (mandatory)
+
+Every message on every channel below — produced AND consumed,
+integration AND analytics — is a **CloudEvents 1.0** event in Kafka
+structured content mode (ADR 0030, the fleet-wide standard). There is
+no flat envelope, no dual-write/dual-read, and no envelope toggle.
+
+* Kafka message value: the CloudEvents JSON event format
+  (`application/cloudevents+json`); Kafka header
+  `content-type: application/cloudevents+json; charset=UTF-8`.
+* Required attributes: `specversion` (`1.0`), `id` (UUID, minted once
+  and persisted with the outbox row), `source`
+  (`/warehouse/order-management` for everything this service
+  publishes), `type`
+  (`com.warehouse.wes.order-management.order.<EventName>`), `subject`
+  (the order id), `time` (occurred-at, UTC), `datacontenttype`
+  (`application/json`), `dataschema`
+  (`urn:warehouse:order-management:<events|analytics>:<EventName>:v1`).
+* The same `type` names an occurrence on both topics; `dataschema`
+  distinguishes the integration payload from the analytics payload.
+* `data` is the event payload, unchanged by the envelope migration.
+* Messages on both topics are keyed by the `OrderId` (Hash balancer),
+  preserving per-order ordering. W3C trace context stays in the
+  `traceparent`/`tracestate` headers.
+
+Delivery is at-least-once: consumers dispatch on the FULL `type`,
+ignore unknown types, and de-duplicate on `id` (the projector does
+exactly that via its `analytics_processed_events` table). A message
+that is not a valid CloudEvent is dead-lettered (repromise consumer)
+or logged at WARN and skipped (local-cache consumers, projector).
+
+## Integration contract (frozen for OrderAllocated/OrderPartiallyAllocated;
+additive for OrderRepromised)
+
+`OrderAllocated`, `OrderPartiallyAllocated`, and — since ADR 0014 §5 /
+ADR 0018 — `OrderRepromised` are published to
+`warehouse.order-management.events` — mirroring
+inventory-storage's precedent of forwarding a minimal subset of domain
+events cross-context. The `data.lines[]` entry shape on the first two
+is shared verbatim with wes-work-planning's Kafka consumer and MUST
+NOT change without coordinating both sides. `fulfillment_class` is
+additive (ADR 0008). `OrderRepromised` is the fleet's "your delivery
+is delayed" trigger, raised by the new `RepromiseOrder` consumer
+(ADR 0018) reacting to fulfillment-execution's `TaskCPTMissed`/
+`PackageManifested` on `warehouse.fulfillment.events`.
+
+
+## Architecture diagram
+<NodeGraph />

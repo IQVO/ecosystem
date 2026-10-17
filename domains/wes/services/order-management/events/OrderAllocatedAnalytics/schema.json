@@ -1,0 +1,132 @@
+{
+  "allOf": [
+    {
+      "type": "object",
+      "description": "CloudEvents 1.0 structured-mode event (JSON event format), the ONLY envelope on every channel this service produces or consumes (ADR 0030, fleet standard). Every attribute below is REQUIRED in this fleet. Kafka header `content-type` is `application/cloudevents+json; charset=UTF-8`; W3C trace context stays in the `traceparent`/`tracestate` headers. Consumers dispatch on the FULL `type`, ignore unknown types, and dedupe on `id`.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Minted once per domain event and persisted with the outbox row, so a redelivery carries the same id. `(source, id)` is the consumer idempotency key.",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "/warehouse/<repo-name>, e.g. /warehouse/order-management.",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^com\\.warehouse\\.[a-z]+\\.[a-z-]+\\.[a-z]+\\.[A-Z][A-Za-z]+(\\.v[0-9]+)?$",
+          "description": "com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Id of the aggregate instance the event is about (order id for every event this service publishes).",
+          "x-parser-schema-id": "<anonymous-schema-10>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The domain event's occurred-at instant, UTC, RFC 3339.",
+          "x-parser-schema-id": "<anonymous-schema-11>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "x-parser-schema-id": "<anonymous-schema-12>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "urn:warehouse:<repo-name>:<events|analytics>:<EventName>:v<N>",
+          "x-parser-schema-id": "<anonymous-schema-13>"
+        },
+        "data": {
+          "type": "object",
+          "description": "The event payload — see each message's own data schema.",
+          "x-parser-schema-id": "<anonymous-schema-14>"
+        }
+      },
+      "x-parser-schema-id": "CloudEvent"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "source": {
+          "const": "/warehouse/order-management",
+          "x-parser-schema-id": "<anonymous-schema-285>"
+        },
+        "type": {
+          "const": "com.warehouse.wes.order-management.order.OrderAllocated",
+          "x-parser-schema-id": "<anonymous-schema-286>"
+        },
+        "dataschema": {
+          "const": "urn:warehouse:order-management:analytics:OrderAllocated:v1",
+          "x-parser-schema-id": "<anonymous-schema-287>"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "order_id",
+            "path_id"
+          ],
+          "properties": {
+            "order_id": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-288>"
+            },
+            "path_id": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-289>"
+            },
+            "promise_basis": {
+              "type": "string",
+              "enum": [
+                "Capability",
+                "LeadTime",
+                "Network"
+              ],
+              "description": "ADR 0014 §6 / ADR 0019's additive promise-basis- distribution field, mirrored from the OrderAllocated domain event's own promise_basis. Absent on events published before this ADR, or when the underlying promise had no basis recorded.",
+              "x-parser-schema-id": "<anonymous-schema-290>"
+            },
+            "promise_cutoff_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "ADR 0014 §6 / ADR 0019's additive promise-to-cutoff-gap source field: the promise's cutoff instant. Present ONLY when promise_basis is \"Capability\" — a LeadTime-basis promise's \"cutoff\" is just now-plus-a-configured-duration, not a real departure, and is deliberately excluded from the gap KPI.",
+              "x-parser-schema-id": "<anonymous-schema-291>"
+            },
+            "split_shipment": {
+              "type": "boolean",
+              "description": "ADR 0014 §6 / ADR 0019's additive split-shipment-rate source field: true when the order had more than one order.PromiseGroup at allocation time (ADR 0014 §3 / ADR 0017), derived via an OrderRepo lookup at publish time.",
+              "x-parser-schema-id": "<anonymous-schema-292>"
+            }
+          },
+          "x-parser-schema-id": "OrderAnalyticsData"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-284>"
+    }
+  ],
+  "x-parser-schema-id": "<anonymous-schema-283>"
+}

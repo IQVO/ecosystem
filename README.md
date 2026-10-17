@@ -1,67 +1,44 @@
-# Welcome to EventCatalog
+# ecosystem
 
-[EventCatalog](https://www.eventcatalog.dev/) is your architecture catalog for distributed systems. Use it to document, govern, and discover your services, domains, APIs, events, commands, queries, schemas, teams, and flows in one place.
+[EventCatalog](https://github.com/event-catalog/eventcatalog) for the warehouse-systems ecosystem: the architecture
+map of every bounded context, its REST API and the CloudEvents 1.0 messages it publishes and consumes on Kafka.
 
-## Start the Catalog
-
-```sh
-npm run dev
+```
+domains/wms/   WMS  - facility-layout, inbound-receiving, inventory-storage, product-master, slotting-optimization
+domains/wes/   WES  - fulfillment-execution, labor-performance, network-fulfillment, network-inventory-planning,
+                      order-management, process-path-management, warehouse-planning, wes-work-planning,
+                      workforce-management
+channels/      one page per Kafka topic (warehouse.<ctx>.events | .analytics)
+users/         owners
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view your catalog.
+Each context is two services: `<ctx>` (events, from `apis/asyncapi.yaml`) and `<ctx>-api` (REST, from
+`apis/openapi.yaml` + `apis/openapi-reports.yaml`).
 
-Using `pnpm` or `yarn`? Run the same scripts with the package manager you chose when creating this project.
+## Workflow
 
-## Edit Your Catalog
-
-Your catalog is docs-as-code. Resources live in folders with an `index.mdx` file for frontmatter metadata and Markdown content.
-
-Good places to start:
-
-- `domains/` - bounded contexts, business capabilities, and ownership
-- `domains/<domain>/services/` - services, APIs, and message producers or consumers
-- `events/`, `commands/`, and `queries/` - the messages flowing through your system
-- `teams/` and `users/` - who owns each part of the architecture
-
-Prefer a visual workflow? Run `npm run editor` to open the [EventCatalog Editor](https://www.eventcatalog.dev/docs/editor/overview) and browse, create, or update catalog resources through a GitHub-backed UI.
-
-## Make Your First Change
-
-1. Add or edit a domain, service, or message.
-2. Run `npm run dev` and check the generated pages and diagrams.
-3. Commit the MDX and schema files to Git.
-
-## Keep It in Sync
-
-Use `npm run generate` with [EventCatalog integrations](https://www.eventcatalog.dev/integrations) to import architecture data from OpenAPI, AsyncAPI, schema registries, EventBridge, GitHub, internal systems, and more.
-
-Run generators locally while you work, or in CI so your catalog stays aligned with the systems it describes.
-
-## Use AI with Architecture Context
-
-EventCatalog gives AI tools structured context about your domains, services, messages, schemas, owners, and flows.
-
-- Connect Claude, Cursor, VS Code, Windsurf, or another MCP-compatible tool with the [EventCatalog MCP Server](https://www.eventcatalog.dev/docs/development/guides/ai/using-mcp-server).
-- Install [EventCatalog Skills](https://github.com/event-catalog/skills) to help agents document services, create domain models, and map business flows:
-
-```sh
-npx skills add event-catalog/skills
+```bash
+npm run sync       # copy apis/*.yaml from each repo's origin/develop into specs/  (WAREHOUSE_ROOT, default ..)
+npm run generate   # specs/ -> .generated-specs/ -> domains/ + channels/
+npm run lint       # eventcatalog-linter
+npm run dev        # http://localhost:3000
+npm run build      # static site in build/
 ```
 
-## Learn by Task
+`specs/` is a byte-for-byte copy of each repo's contract and is committed, so builds never depend on a stale
+worktree. `scripts/prepare-specs.mjs` writes a normalised copy to `.generated-specs/` (git-ignored) because the
+fleet's AsyncAPI 2.6 files lack `messageId`, use publish/subscribe inconsistently and re-declare consumed channels;
+the header of that script documents each rewrite. Payload schemas are never modified.
 
-- [Create a domain](https://www.eventcatalog.dev/docs/development/guides/domains)
-- [Document a service](https://www.eventcatalog.dev/docs/development/guides/services)
-- [Add events, commands, and queries](https://www.eventcatalog.dev/docs/development/guides/messages/adding-messages)
-- [Use the EventCatalog Editor](https://www.eventcatalog.dev/docs/editor/overview)
-- [Generate from integrations](https://www.eventcatalog.dev/integrations)
-- [Manage your catalog with the SDK](https://www.eventcatalog.dev/docs/development/sdk)
-- [Join the community](https://discord.gg/3rjaZMmrAm)
+## Adding a context
 
-## Found a Problem?
+1. Add it to `catalog.contexts.mjs` (subdomain + the Kafka topics it **publishes**).
+2. `npm run sync && npm run generate`.
 
-Open an issue on [GitHub](https://github.com/event-catalog/eventcatalog/issues).
+## Notes
 
-## License
-
-This catalog is built with [EventCatalog](https://www.eventcatalog.dev). EventCatalog 5.0.0 and later is licensed under the [Business Source License 1.1](https://github.com/event-catalog/eventcatalog/blob/main/LICENSE), which covers production use of EventCatalog itself. Your catalog's content (your documentation, schemas and configuration) is yours. See the [license FAQ](https://www.eventcatalog.dev/license-faq) for what's included.
+- Generated pages are committed so they can be enriched by hand (`preserveExistingMessages` keeps edits on regenerate).
+- Every endpoint is unauthenticated fleet-wide; the catalog documents no auth scheme.
+- `process-path-management-scalability` is a worktree of `process-path-management` and is not documented separately.
+- Contexts without an `apis/asyncapi.yaml` (provisioning, task-interleaving, pick-face-replenishment) are not in the catalog yet.
+- EventCatalog 5.x is Business Source License 1.1 with a 60-day trial (see https://www.eventcatalog.dev/license-faq).

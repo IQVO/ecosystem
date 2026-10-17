@@ -1,0 +1,148 @@
+---
+id: labor-performance
+name: Labor Performance (events)
+version: 2.0.0
+summary: ''
+badges:
+  - content: labor-performance
+    textColor: blue
+    backgroundColor: blue
+  - content: task
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: LaborStandardDefined
+    version: 2.0.0
+    to:
+      - id: warehouse.labor-performance.analytics
+        version: 2.0.0
+  - id: LaborStandardRevised
+    version: 2.0.0
+    to:
+      - id: warehouse.labor-performance.analytics
+        version: 2.0.0
+  - id: TaskPerformanceRecorded
+    version: 2.0.0
+    to:
+      - id: warehouse.labor-performance.analytics
+        version: 2.0.0
+  - id: TaskPerformanceRecordedIntegration
+    version: 2.0.0
+    to:
+      - id: warehouse.labor-performance.events
+        version: 2.0.0
+receives:
+  - id: TaskCompleted
+    version: 2.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+Event contracts for the **Labor Performance** bounded context, in
+three directions:
+
+- **Inbound (`warehouse.fulfillment.events`)** — the integration
+  contract this service consumes. Documented below in full; this is what
+  the original v1 of this file covered.
+- **Outbound analytics (`warehouse.labor-performance.analytics`)** — the
+  ANALYTICS stream this service publishes its own domain events to,
+  feeding its own analytical data product's projector (ADR 0007). It is
+  consumed today only by this repo's own `cmd/labor-projector`; no other
+  service subscribes. Publishing is opt-in via `EVENT_PUBLISHER=kafka`,
+  with the log publisher as the default.
+- **Outbound integration (`warehouse.labor-performance.events`)** — this
+  service's first Open-Host-Service topic for OTHER bounded contexts
+  (ADR 0013). Before this topic existed, labor-performance was the
+  fleet's only pure event sink: it consumed `TaskCompleted` from
+  fulfillment-execution but published nothing any sibling service could
+  subscribe to. `TaskPerformanceRecorded` is published here so
+  workforce-management (the first intended consumer) can build an
+  event-fed local cache instead of calling this service synchronously
+  over REST. Publishing is opt-in via `EVENT_PUBLISHER=kafka`, same as
+  the analytics stream.
+
+The three are deliberately separate topics so the integration contracts
+(inbound and outbound) and the analytical stream all evolve
+independently.
+
+## Inbound: a pure consumer of fulfillment-execution
+
+Unlike every other `apis/asyncapi.yaml` in this fleet (which document
+only what a service PUBLISHES), this section describes what this
+service SUBSCRIBES TO: it is a **pure Kafka consumer** of
+`fulfillment-execution`'s already-published `TaskCompleted` integration
+event. This service has no REST or Go-import dependency on
+fulfillment-execution — everything it needs (`associate_id`, `task_id`,
+`duration_seconds`) already travels on the Kafka event (see the
+bounded-context-boundary decision in ADR
+0003-kafka-choreography-consumer-of-fulfillment-execution.md).
+
+## Message format: CloudEvents 1.0 (mandatory, ADR 0021)
+
+Every message on every channel below — inbound and outbound,
+integration and analytics — is a **CloudEvents 1.0** event in
+structured content mode (Kafka message value =
+`application/cloudevents+json`, Kafka header
+`content-type: application/cloudevents+json; charset=UTF-8`). There is
+no other envelope: the retired flat envelope is rejected by every
+consumer (dead-lettered on `warehouse.fulfillment.events`, skipped with
+a WARN on the analytics topic).
+
+```json
+{
+  "specversion": "1.0",
+  "id": "4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90",
+  "source": "/warehouse/fulfillment-execution",
+  "type": "com.warehouse.wes.fulfillment-execution.task.TaskCompleted",
+  "subject": "task-10231",
+  "time": "2026-08-29T22:00:00Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:fulfillment-execution:events:TaskCompleted:v1",
+  "data": { ... }
+}
+```
+
+All attributes are required. `id` is the de-duplication key this
+service uses (the `ProcessedEvents` idempotency gate) — NOT `task_id`.
+Consumers dispatch on the FULL `type` string and ignore unknown types.
+`dataschema` distinguishes the integration (`:events:`) payload from
+the analytics (`:analytics:`) payload of the same occurrence, which
+share one `type`.
+
+## Shared, fan-out topic
+
+`warehouse.fulfillment.events` is the SAME topic `wes-work-planning`
+already consumes from, under its own consumer group. This service uses
+its own consumer group id (`labor-performance` by default,
+`KAFKA_CONSUMER_GROUP` env), so both consumers see every message
+independently. Only `type ==
+"com.warehouse.wes.fulfillment-execution.task.TaskCompleted"` is acted on — every
+other event type on this shared topic (there are none from
+fulfillment-execution today, but the topic is shared/fan-out by
+convention) is silently skipped, not an error.
+
+## `task_type` on the inbound wire
+
+fulfillment-execution's TaskCompleted carries `task_type` (its
+ADR-0023). An unrecognized or absent value resolves to `""`
+(unclassified) via `shared.ParseTaskTypeLenient`, never a rejection.
+
+## Graceful degradation on an older payload
+
+`associate_id` and `duration_seconds` are the two fields added by
+fulfillment-execution's `feature/labor-performance-hooks` change. Both
+are optional on the wire (`omitempty` on the publisher's own struct):
+an older payload that predates that enrichment simply omits them, and
+this service's JSON unmarshaling already degrades those absent fields
+to their Go zero values (`""` / `0`) — exactly the "no checked-in
+occupant" / "unmeasurable duration" business facts this service's own
+aggregate invariants already model, not an error.
+
+
+## Architecture diagram
+<NodeGraph />

@@ -1,0 +1,281 @@
+---
+id: wes-work-planning
+name: WES Work Planning (events)
+version: 1.0.0
+summary: ''
+badges:
+  - content: work-planning
+    textColor: blue
+    backgroundColor: blue
+  - content: charge
+    textColor: blue
+    backgroundColor: blue
+  - content: plan
+    textColor: blue
+    backgroundColor: blue
+  - content: workpool
+    textColor: blue
+    backgroundColor: blue
+  - content: workunit
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: ChargeForecastReceived
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: ShiftPlanCommitted
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: WorkUnitCreated
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: WorkReleased
+    version: 2.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: WorkUnitCompleted
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: BacklogThresholdBreached
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: RateDeviationDetected
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: PathThrottled
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: LaborReassignmentFlagged
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: PathCapacityChanged
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: PathPlanDriftDetected
+    version: 1.0.0
+    to:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: ChargeForecastReceivedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: ShiftPlanCommittedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: WorkUnitCreatedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: WorkReleasedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: WorkUnitCompletedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: BacklogThresholdBreachedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: RateDeviationDetectedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: PathThrottledAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: LaborReassignmentFlaggedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: PathCapacityChangedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+  - id: PathPlanDriftDetectedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.wes.analytics
+        version: 1.0.0
+receives:
+  - id: WorkDemandReleased
+    version: 1.0.0
+    from:
+      - id: warehouse.network-inventory-planning.events
+        version: 1.0.0
+  - id: SlotPlanApproved
+    version: 1.0.0
+    from:
+      - id: warehouse.slotting-optimization.events
+        version: 1.0.0
+  - id: ProductClassified
+    version: 1.0.0
+    from:
+      - id: warehouse.product-master.events
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+Asynchronous event contract for the **Work Planning & Release** bounded
+context, the core domain of the WES (Warehouse Execution System)
+subdomain. This service is the "conductor" of the distribution centre: it
+turns a shift's charge (volume due by each CPT) into a committed plan
+(rate x heads per process path), releases work continuously and
+waveless-ly into per-path work pools, and performs flow balancing
+(Drum-Buffer-Rope, with CPT as the drum) from live buffer telemetry. It
+sits downstream of WMS planning/inventory and upstream of WCS equipment
+control.
+
+## Message format
+
+Every message this service produces or consumes on Kafka is a
+**CloudEvents 1.0 structured-mode** JSON document (mandatory fleet
+standard, ADR-0027 — there is no flat envelope, no dual-write/dual-read
+and no envelope toggle): the CloudEvents context attributes and the
+event-specific `data` payload travel together in a single JSON body, and
+every produced Kafka message carries the header
+`content-type: application/cloudevents+json; charset=UTF-8` next to the
+W3C `traceparent`/`tracestate` headers. All of `specversion` (`1.0`),
+`id`, `source` (always `/warehouse/wes-work-planning`), `type`,
+`subject` (the aggregate instance id), `time` (domain occurred-at, UTC),
+`datacontenttype` (`application/json`) and `dataschema`
+(`urn:warehouse:wes-work-planning:<events|analytics>:<EventName>:v1`) are
+required. `data` is described per message below.
+
+## `type` naming convention
+
+The CloudEvents `type` attribute follows a reverse-DNS dotted convention
+shared by every bounded context in this program:
+
+```
+com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>
+```
+
+All segments are lowercase except the final PascalCase event name, which
+matches the past-tense domain event name used in the code. For this
+service the subdomain is `wes` and the bounded context is
+`work-planning`, so for example:
+
+```
+com.warehouse.wes.work-planning.workunit.WorkReleased
+com.warehouse.wes.work-planning.charge.ChargeForecastReceived
+```
+
+The `entity` segment names the aggregate (or aggregate cluster) that
+raises the event: `charge` for the ChargeForecast aggregate, `plan` for
+ShiftPlan/PathPlan, `workpool` for the WorkPool aggregate and the flow
+balancing decisions taken against it, and `workunit` for the WorkUnit
+aggregate.
+
+## Catalog completeness vs. what is actually published
+
+This document is the **complete catalog** of the past-tense domain events
+declared by this bounded context (see `internal/domain/shared/events.go`),
+so that it is a usable reference for the whole domain model. Not every
+catalogued event is emitted onto Kafka today: the outbound adapter
+(`internal/adapters/outbound/kafka/publisher.go`) only sees the events
+that application use cases actually hand to `EventPublisher.Publish`. Any
+message that is not wired to the outbound adapter says so explicitly in
+its own `description`. Note also that Kafka publication is opt-in at
+runtime via the `EVENT_PUBLISHER=kafka` environment variable; with the
+default `EVENT_PUBLISHER=log` the same events are only written to the log
+publisher.
+
+## What this service consumes from other bounded contexts
+
+Work Planning is unusual in this program in that it is both a producer
+and a consumer of integration events. Those inbound streams are **not**
+part of this channel and are owned by their own bounded contexts; they
+are listed here only for orientation. Consumers dispatch on these exact
+CloudEvents `type` strings (never a short name or suffix match):
+
+```
+com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted
+com.warehouse.wms.inventory-storage.reservation.StockReserved
+com.warehouse.wms.inventory-storage.reservation.ReservationRevoked
+com.warehouse.wes.fulfillment-execution.task.TaskCompleted
+com.warehouse.wes.order-management.order.OrderAllocated
+com.warehouse.wes.order-management.order.OrderPartiallyAllocated
+com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased
+com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
+com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
+```
+
+A message that is not a valid CloudEvents 1.0 event (including the
+retired flat envelope) is dead-lettered to `<topic>.dlq` by the main
+consumer, or skipped with a WARN log by the catalogue and analytics
+consumers — never parsed as a legacy shape. This service also consumes
+`ShiftPlanCommitted` from workforce-management on
+`warehouse.workforce.events` (projected into the read-only
+`LaborPlanObserved` view — deliberately *not* fed into this context's own
+ShiftPlan aggregate, which is a different model that happens to share the
+name), `StockReserved` and `ReservationRevoked` from inventory-storage on
+`warehouse.inventory.events` (projected into the SKU-keyed
+`UsableInventoryObserved` view), `TaskCompleted` from
+fulfillment-execution on `warehouse.fulfillment.events` (fed into the
+`RecordCompletion` use case to close the execution feedback loop),
+`OrderAllocated`/`OrderPartiallyAllocated` from order-management on
+`warehouse.order-management.events` (fed into the existing
+`EnqueueWorkUnit` use case, once per order line — the event-choreography
+replacement for order-management's former synchronous call to
+`POST /paths/{pathId}/work-units`; deliberately fire-and-forget, with no
+reply event published back), and `WorkDemandReleased` from
+network-inventory-planning on
+`warehouse.network-inventory-planning.events` (fed into the existing
+`EnqueueWorkUnit` use case, one work unit per released transfer demand
+leg under the deterministic id `demand_id` — see ADR-0033; also
+fire-and-forget), and `ProductClassified` from product-master on
+`warehouse.product-master.events` (applied to this context's local
+classification copy, version-guarded, by a dedicated consumer under
+`PRODUCT_CLASSIFICATION_CONSUMER_GROUP`; the copy is what the
+`WorkReleased` encoder reads for its hazmat/fragile hints — see
+ADR-0035). All consumer paths are idempotent under
+at-least-once redelivery: the CloudEvents `id` is recorded as processed
+in the SAME transaction as the event's effect (ADR-0028), so a failed
+attempt is retried and, once retries are exhausted, dead-lettered to
+`<topic>.dlq` — never acknowledged as already processed. A `TaskCompleted`
+whose `work_unit_id` names a work unit this context never planned (e.g.
+a PACK task fulfillment-execution created during rebin consolidation,
+which carries the order id) is a deliberate, INFO-logged skip: it is
+marked processed and neither retried nor dead-lettered.
+
+
+## Architecture diagram
+<NodeGraph />

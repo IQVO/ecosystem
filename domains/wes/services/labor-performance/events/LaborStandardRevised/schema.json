@@ -1,0 +1,146 @@
+{
+  "title": "CloudEvent + LaborStandardRevised data (analytics stream)",
+  "allOf": [
+    {
+      "type": "object",
+      "title": "CloudEvents 1.0 envelope (structured mode, ADR 0021)",
+      "description": "The ONLY envelope on every topic this service produces or consumes. Every attribute is REQUIRED in this fleet. Kafka header `content-type: application/cloudevents+json; charset=UTF-8`. W3C trace context travels in the `traceparent`/`tracestate` Kafka headers, never as extension attributes.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "x-parser-schema-id": "<anonymous-schema-1>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Minted once per domain event and persisted with the outbox row, so a relay redelivery carries the same id. The consumer's de-duplication key.",
+          "x-parser-schema-id": "<anonymous-schema-2>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "`/warehouse/<repo>` of the publisher — `/warehouse/labor-performance` for everything this service publishes, `/warehouse/fulfillment-execution` for TaskCompleted.",
+          "x-parser-schema-id": "<anonymous-schema-3>"
+        },
+        "type": {
+          "type": "string",
+          "description": "`com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`. Consumers dispatch on the FULL string.",
+          "x-parser-schema-id": "<anonymous-schema-4>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Id of the aggregate instance the event is about. Never empty.",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The domain event's occurred-at instant, UTC (RFC 3339).",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "data": {
+          "type": "object",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        }
+      },
+      "x-parser-schema-id": "CloudEventEnvelope"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.warehouse.wes.labor-performance.standard.LaborStandardRevised",
+          "x-parser-schema-id": "<anonymous-schema-27>"
+        },
+        "dataschema": {
+          "const": "urn:warehouse:labor-performance:analytics:LaborStandardRevised:v1",
+          "x-parser-schema-id": "<anonymous-schema-28>"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "standard_id",
+            "task_type",
+            "previous_expected_seconds",
+            "expected_seconds",
+            "effective_from"
+          ],
+          "properties": {
+            "standard_id": {
+              "type": "string",
+              "description": "The id of the NEW standard record opened by this revision.",
+              "example": "std-0002",
+              "x-parser-schema-id": "<anonymous-schema-29>"
+            },
+            "task_type": {
+              "type": "string",
+              "enum": [
+                "PICK",
+                "PACK",
+                "SLAM"
+              ],
+              "example": "PICK",
+              "x-parser-schema-id": "<anonymous-schema-30>"
+            },
+            "previous_expected_seconds": {
+              "type": "integer",
+              "format": "int64",
+              "description": "The now-closed standard's expected duration, carried so a consumer can see the size of the change without joining back to the prior event.",
+              "example": 45,
+              "x-parser-schema-id": "<anonymous-schema-31>"
+            },
+            "expected_seconds": {
+              "type": "integer",
+              "format": "int64",
+              "description": "The newly effective expected duration.",
+              "example": 40,
+              "x-parser-schema-id": "<anonymous-schema-32>"
+            },
+            "travel_component_seconds": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0,
+              "description": "Optional declaration of how much of the NEW (revised) expected_seconds is attributable to travel — always the revision's own value, never carried over from the closed prior standard. Omitted entirely when the revision does not declare one.",
+              "example": 20,
+              "x-parser-schema-id": "<anonymous-schema-33>"
+            },
+            "effective_from": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the new standard came into force — the same instant the prior one was closed. The BUSINESS time the projector buckets this event on.",
+              "example": "2026-09-05T10:00:00Z",
+              "x-parser-schema-id": "<anonymous-schema-34>"
+            }
+          },
+          "x-parser-schema-id": "LaborStandardRevisedData"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-26>"
+    }
+  ],
+  "x-parser-schema-id": "LaborStandardRevisedCloudEvent"
+}

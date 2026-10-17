@@ -1,0 +1,75 @@
+---
+id: workforce-management-api-commitShiftPlan
+version: 1.0.0
+name: commitShiftPlan
+summary: Commit a shift's headcount split across paths
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Shift Plans'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /shift-plans
+  statusCodes:
+    - '201'
+    - '400'
+    - '409'
+    - '422'
+    - '500'
+    - '503'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Commits a human-decided ShiftPlan: one or more PathPlan lines (path, plannedHeads, plannedRate, plannedHours), raising ShiftPlanCommitted. Validates, per line, that plannedHeads does not exceed the caller-supplied installedStations for that path (this context enforces the invariant independently — it has no dependency on Work Planning, which owns installed-station counts — the request carries the number it needs), that plannedHeads does not exceed the LIVE installed capacity fulfillment-execution reports for that path's capability (a SEPARATE, independent check — see ADR-0014; fetched fresh on every commit, and this service fails the entire commit loud, without any fallback, if fulfillment-execution cannot be reached). The capability is resolved through the process-path catalogue, never taken from pathId: a path's live ceiling is the number of stations registered with each of its declared requiredCapabilities (the smallest count when it declares several), so pathId PICK (or pick-zone-a) is checked against stations holding capability pick. A pathId the catalogue does not declare is rejected with 400 unknown-path-id. It also validates that plannedHours does not exceed plannedHeads * the configured max hours per shift. Naturally idempotent by the client-supplied (siteCode, shiftId) key (siteCode is the canonical name of the plan key, buildingId its deprecated alias with the same value and the same stored column; ADR 0035): the underlying repository upserts on that key. A blind retry would nevertheless re-publish ShiftPlanCommitted, so this route is also protected by the Idempotency-Key header (ADR-0027): a retried request with the same key and body replays the first response without committing or publishing again.
+
+
+
+
+## POST `(/shift-plans)`
+
+### Parameters
+- **Idempotency-Key** (header): Caller-generated key (e.g. a UUID v4) that makes a retried request safe (ADR-0027). Clients MUST always send a non-empty value on the routes that declare it: a deployment backed by Postgres (every real deployment) rejects a request without it with 400 idempotency-key-required. It is declared optional here only because the in-memory development mode (which the contract test boots) does not enforce it. Reuse the SAME key for retries of one logical request (same body) — the first response, success or business error, is stored and replayed byte-for-byte for the key's TTL (24h by default) — and a NEW key for each new logical request. Reusing a key with a different body is rejected with 422 idempotency-key-reused.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+#### <span className="text-red-500">503 Service Unavailable</span>
+RFC 7807 (https://www.rfc-editor.org/rfc/rfc7807) Problem Details for HTTP APIs. Used for every error response in this service, with Content-Type: application/problem+json.
+<SchemaViewer file="response-503.json" maxHeight="500" id="response-503" />
+
+
+
+## Architecture
+
+<NodeGraph />

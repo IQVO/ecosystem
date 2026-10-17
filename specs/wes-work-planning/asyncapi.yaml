@@ -1,0 +1,2251 @@
+asyncapi: 2.6.0
+
+info:
+  title: WES Work Planning & Release — Domain Events
+  version: "1.0.0"
+  description: |
+    Asynchronous event contract for the **Work Planning & Release** bounded
+    context, the core domain of the WES (Warehouse Execution System)
+    subdomain. This service is the "conductor" of the distribution centre: it
+    turns a shift's charge (volume due by each CPT) into a committed plan
+    (rate x heads per process path), releases work continuously and
+    waveless-ly into per-path work pools, and performs flow balancing
+    (Drum-Buffer-Rope, with CPT as the drum) from live buffer telemetry. It
+    sits downstream of WMS planning/inventory and upstream of WCS equipment
+    control.
+
+    ## Message format
+
+    Every message this service produces or consumes on Kafka is a
+    **CloudEvents 1.0 structured-mode** JSON document (mandatory fleet
+    standard, ADR-0027 — there is no flat envelope, no dual-write/dual-read
+    and no envelope toggle): the CloudEvents context attributes and the
+    event-specific `data` payload travel together in a single JSON body, and
+    every produced Kafka message carries the header
+    `content-type: application/cloudevents+json; charset=UTF-8` next to the
+    W3C `traceparent`/`tracestate` headers. All of `specversion` (`1.0`),
+    `id`, `source` (always `/warehouse/wes-work-planning`), `type`,
+    `subject` (the aggregate instance id), `time` (domain occurred-at, UTC),
+    `datacontenttype` (`application/json`) and `dataschema`
+    (`urn:warehouse:wes-work-planning:<events|analytics>:<EventName>:v1`) are
+    required. `data` is described per message below.
+
+    ## `type` naming convention
+
+    The CloudEvents `type` attribute follows a reverse-DNS dotted convention
+    shared by every bounded context in this program:
+
+    ```
+    com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>
+    ```
+
+    All segments are lowercase except the final PascalCase event name, which
+    matches the past-tense domain event name used in the code. For this
+    service the subdomain is `wes` and the bounded context is
+    `work-planning`, so for example:
+
+    ```
+    com.warehouse.wes.work-planning.workunit.WorkReleased
+    com.warehouse.wes.work-planning.charge.ChargeForecastReceived
+    ```
+
+    The `entity` segment names the aggregate (or aggregate cluster) that
+    raises the event: `charge` for the ChargeForecast aggregate, `plan` for
+    ShiftPlan/PathPlan, `workpool` for the WorkPool aggregate and the flow
+    balancing decisions taken against it, and `workunit` for the WorkUnit
+    aggregate.
+
+    ## Catalog completeness vs. what is actually published
+
+    This document is the **complete catalog** of the past-tense domain events
+    declared by this bounded context (see `internal/domain/shared/events.go`),
+    so that it is a usable reference for the whole domain model. Not every
+    catalogued event is emitted onto Kafka today: the outbound adapter
+    (`internal/adapters/outbound/kafka/publisher.go`) only sees the events
+    that application use cases actually hand to `EventPublisher.Publish`. Any
+    message that is not wired to the outbound adapter says so explicitly in
+    its own `description`. Note also that Kafka publication is opt-in at
+    runtime via the `EVENT_PUBLISHER=kafka` environment variable; with the
+    default `EVENT_PUBLISHER=log` the same events are only written to the log
+    publisher.
+
+    ## What this service consumes from other bounded contexts
+
+    Work Planning is unusual in this program in that it is both a producer
+    and a consumer of integration events. Those inbound streams are **not**
+    part of this channel and are owned by their own bounded contexts; they
+    are listed here only for orientation. Consumers dispatch on these exact
+    CloudEvents `type` strings (never a short name or suffix match):
+
+    ```
+    com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted
+    com.warehouse.wms.inventory-storage.reservation.StockReserved
+    com.warehouse.wms.inventory-storage.reservation.ReservationRevoked
+    com.warehouse.wes.fulfillment-execution.task.TaskCompleted
+    com.warehouse.wes.order-management.order.OrderAllocated
+    com.warehouse.wes.order-management.order.OrderPartiallyAllocated
+    com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased
+    com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+    com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
+    com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
+    ```
+
+    A message that is not a valid CloudEvents 1.0 event (including the
+    retired flat envelope) is dead-lettered to `<topic>.dlq` by the main
+    consumer, or skipped with a WARN log by the catalogue and analytics
+    consumers — never parsed as a legacy shape. This service also consumes
+    `ShiftPlanCommitted` from workforce-management on
+    `warehouse.workforce.events` (projected into the read-only
+    `LaborPlanObserved` view — deliberately *not* fed into this context's own
+    ShiftPlan aggregate, which is a different model that happens to share the
+    name), `StockReserved` and `ReservationRevoked` from inventory-storage on
+    `warehouse.inventory.events` (projected into the SKU-keyed
+    `UsableInventoryObserved` view), `TaskCompleted` from
+    fulfillment-execution on `warehouse.fulfillment.events` (fed into the
+    `RecordCompletion` use case to close the execution feedback loop),
+    `OrderAllocated`/`OrderPartiallyAllocated` from order-management on
+    `warehouse.order-management.events` (fed into the existing
+    `EnqueueWorkUnit` use case, once per order line — the event-choreography
+    replacement for order-management's former synchronous call to
+    `POST /paths/{pathId}/work-units`; deliberately fire-and-forget, with no
+    reply event published back), and `WorkDemandReleased` from
+    network-inventory-planning on
+    `warehouse.network-inventory-planning.events` (fed into the existing
+    `EnqueueWorkUnit` use case, one work unit per released transfer demand
+    leg under the deterministic id `demand_id` — see ADR-0033; also
+    fire-and-forget), and `ProductClassified` from product-master on
+    `warehouse.product-master.events` (applied to this context's local
+    classification copy, version-guarded, by a dedicated consumer under
+    `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`; the copy is what the
+    `WorkReleased` encoder reads for its hazmat/fragile hints — see
+    ADR-0035). All consumer paths are idempotent under
+    at-least-once redelivery: the CloudEvents `id` is recorded as processed
+    in the SAME transaction as the event's effect (ADR-0028), so a failed
+    attempt is retried and, once retries are exhausted, dead-lettered to
+    `<topic>.dlq` — never acknowledged as already processed. A `TaskCompleted`
+    whose `work_unit_id` names a work unit this context never planned (e.g.
+    a PACK task fulfillment-execution created during rebin consolidation,
+    which carries the order id) is a deliberate, INFO-logged skip: it is
+    marked processed and neither retried nor dead-lettered.
+  contact:
+    name: WES Work Planning Team
+    url: https://warehouse-systems.internal/teams/wes-work-planning
+    email: wes-work-planning@warehouse-systems.internal
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+tags:
+  - name: work-planning
+    description: >-
+      The Work Planning & Release bounded context — the core domain of the WES
+      subdomain, responsible for planning the shift and releasing work.
+  - name: charge
+    description: >-
+      Events raised by the ChargeForecast aggregate — the volume that must
+      clear, bucketed by CPT.
+  - name: plan
+    description: >-
+      Events raised by the ShiftPlan / PathPlan aggregates — the committed
+      split of headcount and rate across process paths.
+  - name: workpool
+    description: >-
+      Events raised by the WorkPool aggregate and by flow balancing against
+      it — backlog telemetry, throttling and labor reassignment decisions.
+  - name: workunit
+    description: >-
+      Events raised by the WorkUnit aggregate — a releasable unit of work
+      carrying a CPT, from creation through release to completion.
+
+servers:
+  production:
+    url: kafka.warehouse-systems.internal:9092
+    protocol: kafka
+    description: >-
+      Production Kafka cluster shared by every warehouse-systems bounded
+      context. Locally, a broker is available at localhost:9092 via
+      ~/warehouse-systems/docker-compose.kafka.yml.
+
+defaultContentType: application/cloudevents+json
+
+channels:
+  warehouse.work-planning.events:
+    description: >-
+      The outbound topic owned by the Work Planning & Release bounded context
+      (`cloudevents.TopicWorkPlanningEvents` in the code). Every domain event
+      this service emits is written here as a CloudEvents 1.0 event with
+      `dataschema` `urn:warehouse:wes-work-planning:events:<EventName>:v1`,
+      keyed by the aggregate id (the CloudEvents `subject`: work unit id for
+      WorkUnit events, path id otherwise).
+    subscribe:
+      operationId: consumeWorkPlanningEvents
+      summary: Consume domain events emitted by WES Work Planning & Release.
+      description: >-
+        Subscribe to this channel to receive every past-tense domain event
+        raised by the Work Planning & Release bounded context. Messages are
+        CloudEvents 1.0 structured-mode JSON. Consumers must be idempotent:
+        delivery is at-least-once, and the CloudEvents `id` attribute is the
+        de-duplication key. Consumers should also ignore `type` values they
+        do not recognise, since new event types may be added to this channel
+        without a major version bump.
+      tags:
+        - name: work-planning
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ChargeForecastReceived"
+          - $ref: "#/components/messages/ShiftPlanCommitted"
+          - $ref: "#/components/messages/WorkUnitCreated"
+          - $ref: "#/components/messages/WorkReleased"
+          - $ref: "#/components/messages/WorkUnitCompleted"
+          - $ref: "#/components/messages/BacklogThresholdBreached"
+          - $ref: "#/components/messages/RateDeviationDetected"
+          - $ref: "#/components/messages/PathThrottled"
+          - $ref: "#/components/messages/LaborReassignmentFlagged"
+          - $ref: "#/components/messages/PathCapacityChanged"
+          - $ref: "#/components/messages/PathPlanDriftDetected"
+
+  warehouse.wes.analytics:
+    description: >-
+      The internal analytics topic (ADR-0011) feeding this service's own
+      throughput data product (`cmd/wes-projector`). Same occurrences, same
+      CloudEvents `type` per occurrence as the integration topic, but the
+      analytics payload shape, identified by `dataschema`
+      `urn:warehouse:wes-work-planning:analytics:<EventName>:v1` (this
+      replaces the retired `schema_version` field). Keyed by the aggregate id
+      (work unit id or path id), which is also the CloudEvents `subject`.
+    subscribe:
+      operationId: consumeWorkPlanningAnalytics
+      summary: Consume the work-planning analytics stream.
+      description: >-
+        Subscribe to receive the analytics-shaped CloudEvents for every
+        occurrence in the throughput data product's contract. Delivery is
+        at-least-once; the CloudEvents `id` is the de-duplication key, and
+        unknown `type` values must be ignored.
+      tags:
+        - name: work-planning
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ChargeForecastReceivedAnalytics"
+          - $ref: "#/components/messages/ShiftPlanCommittedAnalytics"
+          - $ref: "#/components/messages/WorkUnitCreatedAnalytics"
+          - $ref: "#/components/messages/WorkReleasedAnalytics"
+          - $ref: "#/components/messages/WorkUnitCompletedAnalytics"
+          - $ref: "#/components/messages/BacklogThresholdBreachedAnalytics"
+          - $ref: "#/components/messages/RateDeviationDetectedAnalytics"
+          - $ref: "#/components/messages/PathThrottledAnalytics"
+          - $ref: "#/components/messages/LaborReassignmentFlaggedAnalytics"
+          - $ref: "#/components/messages/PathCapacityChangedAnalytics"
+          - $ref: "#/components/messages/PathPlanDriftDetectedAnalytics"
+
+  warehouse.network-inventory-planning.events:
+    description: >-
+      network-inventory-planning's integration topic, CONSUMED by this
+      service (owned by that bounded context; listed here read-only for
+      orientation, mirroring its own apis/asyncapi.yaml). This service
+      consumes only WorkDemandReleased and ignores every other type.
+    publish:
+      operationId: consumeWorkDemandReleased
+      summary: Consume network-inventory-planning's released transfer work demands.
+      description: >-
+        Subscribe to receive WorkDemandReleased — one leg of an approved
+        inter-site transfer that the network has released for warehouse
+        execution. Messages are CloudEvents 1.0 structured-mode JSON
+        (dataschema
+        `urn:warehouse:network-inventory-planning:events:WorkDemandReleased:v1`)
+        keyed by demand_id. Each demand is fed into ApplyWorkDemandReleased
+        and becomes exactly one work unit under the deterministic id
+        `demand_id` (ADR-0033), so redelivery is idempotent. An unknown
+        `path_id` or `work_kind` fails loud and is dead-lettered to
+        `<topic>.dlq`.
+      message:
+        $ref: "#/components/messages/WorkDemandReleased"
+
+  warehouse.slotting-optimization.events:
+    description: >-
+      slotting-optimization's integration topic, CONSUMED by this service
+      (owned by that bounded context; listed here read-only for orientation,
+      mirroring its own apis/asyncapi.yaml). Key = the plan id. This service
+      consumes only SlotPlanApproved and ignores SlotPlanGenerated,
+      SlotPlanRejected and every other type (ADR-0040).
+    publish:
+      operationId: consumeSlotPlanApproved
+      summary: Consume approved slot plans and plan their moves as RELOCATE work.
+      description: >-
+        Read under the shared consumer group with its own
+        `warehouse.slotting-optimization.events.dlq`. Each SlotPlanApproved
+        becomes one RELOCATE work unit per move (id `<plan_id>-move-<seq>`,
+        seq = 0-based position in `moves`, ref = plan_id, path RELOCATE whose
+        catalogue intake must admit SLOT_RELOCATION). A move into a slot that
+        another move of the same plan vacates is held out of the pool until
+        that move's unit completes. A newer approved plan for the same site
+        cancels the older plan's not-yet-released units; released work runs
+        to completion; an older or duplicate plan is a no-op. The CloudEvents
+        `id` is claimed in the same transaction (redelivery is a no-op). A
+        malformed plan, an unknown move kind or an intake without
+        SLOT_RELOCATION is retried and then dead-lettered; a message
+        interrupted by shutdown is never dead-lettered.
+      message:
+        $ref: "#/components/messages/SlotPlanApproved"
+
+  warehouse.product-master.events:
+    description: >-
+      product-master's integration topic, CONSUMED by this service (owned by
+      that bounded context; listed here read-only for orientation, mirroring
+      its own apis/asyncapi.yaml). Key = the SKU. This service consumes only
+      ProductClassified and ignores every other type on the topic
+      (ProductRegistered, ProductDescriptionChanged,
+      ProductDimensionsDeclared, ProductMeasured). See ADR-0035.
+    publish:
+      operationId: consumeProductClassified
+      summary: Consume product-master's ProductClassified into the local classification copy.
+      description: >-
+        A dedicated consumer reads this topic under the stable consumer group
+        `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` (only with
+        `PRODUCT_CLASSIFICATION_MODE=kafka`) and keeps one row per SKU in
+        `product_classification_copy`. It claims the CloudEvents `id` and
+        applies the classification in ONE transaction, overwriting a stored
+        row only when the incoming `version` is greater (an equal or older
+        version is a no-op). Invalid CloudEvents and invalid payloads are
+        WARN-logged and skipped; transient failures retry the same message
+        and the offset is committed only after success.
+      message:
+        $ref: "#/components/messages/ProductClassified"
+
+components:
+  messages:
+    ChargeForecastReceived:
+      name: ChargeForecastReceived
+      title: Charge Forecast Received
+      summary: A shift's charge forecast was recorded for a process path.
+      description: >-
+        Raised by the ChargeForecast aggregate when `ReceiveChargeForecast`
+        records the volume due for a process path, bucketed by CPT. Actively
+        published to `warehouse.work-planning.events` by the outbound Kafka
+        adapter; the published `data` carries only `path_id`, since the CPT
+        buckets themselves are read back over the REST API rather than
+        broadcast.
+      contentType: application/cloudevents+json
+      tags:
+        - name: charge
+      payload:
+        $ref: "#/components/schemas/ChargeForecastReceivedEvent"
+      examples:
+        - name: chargeForecastReceived
+          summary: Charge forecast recorded for the pick-to-tote path.
+          payload:
+            specversion: "1.0"
+            id: 4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.charge.ChargeForecastReceived
+            subject: pick-to-tote
+            time: "2026-08-21T22:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:ChargeForecastReceived:v1
+            data:
+              path_id: pick-to-tote
+
+    ShiftPlanCommitted:
+      name: ShiftPlanCommitted
+      title: Shift Plan Committed
+      summary: A path's headcount, rate and hours split was committed.
+      description: >-
+        Raised by the ShiftPlan aggregate when `CommitShiftPlan` commits the
+        rate x heads x hours split for a process path, after validating the
+        invariant `plannedHeads <= installedStations`. Actively published to
+        `warehouse.work-planning.events`; the published `data` carries only
+        `path_id`. Beware the name collision: workforce-management publishes
+        an unrelated `ShiftPlanCommitted` on `warehouse.workforce.events`
+        that this service consumes into a read-only view. They are different
+        models in different bounded contexts and must not be conflated.
+      contentType: application/cloudevents+json
+      tags:
+        - name: plan
+      payload:
+        $ref: "#/components/schemas/ShiftPlanCommittedEvent"
+      examples:
+        - name: shiftPlanCommitted
+          summary: Shift plan committed for the pack-singles path.
+          payload:
+            specversion: "1.0"
+            id: 8a3d6c11-52b7-4f0d-9c14-3e7a5b8d2f46
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.plan.ShiftPlanCommitted
+            subject: pack-singles
+            time: "2026-08-21T22:05:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:ShiftPlanCommitted:v1
+            data:
+              path_id: pack-singles
+
+    WorkUnitCreated:
+      name: WorkUnitCreated
+      title: Work Unit Created
+      summary: A new work unit was enqueued into a path's work pool.
+      description: >-
+        Raised by the WorkUnit aggregate when `EnqueueWorkUnit` admits a new
+        releasable unit of work (carrying its CPT) into the process path's
+        work pool. The unit is queued, not yet released. Actively published
+        to `warehouse.work-planning.events`; the published `data` carries
+        `path_id` and `work_unit_id`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workunit
+      payload:
+        $ref: "#/components/schemas/WorkUnitCreatedEvent"
+      examples:
+        - name: workUnitCreated
+          summary: A pick task was enqueued into the pick-to-tote pool.
+          payload:
+            specversion: "1.0"
+            id: c25b9f83-7e64-4a19-b8d2-0f5a3c6e1b47
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkUnitCreated
+            subject: wu-10231
+            time: "2026-08-21T22:10:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:WorkUnitCreated:v1
+            data:
+              path_id: pick-to-tote
+              work_unit_id: wu-10231
+
+    WorkDemandReleased:
+      name: WorkDemandReleased
+      title: Work Demand Released (consumed)
+      summary: network-inventory-planning released a transfer work demand leg.
+      description: >-
+        CONSUMED from `warehouse.network-inventory-planning.events` — this
+        entry mirrors the producer's own contract read-only and is NOT
+        published by this service. One occurrence = one released transfer
+        demand leg. `ApplyWorkDemandReleased` validates `path_id` against
+        the process-path catalogue and `work_kind` against the declared
+        enum, then enqueues exactly one work unit with the deterministic
+        id `demand_id` and `ref` = `demand_id` (ADR-0033). Redelivery of
+        the same CloudEvents `id`, or a different event carrying a
+        `demand_id` already in a pool, is a benign no-op.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/WorkDemandReleasedEvent"
+      examples:
+        - name: workDemandReleased
+          summary: A transfer pick leg was released for execution.
+          payload:
+            specversion: "1.0"
+            id: 5a1e8d42-9c47-4b58-a1f6-3d8b9e0c4a71
+            source: /warehouse/network-inventory-planning
+            type: com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased
+            subject: demand-55601
+            time: "2026-10-06T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:network-inventory-planning:events:WorkDemandReleased:v1
+            data:
+              demand_id: demand-55601
+              work_kind: TRANSFER_PICK
+              transfer_ref: TRF-2026-042
+              path_id: pick-transfer-a
+              site_id: site-north-1
+              cpt: "2026-10-06T23:00:00Z"
+              sku: SKU-T1
+              quantity: 17
+
+    SlotPlanApproved:
+      name: SlotPlanApproved
+      title: Slot Plan Approved (consumed)
+      summary: slotting-optimization approved a slot plan for a site.
+      description: >-
+        CONSUMED from `warehouse.slotting-optimization.events` — this entry
+        mirrors the producer's own contract (SlotPlanApprovedEvent)
+        read-only and is NOT published by this service. Only `plan_id`,
+        `site_id`, `approved_at`, `supersedes_plan_id` and `moves` are read;
+        `assignments` is ignored (ADR-0040).
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/SlotPlanApprovedEvent"
+      examples:
+        - name: slotPlanApproved
+          summary: A plan with one Assign, one Relocate and one Vacate.
+          payload:
+            specversion: "1.0"
+            id: 0b9a8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d
+            source: /warehouse/slotting-optimization
+            type: com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved
+            subject: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: "2026-10-08T12:30:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:slotting-optimization:events:SlotPlanApproved:v1
+            data:
+              plan_id: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: SITE-1
+              approved_at: "2026-10-08T12:30:00Z"
+              supersedes_plan_id: plan-8e7d6c5b-4a39-4281-b0c9-d8e7f6a5b4c3
+              assignments:
+                - sku: SKU-1
+                  slot: WH1-FWD-A01-01-01-A
+              moves:
+                - sku: SKU-1
+                  to_slot: WH1-FWD-A01-01-01-A
+                  kind: Assign
+                - sku: SKU-2
+                  from_slot: WH1-FWD-A02-03-01-A
+                  to_slot: WH1-FWD-A01-01-02-A
+                  kind: Relocate
+                - sku: SKU-3
+                  from_slot: WH1-FWD-A01-01-03-A
+                  kind: Vacate
+
+    ProductClassified:
+      name: ProductClassified
+      title: Product Classified (consumed)
+      summary: product-master set or replaced a SKU's handling classification.
+      description: >-
+        CONSUMED from `warehouse.product-master.events` — this entry mirrors
+        the producer's own contract read-only and is NOT published by this
+        service. A full-state replacement of one SKU's classification at the
+        producer's aggregate `version`; `temperature_class` and
+        `dot_hazard_class` are omitted when unset. Applied to the local
+        `product_classification_copy` only when `version` is greater than the
+        stored one (ADR-0035); `classification_source` is ignored. The
+        `WorkReleased` encoder maps `Hazmat` to `required_capabilities:
+        ["hazmat"]` and `Fragile` to `fragile: true`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProductClassifiedEvent"
+      examples:
+        - name: hazmatFrozen
+          summary: SKU-1 classified Hazmat + TemperatureSensitive (Frozen), DOT class 3.
+          payload:
+            specversion: "1.0"
+            id: 0f6d8a2b-3c4e-4d5f-8a9b-7c6d5e4f3a2b
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductClassified
+            subject: SKU-1
+            time: "2026-10-06T21:02:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductClassified:v1
+            data:
+              sku: SKU-1
+              handling_tags: ["Hazmat", "TemperatureSensitive"]
+              temperature_class: Frozen
+              dot_hazard_class: 3
+              classification_source: native
+              version: 3
+
+    WorkReleased:
+      name: WorkReleased
+      title: Work Released
+      summary: The release policy admitted a work unit into active work.
+      description: >-
+        Raised by the WorkPool aggregate when `ReleaseNextWork` applies the
+        release policy and admits the highest-priority (earliest-CPT) queued
+        work unit into active work. This is the primary integration event of
+        this bounded context: fulfillment-execution consumes it and turns it
+        into a Task. Actively published to `warehouse.work-planning.events`.
+        The outbound adapter enriches the `data` payload with the unit's
+        `cpt` and `ref` by reading the WorkUnit repository, since the domain
+        event itself only carries the identifiers. When the released unit
+        carries a known SKU, the adapter also reads that SKU's
+        classification from this context's local copy of product-master's
+        `ProductClassified` events (ADR-0035; previously a synchronous read
+        from inventory-storage, ADR-0009) and stamps two OPTIONAL derived
+        fields,
+        `required_capabilities` and `fragile`, present only when there is a
+        hint to give. It also stamps the OPTIONAL `line_no` — the order
+        line the unit was made for, stored on the WorkUnit from the
+        `OrderAllocated` line that created it (ADR-0036) — omitted when
+        unknown. The same `line_no` rides on the analytics-stream
+        `WorkReleased` (`warehouse.wes.analytics`).
+      contentType: application/cloudevents+json
+      tags:
+        - name: workunit
+      payload:
+        $ref: "#/components/schemas/WorkReleasedEvent"
+      examples:
+        - name: workReleased
+          summary: A pick task was released into the pick-to-tote path.
+          payload:
+            specversion: "1.0"
+            id: 1d7e4b90-3c58-4d22-9a6f-8b1c0e5d7a23
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkReleased
+            subject: wu-10231
+            time: "2026-08-21T22:12:30Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:WorkReleased:v1
+            data:
+              path_id: pick-to-tote
+              work_unit_id: wu-10231
+              cpt: "2026-08-22T02:00:00Z"
+              ref: order-88421-line-3
+        - name: workReleasedOrderLine
+          summary: >-
+            The line-3 pick task of an order was released; line_no states the
+            line explicitly (ADR-0036).
+          payload:
+            specversion: "1.0"
+            id: 3f9a6d12-5e84-4b60-8c17-0a2d4e6f8b35
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkReleased
+            subject: order-88421-line-3
+            time: "2026-08-21T22:12:45Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:WorkReleased:v1
+            data:
+              path_id: pick-to-tote
+              work_unit_id: order-88421-line-3
+              cpt: "2026-08-22T02:00:00Z"
+              ref: order-88421
+              line_no: 3
+        - name: workReleasedHazmatFragile
+          summary: >-
+            A pick task for a SKU classified both Hazmat and Fragile in
+            inventory-storage was released; both optional hints are present.
+          payload:
+            specversion: "1.0"
+            id: 2e8f5c01-4d69-4e33-a057-9c2d1f6b8354
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkReleased
+            subject: wu-10232
+            time: "2026-08-21T22:13:05Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:WorkReleased:v1
+            data:
+              path_id: pick-to-tote
+              work_unit_id: wu-10232
+              cpt: "2026-08-22T02:05:00Z"
+              ref: order-88421-line-4
+              required_capabilities: ["hazmat"]
+              fragile: true
+        - name: workReleasedRelocate
+          summary: >-
+            A RELOCATE move of an approved slot plan was released (ADR-0040);
+            fulfillment-execution turns it into a RELOCATE task.
+          payload:
+            specversion: "1.0"
+            id: 11111111-1111-4111-8111-111111111111
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkReleased
+            subject: plan-3b0e8d2a-move-1
+            time: "2026-10-15T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:WorkReleased:v1
+            data:
+              path_id: RELOCATE
+              work_unit_id: plan-3b0e8d2a-move-1
+              cpt: "2026-10-16T08:00:00Z"
+              ref: plan-3b0e8d2a
+              relocation:
+                plan_id: plan-3b0e8d2a
+                move_seq: 1
+                kind: Relocate
+                sku: SKU-2
+                from_bin: WH1-FWD-A02-03-01-A
+                to_bin: WH1-FWD-A01-01-02-A
+
+    WorkUnitCompleted:
+      name: WorkUnitCompleted
+      title: Work Unit Completed
+      summary: A released work unit finished.
+      description: >-
+        Raised by the WorkUnit aggregate when `RecordCompletion` marks a
+        released unit as done — either from the REST endpoint or from a
+        `TaskCompleted` event consumed off `warehouse.fulfillment.events`.
+        The aggregate refuses a double-complete. Actively published to
+        `warehouse.work-planning.events`; the published `data` carries
+        `path_id` and `work_unit_id`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workunit
+      payload:
+        $ref: "#/components/schemas/WorkUnitCompletedEvent"
+      examples:
+        - name: workUnitCompleted
+          summary: A pick task completed on the pick-to-tote path.
+          payload:
+            specversion: "1.0"
+            id: 6b0f2d47-1a93-4e75-8c3b-2d9e6f4a1c58
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkUnitCompleted
+            subject: wu-10231
+            time: "2026-08-21T22:19:45Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:WorkUnitCompleted:v1
+            data:
+              path_id: pick-to-tote
+              work_unit_id: wu-10231
+
+    BacklogThresholdBreached:
+      name: BacklogThresholdBreached
+      title: Backlog Threshold Breached
+      summary: A path's backlog depth crossed its alarm threshold.
+      description: >-
+        Raised by the WorkPool aggregate when `SampleBacklog` observes that
+        the pool's backlog depth has crossed the alarm threshold — the buffer
+        signal that drives flow balancing. Actively published to
+        `warehouse.work-planning.events`; the published `data` carries only
+        `path_id`. Consumers wanting the depth and rate numbers should read
+        the telemetry projection over REST rather than infer them here.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/BacklogThresholdBreachedEvent"
+      examples:
+        - name: backlogThresholdBreached
+          summary: The pack-singles buffer went over its alarm threshold.
+          payload:
+            specversion: "1.0"
+            id: 9c4a1e60-8b72-4d31-a5f9-7e2c3b0d6f18
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached
+            subject: pack-singles
+            time: "2026-08-21T22:25:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:BacklogThresholdBreached:v1
+            data:
+              path_id: pack-singles
+
+    RateDeviationDetected:
+      name: RateDeviationDetected
+      title: Rate Deviation Detected
+      summary: A path's actual throughput deviated materially from plan.
+      description: >-
+        **Reserved: declared for a future detection rule (ADR 0020 defers it);
+        not emitted today.** Decided 2026-10-06: kept declared, neither
+        emitted nor removed. Re-checked 2026-10-12 (gap fix D26): no ADR
+        defines when it is raised, so it stays reserved; the architecture
+        fitness test TestRateDeviationDetectedStaysReserved fails if
+        production code starts raising it without that ADR.
+
+
+        Raised when a process path's observed throughput diverges materially
+        from the rate committed in its PathPlan — the plan-vs-actual signal
+        for flow balancing. **Not yet wired to the outbound Kafka adapter —
+        documented here as part of the domain-event catalog, in-process only
+        today.** The event type is declared in
+        `internal/domain/shared/events.go` and the publisher's payload switch
+        already handles it, but no application use case currently raises it,
+        so nothing is emitted onto the topic. The example below shows the
+        shape it would take once wired.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/RateDeviationDetectedEvent"
+      examples:
+        - name: rateDeviationDetected
+          summary: Actual rate on pick-to-tote drifted away from plan.
+          payload:
+            specversion: "1.0"
+            id: 2e8b5c34-6f19-4a07-9d52-1c7a4e3b8f60
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workpool.RateDeviationDetected
+            subject: pick-to-tote
+            time: "2026-08-21T22:30:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:RateDeviationDetected:v1
+            data:
+              path_id: pick-to-tote
+
+    PathThrottled:
+      name: PathThrottled
+      title: Path Throttled
+      summary: Flow balancing decided to throttle upstream release into a path.
+      description: >-
+        Raised by `RebalanceDecision` when a flow-fed pool is over its alarm
+        threshold and the recommendation is to throttle upstream release —
+        the rope in Drum-Buffer-Rope pulling back on a saturated buffer.
+        Actively published to `warehouse.work-planning.events`; the published
+        `data` carries only `path_id`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/PathThrottledEvent"
+      examples:
+        - name: pathThrottled
+          summary: Upstream release into pack-singles was throttled.
+          payload:
+            specversion: "1.0"
+            id: 7f3c8a25-4d16-4b93-8e07-5a2b9c1d4e73
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workpool.PathThrottled
+            subject: pack-singles
+            time: "2026-08-21T22:31:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:PathThrottled:v1
+            data:
+              path_id: pack-singles
+
+    LaborReassignmentFlagged:
+      name: LaborReassignmentFlagged
+      title: Labor Reassignment Flagged
+      summary: Flow balancing recommended moving labor to relieve a path.
+      description: >-
+        Raised by `RebalanceDecision` when a release-fed pool is at its WIP
+        limit with backlog still queued: releasing more work cannot help, so
+        the recommendation is to move heads onto the path instead. Actively
+        published to `warehouse.work-planning.events`; the published `data`
+        carries only `path_id`. Workforce Management is the intended reader.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/LaborReassignmentFlaggedEvent"
+      examples:
+        - name: laborReassignmentFlagged
+          summary: Labor reassignment recommended for pick-to-tote.
+          payload:
+            specversion: "1.0"
+            id: 3a9d7e52-0c48-4f61-b2d8-6e4c1a5b9f27
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged
+            subject: pick-to-tote
+            time: "2026-08-21T22:33:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:LaborReassignmentFlagged:v1
+            data:
+              path_id: pick-to-tote
+
+    PathCapacityChanged:
+      name: PathCapacityChanged
+      title: Path Capacity Changed
+      summary: >-
+        This service reported a process path's remaining admission capacity
+        for a specific CPT cutoff window.
+      description: >-
+        Raised when `SampleBacklog` is asked (via the optional `cutoffAt`
+        query parameter on `GET /paths/{pathId}/telemetry`, see ADR-0018) to
+        report the path's currently remaining admission capacity, correlated
+        against a CPT cutoff timestamp. This PUBLISHES state this service
+        already tracks on its own `WorkPool` aggregate (`wipLimit` minus
+        current WIP) — it introduces no new domain concept or per-CPT
+        capacity bucket. `known` is `false` for a FlowFed path (no hard
+        admission ceiling — only an alarm threshold, which is not a capacity
+        figure) or a ReleaseFed path with no WIP limit provisioned; when
+        `known` is `false`, `remaining_units` is always `0`.
+
+        `cutoff_at` is this service's own native CPT currency (a concrete
+        RFC3339 timestamp), not process-path-management's site-schedule
+        `cptId` string, which this service has zero dependency on. A future
+        order-management consumer is responsible for correlating `cutoff_at`
+        against its own cached `CPTWindow.CutoffAt` (exact match or nearest-
+        window match) to resolve which `cptId` this figure applies to — see
+        ADR-0018 for the full correlation-by-timestamp design and its
+        accepted imprecision trade-off. Actively published to
+        `warehouse.work-planning.events`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/PathCapacityChangedEvent"
+      examples:
+        - name: pathCapacityChangedKnown
+          summary: >-
+            pick-to-tote (ReleaseFed, WIP limit 40, WIP 23) reports 17
+            remaining units of admission capacity for the 02:00 UTC cutoff.
+          payload:
+            specversion: "1.0"
+            id: 5c7d3f92-1b64-4a08-9e73-2f6a8c1d5b40
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workpool.PathCapacityChanged
+            subject: pick-to-tote
+            time: "2026-08-21T22:40:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:PathCapacityChanged:v1
+            data:
+              path_id: pick-to-tote
+              cutoff_at: "2026-08-22T02:00:00Z"
+              remaining_units: 17
+              known: true
+        - name: pathCapacityChangedUnknownFlowFed
+          summary: >-
+            pack-singles is FlowFed (no hard admission ceiling), so capacity
+            is reported as unknown rather than derived from its alarm
+            threshold.
+          payload:
+            specversion: "1.0"
+            id: 6d8e4a03-2c75-4b19-8f84-3a7b9d2e6c51
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workpool.PathCapacityChanged
+            subject: pack-singles
+            time: "2026-08-21T22:41:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:PathCapacityChanged:v1
+            data:
+              path_id: pack-singles
+              cutoff_at: "2026-08-22T03:00:00Z"
+              remaining_units: 0
+              known: false
+
+    PathPlanDriftDetected:
+      name: PathPlanDriftDetected
+      title: Path Plan Drift Detected
+      summary: >-
+        This service's committed PathPlan and the labor plan Workforce
+        Management committed for the same path disagree on planned heads.
+      description: >-
+        Raised by ADR-0019's reconciliation when the committed `PathPlan`
+        planned heads differ from the heads in the latest
+        `LaborPlanObserved` for the same path. Triggered from BOTH sides'
+        commit (our `CommitShiftPlan` and the observed `ShiftPlanCommitted`
+        projection), over one shared comparison, so whichever side commits
+        second raises it. It states a fact, not a verdict: `drift_heads` is
+        signed (`observed_planned_heads - wes_planned_heads`) and carries no
+        opinion about which plan is right. Agreeing plans raise nothing, and
+        nothing is raised while only one side has committed. Published
+        through the transactional outbox with the state change.
+      contentType: application/cloudevents+json
+      tags:
+        - name: plan
+      payload:
+        $ref: "#/components/schemas/PathPlanDriftDetectedEvent"
+      examples:
+        - name: pathPlanDriftDetected
+          summary: >-
+            Workforce committed 8 heads for pick-to-tote; our PathPlan has 6.
+          payload:
+            specversion: "1.0"
+            id: 7e9f5b14-3d86-4c2a-9a95-4b8c0e3f7d62
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected
+            subject: pick-to-tote
+            time: "2026-08-21T09:05:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:PathPlanDriftDetected:v1
+            data:
+              path_id: pick-to-tote
+              wes_planned_heads: 6
+              observed_planned_heads: 8
+              drift_heads: 2
+              observed_at: "2026-08-21T09:00:00Z"
+
+    ChargeForecastReceivedAnalytics:
+      name: ChargeForecastReceivedAnalytics
+      title: ChargeForecastReceived (analytics stream)
+      summary: Analytics-shaped ChargeForecastReceived occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: charge
+      payload:
+        $ref: "#/components/schemas/ChargeForecastReceivedAnalyticsEvent"
+
+    ShiftPlanCommittedAnalytics:
+      name: ShiftPlanCommittedAnalytics
+      title: ShiftPlanCommitted (analytics stream)
+      summary: Analytics-shaped ShiftPlanCommitted occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: plan
+      payload:
+        $ref: "#/components/schemas/ShiftPlanCommittedAnalyticsEvent"
+
+    WorkUnitCreatedAnalytics:
+      name: WorkUnitCreatedAnalytics
+      title: WorkUnitCreated (analytics stream)
+      summary: Analytics-shaped WorkUnitCreated occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workunit
+      payload:
+        $ref: "#/components/schemas/WorkUnitCreatedAnalyticsEvent"
+
+    WorkReleasedAnalytics:
+      name: WorkReleasedAnalytics
+      title: WorkReleased (analytics stream)
+      summary: Analytics-shaped WorkReleased occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workunit
+      payload:
+        $ref: "#/components/schemas/WorkReleasedAnalyticsEvent"
+      examples:
+        - name: workReleasedAnalytics
+          summary: The line-3 pick task of an order was released (analytics stream).
+          payload:
+            specversion: "1.0"
+            id: 4a6c8e10-2b3d-4f57-9a81-6c0d2e4f7b93
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkReleased
+            subject: order-88421-line-3
+            time: "2026-08-21T22:12:30Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:analytics:WorkReleased:v1
+            data:
+              path_id: pick-to-tote
+              work_unit_id: order-88421-line-3
+              line_no: 3
+
+    WorkUnitCompletedAnalytics:
+      name: WorkUnitCompletedAnalytics
+      title: WorkUnitCompleted (analytics stream)
+      summary: Analytics-shaped WorkUnitCompleted occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workunit
+      payload:
+        $ref: "#/components/schemas/WorkUnitCompletedAnalyticsEvent"
+
+    BacklogThresholdBreachedAnalytics:
+      name: BacklogThresholdBreachedAnalytics
+      title: BacklogThresholdBreached (analytics stream)
+      summary: Analytics-shaped BacklogThresholdBreached occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/BacklogThresholdBreachedAnalyticsEvent"
+
+    RateDeviationDetectedAnalytics:
+      name: RateDeviationDetectedAnalytics
+      title: RateDeviationDetected (analytics stream)
+      summary: Analytics-shaped RateDeviationDetected occurrence on warehouse.wes.analytics.
+      description: >-
+        Reserved: declared for a future detection rule (ADR 0020 defers it);
+        not emitted today. No ADR defines when a rate deviation is raised, so
+        no use case raises it (an architecture fitness test,
+        TestRateDeviationDetectedStaysReserved, fails if production code
+        starts to). The projector still counts it, so the report's
+        rateDeviationDetected column is always 0 until a rule is decided.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/RateDeviationDetectedAnalyticsEvent"
+
+    PathThrottledAnalytics:
+      name: PathThrottledAnalytics
+      title: PathThrottled (analytics stream)
+      summary: Analytics-shaped PathThrottled occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/PathThrottledAnalyticsEvent"
+
+    LaborReassignmentFlaggedAnalytics:
+      name: LaborReassignmentFlaggedAnalytics
+      title: LaborReassignmentFlagged (analytics stream)
+      summary: Analytics-shaped LaborReassignmentFlagged occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/LaborReassignmentFlaggedAnalyticsEvent"
+
+    PathCapacityChangedAnalytics:
+      name: PathCapacityChangedAnalytics
+      title: PathCapacityChanged (analytics stream)
+      summary: Analytics-shaped PathCapacityChanged occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: workpool
+      payload:
+        $ref: "#/components/schemas/PathCapacityChangedAnalyticsEvent"
+
+    PathPlanDriftDetectedAnalytics:
+      name: PathPlanDriftDetectedAnalytics
+      title: PathPlanDriftDetected (analytics stream)
+      summary: Analytics-shaped PathPlanDriftDetected occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: plan
+      payload:
+        $ref: "#/components/schemas/PathPlanDriftDetectedAnalyticsEvent"
+
+  schemas:
+    CloudEventBase:
+      type: object
+      title: CloudEvent 1.0 context attributes
+      description: >-
+        The CloudEvents 1.0 structured-mode context attributes common to every
+        message this service publishes (integration AND analytics topics).
+        Every attribute below is REQUIRED in this fleet (ADR-0027); there is
+        no other envelope.
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - dataschema
+      properties:
+        specversion:
+          type: string
+          description: The CloudEvents specification version. Always "1.0".
+          enum: ["1.0"]
+        id:
+          type: string
+          format: uuid
+          description: >-
+            Unique identifier for this event occurrence, a UUID v4 minted
+            once per domain event and persisted with the transactional outbox
+            row, so a redelivery carries the same id. Combined with `source`
+            it is the de-duplication key consumers must use for at-least-once
+            delivery.
+          minLength: 1
+        source:
+          type: string
+          format: uri-reference
+          description: >-
+            The context that emitted the event: `/warehouse/wes-work-planning`
+            for messages this service PUBLISHES; the producer's own source
+            (e.g. `/warehouse/network-inventory-planning`) for CONSUMED
+            messages.
+          pattern: "^/warehouse/[a-z0-9-]+$"
+        type:
+          type: string
+          description: >-
+            The event type, in the form
+            `com.warehouse.wes.work-planning.<entity>.<EventName>`.
+        subject:
+          type: string
+          description: >-
+            The identifier of the aggregate instance the event is about — a
+            process path id for charge/plan/work-pool events, a work unit id
+            for work unit events.
+        time:
+          type: string
+          format: date-time
+          description: >-
+            RFC3339 timestamp of when the domain event occurred, taken from
+            the domain clock rather than from publish time.
+        datacontenttype:
+          type: string
+          description: Media type of the `data` member. Always "application/json".
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          format: uri
+          description: >-
+            Identifies the `data` payload shape:
+            `urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>` —
+            this repo's own urns when PUBLISHED (wes-work-planning), the
+            producer's urn when CONSUMED (e.g. network-inventory-planning).
+            The same occurrence carries the same `type` on both topics; the
+            `dataschema` distinguishes the integration payload from the
+            analytics payload.
+          pattern: "^urn:warehouse:[a-z0-9-]+:(events|analytics):[A-Za-z]+:v[0-9]+$"
+
+    ChargeForecastReceivedEvent:
+      title: ChargeForecastReceived CloudEvent
+      description: CloudEvent envelope for a recorded charge forecast.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.charge.ChargeForecastReceived"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:ChargeForecastReceived:v1"
+            data:
+              type: object
+              description: Payload published by the outbound Kafka adapter.
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+                  description: >-
+                    Identifier of the process path the charge forecast was
+                    recorded for.
+
+    ShiftPlanCommittedEvent:
+      title: ShiftPlanCommitted CloudEvent
+      description: CloudEvent envelope for a committed shift plan.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.plan.ShiftPlanCommitted"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:ShiftPlanCommitted:v1"
+            data:
+              type: object
+              description: Payload published by the outbound Kafka adapter.
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+                  description: >-
+                    Identifier of the process path whose plan was committed.
+
+    WorkUnitCreatedEvent:
+      title: WorkUnitCreated CloudEvent
+      description: CloudEvent envelope for a newly enqueued work unit.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.workunit.WorkUnitCreated"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:WorkUnitCreated:v1"
+            data:
+              type: object
+              description: Payload published by the outbound Kafka adapter.
+              required:
+                - path_id
+                - work_unit_id
+              properties:
+                path_id:
+                  type: string
+                  description: >-
+                    Identifier of the process path whose work pool the unit
+                    was enqueued into.
+                work_unit_id:
+                  type: string
+                  description: Identifier of the newly created work unit.
+                reference:
+                  type: string
+                  description: >-
+                    Optional (ADR-0041). The unit's originating reference as
+                    stored: the order id for order work, the demand id for
+                    transfer work, the plan id for RELOCATE work. Omitted when
+                    empty. A consumer matches it against its own aggregates and
+                    ignores a reference it does not know.
+                line_no:
+                  type: integer
+                  minimum: 1
+                  description: >-
+                    Optional (ADR-0041). The order line number of an order-line
+                    unit (ADR-0036). Omitted when unknown. Not published on the
+                    analytics stream.
+
+    WorkDemandReleasedEvent:
+      title: WorkDemandReleased CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of network-inventory-planning's released
+        transfer work demand, mirrored read-only from the producer's own
+        contract. This service consumes it; it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type (the producer's own).
+              const: "com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased"
+            dataschema:
+              type: string
+              description: >-
+                The producer's payload schema id. Overrides CloudEventBase's
+                pattern (which only admits THIS repo's own urns): a consumed
+                event carries the PRODUCER's urn.
+              const: "urn:warehouse:network-inventory-planning:events:WorkDemandReleased:v1"
+            data:
+              type: object
+              description: >-
+                One released transfer demand leg. Every field is required by
+                the producer; this service validates path_id against its
+                process-path catalogue and work_kind against the declared
+                enum before enqueueing the work unit.
+              required:
+                - demand_id
+                - work_kind
+                - transfer_ref
+                - path_id
+                - site_id
+                - cpt
+              properties:
+                demand_id:
+                  type: string
+                  description: >-
+                    Identity of the work demand. Becomes the deterministic
+                    work_unit_id (and the generic operator `ref`) of the
+                    enqueued work unit.
+                work_kind:
+                  type: string
+                  description: Which leg of the transfer this demand executes.
+                  enum:
+                    - TRANSFER_PICK
+                    - TRANSFER_DISPATCH
+                    - TRANSFER_ARRIVAL
+                transfer_ref:
+                  type: string
+                  description: The network transfer this demand belongs to.
+                path_id:
+                  type: string
+                  description: >-
+                    Process path the demand's work executes on (validated
+                    against this service's process-path catalogue).
+                site_id:
+                  type: string
+                  description: >-
+                    Network site anchoring the leg — origin for
+                    pick/dispatch, destination for arrival.
+                cpt:
+                  type: string
+                  description: RFC3339 Critical Pull Time carried by the demand.
+                sku:
+                  type: string
+                  description: OPTIONAL. SKU the demand moves, when known.
+                quantity:
+                  type: integer
+                  description: OPTIONAL. Units of the SKU the leg moves.
+                  minimum: 0
+
+    SlotPlanApprovedEvent:
+      title: SlotPlanApproved CloudEvent (consumed)
+      description: >-
+        Mirror of slotting-optimization's SlotPlanApprovedEvent (read-only).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved"
+            dataschema:
+              type: string
+              const: "urn:warehouse:slotting-optimization:events:SlotPlanApproved:v1"
+            data:
+              type: object
+              required:
+                - plan_id
+                - site_id
+                - approved_at
+                - moves
+              properties:
+                plan_id:
+                  type: string
+                site_id:
+                  type: string
+                approved_at:
+                  type: string
+                  format: date-time
+                supersedes_plan_id:
+                  type: string
+                  description: OPTIONAL. The plan this one replaces.
+                assignments:
+                  type: array
+                  description: Full forward map; ignored by this service.
+                  items:
+                    type: object
+                moves:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - sku
+                      - kind
+                    properties:
+                      sku:
+                        type: string
+                      from_slot:
+                        type: string
+                        description: Absent for Assign.
+                      to_slot:
+                        type: string
+                        description: Absent for Vacate.
+                      kind:
+                        type: string
+                        enum: [Assign, Relocate, Vacate]
+
+    ProductClassifiedEvent:
+      title: ProductClassified CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of product-master's ProductClassified, mirrored
+        read-only from the producer's own contract. This service consumes it;
+        it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type (the producer's own).
+              const: "com.warehouse.wms.product-master.product.ProductClassified"
+            dataschema:
+              type: string
+              description: >-
+                The producer's payload schema id. Overrides CloudEventBase's
+                pattern (which only admits THIS repo's own urns): a consumed
+                event carries the PRODUCER's urn.
+              const: "urn:warehouse:product-master:events:ProductClassified:v1"
+            data:
+              type: object
+              description: >-
+                Full-state replacement of the SKU's classification. This
+                service requires `sku` and a `version` of at least 1 and skips
+                (WARN) anything else.
+              required:
+                - sku
+                - handling_tags
+                - classification_source
+                - version
+              properties:
+                sku:
+                  type: string
+                  description: The classified SKU (also the Kafka key and the CloudEvents subject).
+                handling_tags:
+                  type: array
+                  minItems: 1
+                  description: Handling tags in stable order.
+                  items:
+                    type: string
+                    enum:
+                      - Hazmat
+                      - Fragile
+                      - TemperatureSensitive
+                      - Oversized
+                      - HighValue
+                temperature_class:
+                  type: string
+                  description: OPTIONAL. Present only with TemperatureSensitive.
+                  enum:
+                    - Ambient
+                    - Chilled
+                    - Frozen
+                dot_hazard_class:
+                  type: integer
+                  description: OPTIONAL. Present only with Hazmat. Stored, not surfaced.
+                  minimum: 1
+                  maximum: 9
+                classification_source:
+                  type: string
+                  description: Migration artefact of the producer; ignored here.
+                  enum:
+                    - native
+                    - legacy-import
+                version:
+                  type: integer
+                  description: >-
+                    The producer's aggregate version after the change. The
+                    local copy applies a message only when this is greater
+                    than the stored version.
+                  minimum: 1
+
+    WorkReleasedEvent:
+      title: WorkReleased CloudEvent
+      description: >-
+        CloudEvent envelope for a work unit admitted into active work by the
+        release policy.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.workunit.WorkReleased"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:WorkReleased:v1"
+            data:
+              type: object
+              description: >-
+                Payload published by the outbound Kafka adapter, enriched
+                from the WorkUnit repository with the unit's CPT and
+                reference, the caller-stated gift-wrap request when one was
+                made (see ADR-0010), and — when the released unit carries a
+                known SKU — with derived hazmat-capability/fragile hints
+                read once, at publish time, from the local copy of
+                product-master's classification (see ADR-0009, ADR-0035).
+              required:
+                - path_id
+                - work_unit_id
+                - cpt
+                - ref
+              properties:
+                path_id:
+                  type: string
+                  description: >-
+                    Identifier of the process path the work was released
+                    into.
+                work_unit_id:
+                  type: string
+                  description: Identifier of the released work unit.
+                line_no:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  maximum: 2147483647
+                  description: >-
+                    OPTIONAL (ADR-0036). The 1-based order line this released
+                    unit was made for (1..2147483647, the 32-bit column
+                    limit), stored on the `WorkUnit` from the
+                    `OrderAllocated` line that created it (the same number
+                    embedded in a work-unit id of the form
+                    `<order>-line-<n>`) and read straight off it at publish
+                    time, like `ref`. Present only when known: absent — never
+                    `0` or `null` — for a unit created before this field
+                    existed, a REST-enqueued unit that gave no `lineNo`, and
+                    every transfer-referenced unit. Consumers must treat an
+                    absent field as "line unknown" and keep working.
+                  example: 3
+                cpt:
+                  type: string
+                  description: >-
+                    RFC3339 Critical Pull Time of the released unit — the
+                    last moment it can be manifested and still make its
+                    truck. Empty string if the unit could not be re-read at
+                    publish time.
+                ref:
+                  type: string
+                  description: >-
+                    Caller-supplied business reference for the unit (for
+                    example an order line). Empty string if the unit could
+                    not be re-read at publish time.
+                required_capabilities:
+                  type: array
+                  items:
+                    type: string
+                  description: >-
+                    OPTIONAL. Present only when the released unit's SKU is
+                    classified Hazmat by product-master, in which case it
+                    contains exactly `["hazmat"]`. Absent — not an empty
+                    array — when the SKU is unclassified, not yet in the
+                    local copy, or the copy is unreadable
+                    (PRODUCT_CLASSIFICATION_MODE=permissive, the default, or
+                    a lookup error). Consumers must treat an absent field
+                    identically to an empty array. See ADR-0009, ADR-0035.
+                  example: ["hazmat"]
+                fragile:
+                  type: boolean
+                  description: >-
+                    OPTIONAL. Present and `true` only when the released
+                    unit's SKU is classified Fragile by product-master.
+                    Absent — not `false` — when the SKU is unclassified,
+                    unknown, or the lookup is unavailable. Consumers must
+                    treat an absent field identically to `false`. See
+                    ADR-0009, ADR-0035.
+                  example: true
+                gift_wrap:
+                  type: boolean
+                  description: >-
+                    OPTIONAL. Present and `true` only when the requester
+                    asked the warehouse to produce a gift package for this
+                    work unit, stated at enqueue time. This is a
+                    caller-supplied `WorkReleased` characteristic, not a
+                    derived product-classification hint — unlike
+                    `required_capabilities`/`fragile`, it is read straight
+                    off the `WorkUnit` and never looked up from
+                    inventory-storage (see ADR-0010). Absent — not `false`
+                    — when gift wrap was not requested. Consumers must
+                    treat an absent field identically to `false`.
+                  example: true
+                work_kind:
+                  type: string
+                  description: >-
+                    OPTIONAL (ADR-0033). Present only on a
+                    transfer-referenced work unit (one enqueued from
+                    network-inventory-planning's WorkDemandReleased); names
+                    the transfer leg it executes. Its presence is the
+                    discriminator for "this is transfer work": every
+                    order-driven unit omits all four transfer fields, so
+                    its payload is byte-identical to before transfer
+                    support existed. Consumers must treat absent as "not
+                    transfer work".
+                  enum:
+                    - TRANSFER_PICK
+                    - TRANSFER_DISPATCH
+                    - TRANSFER_ARRIVAL
+                  example: TRANSFER_PICK
+                transfer_ref:
+                  type: string
+                  description: >-
+                    OPTIONAL (ADR-0033). The network transfer reference this
+                    released unit executes a leg of. Present only on a
+                    transfer-referenced unit, and only when the demand
+                    carried one.
+                  example: TRF-2026-042
+                site_id:
+                  type: string
+                  description: >-
+                    OPTIONAL (ADR-0033). The network site anchoring this
+                    transfer leg — origin for pick/dispatch, destination for
+                    arrival. Present only on a transfer-referenced unit.
+                  example: site-north-1
+                quantity:
+                  type: integer
+                  description: >-
+                    OPTIONAL (ADR-0033). Units of the SKU this transfer leg
+                    moves. Present only on a transfer-referenced unit that
+                    carried a positive quantity.
+                  minimum: 0
+                  example: 17
+                relocation:
+                  type: object
+                  description: >-
+                    OPTIONAL (ADR-0040). Present only on a RELOCATE work unit
+                    (one planned from slotting-optimization's
+                    SlotPlanApproved): the slot-plan move it executes,
+                    exactly the object fulfillment-execution's RELOCATE task
+                    decodes (its ADR 0047). Absent on order and transfer
+                    work, whose payloads are byte-identical to before.
+                    RELOCATE work never carries `work_kind`/`transfer_ref`.
+                  required:
+                    - plan_id
+                    - move_seq
+                    - kind
+                    - sku
+                  properties:
+                    plan_id:
+                      type: string
+                      description: The approved slot plan this move belongs to.
+                      example: plan-3b0e8d2a
+                    move_seq:
+                      type: integer
+                      minimum: 0
+                      description: >-
+                        0-based position of the move in the plan's published
+                        `moves`; always present, `0` included.
+                      example: 1
+                    kind:
+                      type: string
+                      enum: [Relocate, Assign, Vacate]
+                      example: Relocate
+                    sku:
+                      type: string
+                      example: SKU-2
+                    from_bin:
+                      type: string
+                      description: Slot the stock leaves; absent for Assign.
+                      example: WH1-FWD-A02-03-01-A
+                    to_bin:
+                      type: string
+                      description: Slot the stock lands in; absent for Vacate.
+                      example: WH1-FWD-A01-01-02-A
+
+    WorkUnitCompletedEvent:
+      title: WorkUnitCompleted CloudEvent
+      description: CloudEvent envelope for a completed work unit.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.workunit.WorkUnitCompleted"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:WorkUnitCompleted:v1"
+            data:
+              type: object
+              description: Payload published by the outbound Kafka adapter.
+              required:
+                - path_id
+                - work_unit_id
+              properties:
+                path_id:
+                  type: string
+                  description: >-
+                    Identifier of the process path the completed unit
+                    belonged to.
+                work_unit_id:
+                  type: string
+                  description: Identifier of the completed work unit.
+
+    BacklogThresholdBreachedEvent:
+      title: BacklogThresholdBreached CloudEvent
+      description: CloudEvent envelope for a backlog alarm threshold breach.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:BacklogThresholdBreached:v1"
+            data:
+              type: object
+              description: Payload published by the outbound Kafka adapter.
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+                  description: >-
+                    Identifier of the process path whose backlog crossed its
+                    alarm threshold.
+
+    RateDeviationDetectedEvent:
+      title: RateDeviationDetected CloudEvent
+      description: >-
+        CloudEvent envelope for a plan-vs-actual rate deviation. Catalog-only
+        today — no use case currently raises this event.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.workpool.RateDeviationDetected"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:RateDeviationDetected:v1"
+            data:
+              type: object
+              description: >-
+                Payload the outbound adapter's type switch would produce for
+                this event once a use case raises it.
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+                  description: >-
+                    Identifier of the process path whose actual rate deviated
+                    from plan.
+
+    PathThrottledEvent:
+      title: PathThrottled CloudEvent
+      description: CloudEvent envelope for an upstream release throttle decision.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.workpool.PathThrottled"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:PathThrottled:v1"
+            data:
+              type: object
+              description: Payload published by the outbound Kafka adapter.
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+                  description: >-
+                    Identifier of the process path whose upstream release was
+                    throttled.
+
+    LaborReassignmentFlaggedEvent:
+      title: LaborReassignmentFlagged CloudEvent
+      description: CloudEvent envelope for a labor reassignment recommendation.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:LaborReassignmentFlagged:v1"
+            data:
+              type: object
+              description: Payload published by the outbound Kafka adapter.
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+                  description: >-
+                    Identifier of the process path labor should be moved
+                    onto.
+
+    PathCapacityChangedEvent:
+      title: PathCapacityChanged CloudEvent
+      description: >-
+        CloudEvent envelope for a reported remaining-admission-capacity
+        figure for a process path, correlated against a CPT cutoff
+        timestamp (see ADR-0018).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for this message.
+              const: "com.warehouse.wes.work-planning.workpool.PathCapacityChanged"
+            dataschema:
+              type: string
+              description: Fixed integration-payload schema id for this message.
+              const: "urn:warehouse:wes-work-planning:events:PathCapacityChanged:v1"
+            data:
+              type: object
+              description: Payload published by the outbound Kafka adapter.
+              required:
+                - path_id
+                - cutoff_at
+                - remaining_units
+                - known
+              properties:
+                path_id:
+                  type: string
+                  description: Identifier of the process path this capacity figure applies to.
+                cutoff_at:
+                  type: string
+                  format: date-time
+                  description: >-
+                    RFC3339 CPT cutoff timestamp this remaining-capacity
+                    figure applies to — this service's own native CPT
+                    currency, NOT process-path-management's site-schedule
+                    `cptId` string (see ADR-0018's correlation-by-timestamp
+                    discussion). A consumer must correlate this timestamp
+                    against its own cached CPT-window schedule to resolve
+                    which `cptId` it corresponds to.
+                remaining_units:
+                  type: integer
+                  format: int32
+                  description: >-
+                    How many more units this path can admit right now
+                    (WIP limit minus current WIP; always non-negative
+                    since the aggregate never admits past its own limit).
+                    Meaningful only when `known` is `true`; always `0`
+                    when `known` is `false`.
+                known:
+                  type: boolean
+                  description: >-
+                    `false` when this path is FlowFed (no hard admission
+                    ceiling — only a backlog alarm threshold, not a
+                    capacity figure) or when it is ReleaseFed with no WIP
+                    limit provisioned. `true` otherwise.
+
+    ChargeForecastReceivedAnalyticsEvent:
+      title: ChargeForecastReceived analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.charge.ChargeForecastReceived"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:ChargeForecastReceived:v1"
+            data:
+              type: object
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+
+    ShiftPlanCommittedAnalyticsEvent:
+      title: ShiftPlanCommitted analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.plan.ShiftPlanCommitted"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:ShiftPlanCommitted:v1"
+            data:
+              type: object
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+
+    WorkUnitCreatedAnalyticsEvent:
+      title: WorkUnitCreated analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.workunit.WorkUnitCreated"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:WorkUnitCreated:v1"
+            data:
+              type: object
+              required:
+                - path_id
+                - work_unit_id
+              properties:
+                path_id:
+                  type: string
+                work_unit_id:
+                  type: string
+
+    WorkReleasedAnalyticsEvent:
+      title: WorkReleased analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.workunit.WorkReleased"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:WorkReleased:v1"
+            data:
+              type: object
+              required:
+                - path_id
+                - work_unit_id
+              properties:
+                path_id:
+                  type: string
+                work_unit_id:
+                  type: string
+                line_no:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  maximum: 2147483647
+                  description: >-
+                    OPTIONAL (ADR-0036). The 1-based order line the released
+                    unit was made for (1..2147483647); the same value, with the same
+                    omit-when-unknown rule, as `line_no` on the integration
+                    `WorkReleased`. Absent — never `0` or `null` — when the
+                    line is unknown.
+                  example: 3
+
+    WorkUnitCompletedAnalyticsEvent:
+      title: WorkUnitCompleted analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.workunit.WorkUnitCompleted"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:WorkUnitCompleted:v1"
+            data:
+              type: object
+              required:
+                - path_id
+                - work_unit_id
+              properties:
+                path_id:
+                  type: string
+                work_unit_id:
+                  type: string
+
+    BacklogThresholdBreachedAnalyticsEvent:
+      title: BacklogThresholdBreached analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:BacklogThresholdBreached:v1"
+            data:
+              type: object
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+
+    RateDeviationDetectedAnalyticsEvent:
+      title: RateDeviationDetected analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.workpool.RateDeviationDetected"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:RateDeviationDetected:v1"
+            data:
+              type: object
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+
+    PathThrottledAnalyticsEvent:
+      title: PathThrottled analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.workpool.PathThrottled"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:PathThrottled:v1"
+            data:
+              type: object
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+
+    LaborReassignmentFlaggedAnalyticsEvent:
+      title: LaborReassignmentFlagged analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:LaborReassignmentFlagged:v1"
+            data:
+              type: object
+              required:
+                - path_id
+              properties:
+                path_id:
+                  type: string
+
+    PathCapacityChangedAnalyticsEvent:
+      title: PathCapacityChanged analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.workpool.PathCapacityChanged"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:PathCapacityChanged:v1"
+            data:
+              type: object
+              required:
+                - path_id
+                - cutoff_at
+                - remaining_units
+                - known
+              properties:
+                path_id:
+                  type: string
+                cutoff_at:
+                  type: string
+                  format: date-time
+                remaining_units:
+                  type: integer
+                known:
+                  type: boolean
+
+    PathPlanDriftDetectedEvent:
+      title: PathPlanDriftDetected CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:events:PathPlanDriftDetected:v1"
+            data:
+              type: object
+              required:
+                - path_id
+                - wes_planned_heads
+                - observed_planned_heads
+                - drift_heads
+                - observed_at
+              properties:
+                path_id:
+                  type: string
+                wes_planned_heads:
+                  type: integer
+                  format: int32
+                  description: Planned heads on this service's committed PathPlan.
+                observed_planned_heads:
+                  type: integer
+                  format: int32
+                  description: Planned heads in the latest LaborPlanObserved for the path.
+                drift_heads:
+                  type: integer
+                  format: int32
+                  description: >-
+                    Signed `observed_planned_heads - wes_planned_heads`; never
+                    zero on this event (agreeing plans raise nothing).
+                observed_at:
+                  type: string
+                  format: date-time
+                  description: >-
+                    Workforce's own commit timestamp, carried from
+                    LaborPlanObserved (not the detection time — that is the
+                    envelope `time`).
+
+    PathPlanDriftDetectedAnalyticsEvent:
+      title: PathPlanDriftDetected analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:PathPlanDriftDetected:v1"
+            data:
+              type: object
+              required:
+                - path_id
+                - wes_planned_heads
+                - observed_planned_heads
+                - drift_heads
+                - observed_at
+              properties:
+                path_id:
+                  type: string
+                wes_planned_heads:
+                  type: integer
+                  format: int32
+                  description: Planned heads on this service's committed PathPlan.
+                observed_planned_heads:
+                  type: integer
+                  format: int32
+                  description: Planned heads in the latest LaborPlanObserved for the path.
+                drift_heads:
+                  type: integer
+                  format: int32
+                  description: >-
+                    Signed `observed_planned_heads - wes_planned_heads`; never
+                    zero on this event (agreeing plans raise nothing).
+                observed_at:
+                  type: string
+                  format: date-time
+                  description: >-
+                    Workforce's own commit timestamp, carried from
+                    LaborPlanObserved (not the detection time — that is the
+                    envelope `time`).

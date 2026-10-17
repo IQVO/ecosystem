@@ -1,0 +1,70 @@
+---
+id: inventory-storage-api-receiveStock
+version: 1.0.0
+name: receiveStock
+summary: Acknowledge inbound stock for a SKU
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Stock'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /stock/receive
+  statusCodes:
+    - '202'
+    - '400'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Stages a quantity of a SKU as received into the building (publishes StockReceived) without assigning it to a bin yet. This does NOT create a StockUnit aggregate: a StockUnit requires both an item-scan and a location-scan by construction (the stow-requires-both invariant), and a staged receipt has no bin yet. The durable, addressable record only starts at StowStock — that is why this operation returns 202 Accepted rather than 201 Created: there is no resource here to hand back a Location for.
+
+
+
+
+
+## POST `(/stock/receive)`
+
+### Parameters
+- **Idempotency-Key** (header): Caller-generated unique key (a UUID per logical submit) that makes a retried request safe (ADR 0018). Required whenever the service runs with Postgres — i.e. in every deployment — and answered with 400 `idempotency-key-required` when absent; a replay with the same key and the same body returns the original response, while the same key with a different body is 422 `idempotency-key-reused`. The in-memory development mode (no DATABASE_URL) does not enforce it, which is why the header is not marked `required` here (the Schemathesis contract run boots that mode).
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">202 Accepted</span>
+<SchemaViewer file="response-202.json" maxHeight="500" id="response-202" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

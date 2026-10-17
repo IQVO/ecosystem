@@ -1,0 +1,27 @@
+---
+id: warehouse.inbound-receiving.analytics
+name: warehouse.inbound-receiving.analytics
+version: 1.0.0
+address: warehouse.inbound-receiving.analytics
+protocols:
+  - kafka
+---
+## Overview
+  This service's analytics topic (`AnalyticsTopic` in
+`internal/adapters/outbound/kafka/analytics_encoder.go`; ADR 0006).
+Written by the SAME outbox relay, from rows inserted in the same
+transaction as the integration rows (one CloudEvents `id` per occurrence
+on both topics); key as on the integration topic. Consumed ONLY by this
+service's `inbound-projector` under a fixed consumer group read from env
+`ANALYTICS_CONSUMER_GROUP` (at-least-once; the offset is committed after
+the projection and the dedupe mark committed together in the analytical
+database). The projector dedupes on `id`, ignores unknown types, skips
+(with a rate-limited WARN) anything that is not CloudEvents 1.0, and
+dead-letters a known type with an unusable payload to
+`warehouse.inbound-receiving.analytics.dlq` (raw bytes plus `x-dlq-*`
+headers). Not an integration contract: other contexts consume
+`warehouse.inbound-receiving.events`.
+
+  
+
+  <ChannelInformation />

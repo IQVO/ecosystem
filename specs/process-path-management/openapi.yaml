@@ -1,0 +1,653 @@
+openapi: 3.0.3
+info:
+  title: Process Path Management API
+  description: >
+    Operator-configurable process-path catalogue: canonical identity, the
+    matchPrefix rule downstream consumers use to resolve a caller-supplied
+    id to a path family, and the capabilities a station/associate must hold
+    to work that path. This service replaces what was, before it existed, a
+    static YAML file (warehouse-infra/config/process-paths/sortable-fc.yaml)
+    loaded once at boot by fulfillment-execution, wes-work-planning, and
+    workforce-management. It is the SOURCE of the process-path published
+    language, never a consumer of anyone else's — every change here is
+    propagated onward exclusively via Kafka (see apis/asyncapi.yaml), never
+    through a synchronous callback into this service.
+  version: "1.0.0"
+  license:
+    name: MIT
+  contact:
+    name: Process Path Management Team
+    url: https://github.com/claudioed/process-path-management
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: process-paths
+    description: Define, revise, retrieve, list, and deactivate process paths
+  - name: cpt-schedule
+    description: Site-scoped Critical Pull Time (CPT) schedules (ADR 0010)
+  - name: health
+    description: Liveness probe
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealthz
+      summary: Liveness probe
+      description: Reports whether the service process is up and able to serve requests.
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /process-paths:
+    post:
+      tags: [process-paths]
+      operationId: definePath
+      summary: Define a brand-new process path
+      description: >
+        Rejects with 409 if the given pathId is already defined — active or
+        deactivated. A path's identity is permanent once created; a caller
+        wanting to re-use an id after deactivation must be told explicitly,
+        never silently overwritten. Publishes ProcessPathCreated on success.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DefineProcessPathRequest"
+      responses:
+        "201":
+          description: Path defined
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPath"
+        "400":
+          description: >
+            The request body is missing or not valid JSON (including a JSON
+            number too large for eligibility.maxUnitsPerLine's int64
+            range, or a null element inside requiredCapabilities,
+            eligibility.requiredProductAttributes,
+            eligibility.excludedProductAttributes or intake — every array element must
+            be a string), or the Idempotency-Key header is absent/empty.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: A process path with this id already exists (active or deactivated)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          description: >
+            pathId is empty, matchPrefix is empty/not lower-case,
+            requiredCapabilities is empty, cycleTimeP95 is not a positive
+            Go duration string, destinationLocationRole is not one of
+            Drop/WorkCenter/Shipping, intake holds an unknown or repeated
+            demand source (invalid-intake) — or the Idempotency-Key header was
+            already used with a request body that differs from this one.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+    get:
+      tags: [process-paths]
+      operationId: listPaths
+      summary: List process paths
+      description: >
+        Returns only Active paths by default — matching the retired YAML
+        catalogue's own posture that every consumer's normal read is "the
+        currently valid set," not everything that ever existed. Pass
+        ?all=true for the audit view (Active and Deactivated paths).
+      parameters:
+        - name: all
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, includes Deactivated paths too.
+      responses:
+        "200":
+          description: The requested set of process paths
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProcessPath"
+        "400":
+          description: The `all` query parameter is present but not a boolean (e.g. `all=null`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+  /process-paths/{pathId}:
+    get:
+      tags: [process-paths]
+      operationId: getPath
+      summary: Get one process path by id
+      description: Returns the path regardless of status (Active or Deactivated).
+      parameters:
+        - $ref: "#/components/parameters/PathIdPathParam"
+      responses:
+        "200":
+          description: The requested process path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPath"
+        "404":
+          description: No process path exists with this id
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+    put:
+      tags: [process-paths]
+      operationId: revisePath
+      summary: Revise an Active process path's matchPrefix/requiredCapabilities/cycleTimeP95/eligibility/intake
+      description: >
+        pathId and direct are not revisable (direct describes a structural
+        routing fact, not an operator-tunable parameter). Returns 422 if the
+        path is Deactivated — a deactivated path is a closed historical
+        record. A no-op revision (identical matchPrefix,
+        requiredCapabilities, cycleTimeP95, eligibility, and intake) is a
+        successful 200 that does NOT republish ProcessPathUpdated. intake
+        (ADR 0034) is optional here: omitting it keeps the current intake.
+      parameters:
+        - $ref: "#/components/parameters/PathIdPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevisePathRequest"
+      responses:
+        "200":
+          description: Path revised (or unchanged, if the request was a no-op)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPath"
+        "400":
+          description: >-
+            The request body is missing or not valid JSON (including a JSON
+            number too large for eligibility.maxUnitsPerLine's int64 range,
+            or a null element inside requiredCapabilities,
+            eligibility.requiredProductAttributes,
+            eligibility.excludedProductAttributes or intake — every array element must
+            be a string).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "404":
+          description: No process path exists with this id
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this path between the caller's load and this write (optimistic
+            concurrency, ADR 0017). Reload the path and re-apply the
+            revision against the current state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          description: The path is deactivated, or matchPrefix/requiredCapabilities/cycleTimeP95/intake is invalid
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+    delete:
+      tags: [process-paths]
+      operationId: deactivatePath
+      summary: Deactivate (retire) a process path
+      description: >
+        Idempotent: deactivating an already-deactivated path is a no-op
+        success and does NOT republish ProcessPathDeactivated. Publishes
+        ProcessPathDeactivated the first time a path transitions to
+        Deactivated. A path that any site's CPT schedule still lists in a
+        cutoff's eligiblePathIds cannot be deactivated (ADR 0026): the
+        request is refused with 409 path-referenced-by-cpt-schedule, naming
+        the sites, and nothing changes — revise those schedules first. This
+        service takes no position on work already assigned to this path in
+        a downstream context — that is each consumer's own operational
+        concern.
+      parameters:
+        - $ref: "#/components/parameters/PathIdPathParam"
+      responses:
+        "204":
+          description: Path deactivated (or already was)
+        "404":
+          description: No process path exists with this id
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            path-referenced-by-cpt-schedule: at least one site's CPT
+            schedule still lists this path in a cutoff's eligiblePathIds
+            (ADR 0026). The path stays Active and nothing is published.
+            Also concurrent-modification when another request committed a
+            change to this path between this call's load and write (ADR
+            0017).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+  /sites/{siteId}/cpt-schedule:
+    get:
+      tags: [cpt-schedule]
+      operationId: getCPTSchedule
+      summary: Get one site's CPT schedule
+      description: >
+        Returns 404 if no schedule has been defined for this siteId yet.
+      parameters:
+        - $ref: "#/components/parameters/SiteIdPathParam"
+      responses:
+        "200":
+          description: The requested CPT schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CPTSchedule"
+        "404":
+          description: No CPT schedule exists for this site
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+    put:
+      tags: [cpt-schedule]
+      operationId: defineCPTSchedule
+      summary: Define or wholesale-revise a site's CPT schedule
+      description: >
+        There is no separate create/revise endpoint: every PUT replaces
+        the schedule's timezone and cutoffs in full (ADR 0010) — a
+        CPTSchedule has no partial-update semantics. Invariants: at least
+        one cutoff; cptIds unique within the schedule; every cutoff's
+        eligiblePathIds entry must reference an Active ProcessPath in this
+        service's own store (the one cross-aggregate check, enforced at
+        write time). A no-op revision (identical timezone and cutoffs) is
+        a successful 200 that does NOT republish CPTScheduleChanged.
+      parameters:
+        - $ref: "#/components/parameters/SiteIdPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DefineCPTScheduleRequest"
+      responses:
+        "200":
+          description: Schedule defined or revised
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CPTSchedule"
+        "400":
+          description: The request body is missing or not valid JSON.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "404":
+          description: No route matches this request path (e.g. an empty siteId path segment).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this site's schedule between the caller's load and this write
+            (optimistic concurrency, ADR 0017). Reload the schedule and
+            re-apply the change against the current state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          description: >
+            timezone is empty/not a recognized IANA zone, cutoffs is
+            empty, a cptId is empty/duplicate, a localTime is
+            empty/malformed, daysOfWeek is empty/invalid, shipMethod is
+            empty, eligiblePathIds is empty, or an eligiblePathIds entry
+            does not reference an Active process path in this service's
+            own store.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+components:
+  parameters:
+    PathIdPathParam:
+      name: pathId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      example: PICK
+    SiteIdPathParam:
+      name: siteId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      example: sp1
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+      description: >-
+        Caller-supplied idempotency key for this resource-creating request
+        (ADR 0011). Clients MUST always send a non-empty, unique-per-logical-
+        request key (e.g. a UUID minted per submit): a retried request with
+        the same key AND the same body replays the original response instead
+        of creating a second path, while the same key with a different body
+        is rejected 422 idempotency-key-reused. Declared required: false
+        with no minLength only because the Schemathesis contract job boots
+        the API in in-memory mode, which does not enforce the header —
+        against a Postgres-backed deployment an absent/empty key is a 400
+        idempotency-key-required.
+      example: 0b6b1f1e-4a5c-4c1e-9f2a-7d3c8e5f9a01
+  schemas:
+    DefineProcessPathRequest:
+      type: object
+      required: [pathId, matchPrefix, requiredCapabilities, cycleTimeP95]
+      properties:
+        pathId:
+          type: string
+          minLength: 1
+          description: The canonical identity of the path (e.g. "PICK", "PACK", "REBIN", "SLAM").
+          example: PICK
+        matchPrefix:
+          type: string
+          minLength: 1
+          description: >
+            Lower-case prefix downstream consumers match a caller-supplied
+            id against: id == matchPrefix OR id starts with
+            matchPrefix + "-". Must be non-empty and lower-case.
+          example: pick
+        direct:
+          type: boolean
+          nullable: true
+          default: false
+          description: >
+            A structural fact about this path's routing shape (reserved for
+            a future multi-hop topology). Immutable once set; not revisable.
+            A JSON null is treated the same as an omitted field (false).
+        requiredCapabilities:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: Capabilities a station/associate must hold to work this path.
+          example: ["pick"]
+        destinationLocationRole:
+          $ref: "#/components/schemas/DestinationLocationRole"
+        cycleTimeP95:
+          $ref: "#/components/schemas/CycleTimeP95"
+        eligibility:
+          $ref: "#/components/schemas/Eligibility"
+        intake:
+          $ref: "#/components/schemas/Intake"
+    RevisePathRequest:
+      type: object
+      required: [matchPrefix, requiredCapabilities, cycleTimeP95]
+      properties:
+        matchPrefix:
+          type: string
+          minLength: 1
+          example: pick-zone-a
+        requiredCapabilities:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          example: ["pick", "hazmat"]
+        cycleTimeP95:
+          $ref: "#/components/schemas/CycleTimeP95"
+        eligibility:
+          $ref: "#/components/schemas/Eligibility"
+        intake:
+          allOf:
+            - $ref: "#/components/schemas/Intake"
+          description: >
+            Optional on revise (ADR 0034): absent or JSON null keeps the
+            path's current intake, so a client that predates the field
+            never clears it; an array (the empty array included) replaces
+            it.
+    ProcessPath:
+      type: object
+      properties:
+        pathId:
+          type: string
+          example: PICK
+        matchPrefix:
+          type: string
+          example: pick
+        direct:
+          type: boolean
+        requiredCapabilities:
+          type: array
+          items:
+            type: string
+          example: ["pick"]
+        destinationLocationRole:
+          $ref: "#/components/schemas/DestinationLocationRole"
+        cycleTimeP95:
+          $ref: "#/components/schemas/CycleTimeP95"
+        eligibility:
+          $ref: "#/components/schemas/Eligibility"
+        intake:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DemandSource"
+          description: >
+            The demand sources allowed to route work onto this path (ADR
+            0034), in canonical (sorted) order. Always present; [] when the
+            path is reached only by an explicit path id.
+          example: ["CUSTOMER_ORDER"]
+        status:
+          type: string
+          enum: [ACTIVE, DEACTIVATED]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    DestinationLocationRole:
+      type: string
+      nullable: true
+      description: >
+        Optional declaration of what kind of facility-layout LocationRole
+        this path's completed work is destined for (ADR 0006). Omitted
+        entirely — or the equivalent JSON null / empty string — means no
+        destination role was declared: the default, and most common, case
+        (e.g. Pick has no single destination). Immutable once set at
+        DefinePath time; never revisable via RevisePath. This is
+        declarative routing intent this service publishes for a
+        downstream consumer to interpret — it is never validated against
+        a live facility-layout lookup (this service has zero
+        inbound/outbound dependency on any other context).
+      enum: ["", Drop, WorkCenter, Shipping]
+      example: Drop
+    CycleTimeP95:
+      type: string
+      description: >
+        The operator-declared p95 end-to-end cycle time from release into
+        the path to manifest (ADR 0010): a declared standard, not a
+        measured value. Required and must be positive. Encoded as a Go
+        duration string (e.g. "2h", "90m", "2h30m").
+      example: "2h"
+    Eligibility:
+      type: object
+      nullable: true
+      description: >
+        Rules a unit of work must satisfy to be routed to this path (ADR
+        0010). Every field is optional; an absent/empty object ({}) — or
+        the equivalent JSON null — is the fully permissive default every
+        path gets on migration, so today's routing behaviour is preserved
+        exactly until an operator narrows it.
+      properties:
+        maxUnitsPerLine:
+          type: integer
+          format: int64
+          nullable: true
+          description: nil/omitted means unbounded; 1 is how a singles path is declared.
+          example: 1
+        requiredProductAttributes:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: >
+            Set over the fleet's existing product classification
+            vocabulary (e.g. "hazmat", "fragile", "giftWrap"). This
+            service does not own or validate this vocabulary.
+          example: ["giftWrap"]
+        excludedProductAttributes:
+          type: array
+          nullable: true
+          items:
+            type: string
+          example: ["hazmat"]
+        nonSortable:
+          type: boolean
+          nullable: true
+          default: false
+    DemandSource:
+      type: string
+      enum: [CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL]
+      description: >
+        One source of demand that may route work onto a process path (ADR
+        0034). CUSTOMER_ORDER: order-management order lines.
+        STOCK_TRANSFER: network-inventory-planning transfer legs, planned
+        through wes-work-planning. SLOT_RELOCATION: approved slot-plan
+        moves, planned through wes-work-planning. INVENTORY_CONTROL:
+        internal inventory work (amnesty, damage, problem solve).
+    Intake:
+      type: array
+      nullable: true
+      uniqueItems: true
+      items:
+        $ref: "#/components/schemas/DemandSource"
+      description: >
+        The set of demand sources allowed to route work onto the path (ADR
+        0034): routing policy, revisable like eligibility. Omitted, JSON
+        null or [] on define is the empty set, meaning the path is reached
+        only by an explicit path id from an upstream stage (PACK, REBIN,
+        SLAM). An unknown or repeated value is a 422 invalid-intake.
+      example: ["CUSTOMER_ORDER"]
+    DefineCPTScheduleRequest:
+      type: object
+      required: [timezone, cutoffs]
+      properties:
+        timezone:
+          type: string
+          minLength: 1
+          description: IANA zone, e.g. America/Sao_Paulo.
+          example: America/Sao_Paulo
+        cutoffs:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Cutoff"
+    Cutoff:
+      type: object
+      required: [cptId, localTime, daysOfWeek, shipMethod, eligiblePathIds]
+      properties:
+        cptId:
+          type: string
+          minLength: 1
+          description: Stable id, unique within the site, e.g. "sp1-1500".
+          example: sp1-1500
+        localTime:
+          type: string
+          minLength: 1
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Recurring daily cutoff, "HH:MM" 24-hour form.
+          example: "15:00"
+        daysOfWeek:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+          example: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+        shipMethod:
+          type: string
+          minLength: 1
+          description: Free-form label ("ground", "same-day"); no carrier integration exists in this fleet.
+          example: ground
+        eligiblePathIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+          description: >
+            The path families that can make this cutoff. Each entry must
+            reference an Active ProcessPath in this service's own store
+            (checked at write time).
+          example: ["PICK"]
+    CPTSchedule:
+      type: object
+      properties:
+        siteId:
+          type: string
+          example: sp1
+        timezone:
+          type: string
+          example: America/Sao_Paulo
+        cutoffs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Cutoff"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProblemDetails:
+      type: object
+      description: RFC 7807 Problem Details for HTTP APIs.
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+      required: [type, title, status, detail]

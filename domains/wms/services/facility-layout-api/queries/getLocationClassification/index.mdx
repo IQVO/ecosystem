@@ -1,0 +1,70 @@
+---
+id: facility-layout-api-getLocationClassification
+version: 1.0.0
+name: getLocationClassification
+summary: Get a location slot's resolved hazmat/temperature-class attributes
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Locations'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: '/locations/{locationCode}/classification'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+Resolves a LocationSlot's LocationCode to its parent Zone (the same Site/Area/Zone/Aisle chain-of-custody resolution `POST /locations` performs) and returns that Zone's `hazmat` and `temperatureClass` attributes. This is a deliberately cheap, denormalized read: it does not return the rest of the LocationSlot or Zone shape, only what a cross-context caller needs to validate placement of a classified product (e.g. `inventory-storage` checking that a Hazmat SKU only lands in a hazmat-rated Zone, or a TemperatureSensitive SKU only lands in a Zone with a matching TemperatureClass) without duplicating Zone data of its own.
+
+This context remains the sole source of truth for these attributes — Zone already carries `Hazmat` and `TemperatureClass`; this endpoint is the concrete realization of this context's Open Host Service / Published Language for that purpose (see ADR-0008).
+
+A code that is not seven `[A-Z0-9]` segments is a 400, not a 404 — it could never identify a slot. An unknown location code, or one whose slot exists but whose zone cannot be resolved, is a 404.
+
+
+
+
+
+## GET `(/locations/{locationCode}/classification)`
+
+### Parameters
+- **locationCode** (path) (required): The slot's full seven-segment code, `SITE-AREA-ZONE-AISLE-BAY-LEVEL-POSITION`.
+
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+The resolved subset of a LocationSlot's parent Zone attributes that a cross-context caller needs to validate placement of a classified product — nothing else about the slot or the zone. Zone remains the source of truth for `hazmat` and `temperatureClass`; this is a denormalized, read-only projection of it, not a new aggregate.
+
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 Problem Details. Every error response in this API uses this shape.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />
