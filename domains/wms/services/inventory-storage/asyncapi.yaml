@@ -1520,12 +1520,17 @@ channels:
               response and a redelivered TaskCompleted (same CloudEvents id) is
               a no-op, so neither publishes again. `source_ref` is always
               present (`""` when none); on the task path it is the task's
-              `relocation_ref`, or its task id when the producer sent none.
+              `relocation_ref`, or its task id when the producer sent none. A
+              completed REPLENISH task (ADR 0041) reaches the same use case with
+              reason `REPLENISHMENT` and `source_ref` = the task's `request_ref`
+              (the replenishment request id; required, no task-id fallback),
+              which pick-face-replenishment matches to complete its request.
 
 
               **Integration topic only** (no analytics variant). Kafka key and
               CloudEvents `subject` are the relocation id (ADR 0021).
-              slotting-optimization consumes it to close a slot plan's move.
+              slotting-optimization consumes it to close a slot plan's move; it
+              must act only on `reason = SLOTTING`.
             contentType: application/cloudevents+json
             tags:
               - name: stock
@@ -1689,17 +1694,24 @@ channels:
                             - SLOTTING
                             - CONSOLIDATION
                             - MANUAL
+                            - REPLENISHMENT
                           description: >-
                             Why the stock moved. A RELOCATE task is always
-                            SLOTTING (it executes a slot plan).
+                            SLOTTING (it executes a slot plan). REPLENISHMENT
+                            (additive, ADR 0041) is set only by a completed
+                            REPLENISH task (pick-face replenishment) and never
+                            accepted from POST /relocations; its source_ref is
+                            the replenishment request id. Consumers that act
+                            only on SLOTTING must ignore other values.
                           x-parser-schema-id: <anonymous-schema-95>
                         source_ref:
                           type: string
                           maxLength: 200
                           description: >-
                             The caller's reference (a slot-plan move, the task's
-                            relocation_ref, or the task id); always present, ""
-                            when none.
+                            relocation_ref, or the task id; for REPLENISHMENT
+                            the replenishment request id, the REPLENISH task's
+                            request_ref); always present, "" when none.
                           x-parser-schema-id: <anonymous-schema-96>
                         occurred_at:
                           type: string
@@ -1709,6 +1721,29 @@ channels:
                   x-parser-schema-id: <anonymous-schema-85>
               x-parser-schema-id: StockRelocatedEvent
             examples:
+              - name: replenishmentFromATask
+                summary: >-
+                  Twelve units of SKU-R1 moved from a reserve bin to the pick
+                  face by a completed REPLENISH task (ADR 0041).
+                payload:
+                  specversion: '1.0'
+                  id: 4d0f2b63-8c5e-4f29-b7a3-6e1c9d8f0a32
+                  source: /warehouse/inventory-storage
+                  type: com.warehouse.wms.inventory-storage.stock.StockRelocated
+                  subject: rel-45
+                  time: '2026-10-17T12:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:inventory-storage:events:StockRelocated:v1
+                  data:
+                    relocation_id: rel-45
+                    site_code: WH1
+                    sku: SKU-R1
+                    from_bin: WH1-STOR-AMB-A01-01-01-A
+                    to_bin: WH1-PICK-AMB-A02-01-01-A
+                    quantity: 12
+                    reason: REPLENISHMENT
+                    source_ref: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                    occurred_at: '2026-10-17T12:00:00Z'
               - name: slottingMoveFromATask
                 summary: >-
                   Seven units of SKU-R1 moved between two WH1 bins by a
@@ -1766,12 +1801,13 @@ channels:
 
               `reason` is `STOW`, `PICK`, `RELOCATE`, `REPLENISHMENT`, `COUNT`,
               `RESERVE`, `REVOKE` or `UNLOCATED`; consumers ignore values they
-              do not know. `REPLENISHMENT` is reserved for the relocation reason
-              the later pick-face replenishment change adds, and `UNLOCATED` for
-              an unlocated receive with a bin: neither is emitted today (a
-              receive names no bin). A bin whose site cannot be determined (not
-              registered, or neither a recorded site custody nor a
-              facility-layout location code) raises no event.
+              do not know. `REPLENISHMENT` is the reason of a relocation made by
+              a completed REPLENISH task (ADR 0041: two events, the source bin
+              then the destination bin, like RELOCATE), and `UNLOCATED` is
+              reserved for an unlocated receive with a bin: it is not emitted
+              today (a receive names no bin). A bin whose site cannot be
+              determined (not registered, or neither a recorded site custody nor
+              a facility-layout location code) raises no event.
 
 
               **Integration topic only** (no analytics variant). Kafka key and
@@ -1964,8 +2000,9 @@ channels:
                             - UNLOCATED
                           description: >-
                             What moved the level. Consumers ignore values they
-                            do not know. REPLENISHMENT and UNLOCATED are not
-                            emitted yet.
+                            do not know. UNLOCATED is not emitted yet;
+                            REPLENISHMENT is emitted by a completed REPLENISH
+                            task (ADR 0041).
                           x-parser-schema-id: <anonymous-schema-109>
                         occurred_at:
                           type: string
@@ -4154,6 +4191,21 @@ channels:
         dead-letters nothing.
 
 
+        REPLENISH (ADR 0041): a `task_type = REPLENISH` completion carries the
+        same additive `sku`, `from_bin`, `to_bin`, `quantity` plus the REQUIRED
+        `request_ref` (the pick-face-replenishment request id, mirroring
+        `relocation_ref`) and is applied by ApplyReplenishTask: the same
+        RelocateStock with reason `REPLENISHMENT`, site = the source bin's site
+        and source_ref = `request_ref` (no task-id fallback: the replenishment
+        context closes a request by `source_ref == request_id`). It enqueues
+        `StockRelocated` plus the two `BinStockLevelChanged` events (reason
+        `REPLENISHMENT`, source bin then destination bin). The CloudEvents `id`
+        is claimed in `processed_events` under consumer
+        `task-completed-replenish` in the SAME transaction; classification of
+        deterministic versus transient failures is that of RELOCATE, and a
+        REPLENISH completion without `request_ref` is dead-lettered at once.
+
+
         A transient failure retries the same message with capped backoff (5
         attempts), then dead-letters it; an undecodable payload is dead-lettered
         at once; a message that is not a CloudEvent is skipped with a sampled
@@ -4174,20 +4226,24 @@ channels:
           `com.warehouse.wes.fulfillment-execution.task.TaskCompleted`,
           `source=/warehouse/fulfillment-execution`, subject and Kafka key =
           task id. This service reads only `task_id`, `task_type`, `order_ref`,
-          `line_no` and, on RELOCATE tasks, `sku`, `from_bin`, `to_bin`,
-          `quantity` and `relocation_ref`; every other field (`station_id`,
-          `work_unit_id`, `associate_id`, `duration_seconds`) is ignored.
-          `order_ref` is the additive optional field of ADR 0035 (v1, omitted
-          when empty): the task's order reference, i.e. the OrderId
-          order-management used as `demand_ref`. `line_no` is the additive
-          optional field of ADR 0036 (v1, omitted when unknown): the order line
-          the task was for. A message without `order_ref`, or with any
-          `task_type` other than `PICK` or `RELOCATE`, is a successful no-op;
-          one without `line_no` takes the ADR 0035 counting path. The RELOCATE
-          fields are the additive fields of ADR 0039 (decision E1, v1):
+          `line_no` and, on RELOCATE and REPLENISH tasks, `sku`, `from_bin`,
+          `to_bin`, `quantity` and `relocation_ref` (RELOCATE) or `request_ref`
+          (REPLENISH); every other field (`station_id`, `work_unit_id`,
+          `associate_id`, `duration_seconds`) is ignored. `order_ref` is the
+          additive optional field of ADR 0035 (v1, omitted when empty): the
+          task's order reference, i.e. the OrderId order-management used as
+          `demand_ref`. `line_no` is the additive optional field of ADR 0036
+          (v1, omitted when unknown): the order line the task was for. A message
+          without `order_ref`, or with any `task_type` other than `PICK`,
+          `RELOCATE` or `REPLENISH`, is a successful no-op; one without
+          `line_no` takes the ADR 0035 counting path. The RELOCATE fields are
+          the additive fields of ADR 0039 (decision E1, v1):
           fulfillment-execution sends them on RELOCATE tasks only, and a
           RELOCATE completion is applied as an intra-site move
-          (`StockRelocated`).
+          (`StockRelocated`). `request_ref` is the additive field of ADR 0041
+          (v1): REPLENISH tasks only, the replenishment request id, required on
+          a REPLENISH completion; such a completion is applied as an intra-site
+          move with reason `REPLENISHMENT`.
         contentType: application/cloudevents+json
         tags:
           - name: fulfillment-execution
@@ -4218,8 +4274,9 @@ channels:
               type: string
               description: >-
                 CloudEvents id; the dedupe key (claimed in processed_events
-                under consumer `task-completed-confirm-pick`, or
-                `task-completed-relocate` for RELOCATE tasks).
+                under consumer `task-completed-confirm-pick`,
+                `task-completed-relocate` for RELOCATE tasks, or
+                `task-completed-replenish` for REPLENISH tasks).
               x-parser-schema-id: <anonymous-schema-186>
             source:
               type: string
@@ -4265,9 +4322,10 @@ channels:
                     - DISPATCH
                     - ARRIVAL
                     - RELOCATE
+                    - REPLENISH
                   description: >-
-                    PICK and RELOCATE are acted on; omitted by the producer when
-                    the task could not be found.
+                    PICK, RELOCATE and REPLENISH are acted on; omitted by the
+                    producer when the task could not be found.
                   x-parser-schema-id: <anonymous-schema-195>
                 order_ref:
                   type: string
@@ -4296,29 +4354,31 @@ channels:
                 sku:
                   type: string
                   description: >
-                    RELOCATE only (additive, ADR 0039): the SKU moved. Required
-                    on a RELOCATE completion (missing or invalid =
-                    dead-lettered); absent on every other task type.
+                    RELOCATE and REPLENISH only (additive, ADR 0039, ADR 0041):
+                    the SKU moved. Required on a RELOCATE or REPLENISH
+                    completion (missing or invalid = dead-lettered); absent on
+                    every other task type.
                   x-parser-schema-id: <anonymous-schema-198>
                 from_bin:
                   type: string
                   description: >
-                    RELOCATE only (additive, ADR 0039): the source bin's
+                    RELOCATE and REPLENISH only (additive): the source bin's
                     location code; its site is the move's site.
                   x-parser-schema-id: <anonymous-schema-199>
                 to_bin:
                   type: string
                   description: >
-                    RELOCATE only (additive, ADR 0039): the destination bin's
-                    location code; must be a different bin of the same site.
+                    RELOCATE and REPLENISH only (additive): the destination
+                    bin's location code; must be a different bin of the same
+                    site.
                   x-parser-schema-id: <anonymous-schema-200>
                 quantity:
                   type: integer
                   minimum: 1
                   description: >
-                    RELOCATE only (additive, ADR 0039): the units moved.
-                    Missing, zero or negative on a RELOCATE completion =
-                    dead-lettered.
+                    RELOCATE and REPLENISH only (additive): the units moved.
+                    Missing, zero or negative on a RELOCATE or REPLENISH
+                    completion = dead-lettered.
                   x-parser-schema-id: <anonymous-schema-201>
                 relocation_ref:
                   type: string
@@ -4328,6 +4388,16 @@ channels:
                     move the task executes; stored as the relocation's
                     source_ref (the task id is used when absent).
                   x-parser-schema-id: <anonymous-schema-202>
+                request_ref:
+                  type: string
+                  maxLength: 200
+                  description: >
+                    REPLENISH only (additive, ADR 0041, REQUIRED): the pick-face
+                    replenishment request id; stored as the relocation's
+                    source_ref (reason REPLENISHMENT) and echoed in
+                    StockRelocated. Missing or blank = dead-lettered; there is
+                    no task-id fallback.
+                  x-parser-schema-id: <anonymous-schema-203>
               x-parser-schema-id: <anonymous-schema-193>
           x-parser-schema-id: FulfillmentTaskCompletedEvent
         examples:
@@ -4399,6 +4469,32 @@ channels:
                 to_bin: WH1-STOR-AMB-A02-01-01-A
                 quantity: 7
                 relocation_ref: plan-9#3
+          - name: replenishTaskCompleted
+            summary: >-
+              A pick-face REPLENISH task completed (ADR 0041); twelve units of
+              SKU-R1 move from a reserve bin to the pick face, closing
+              replenishment request repl-3b0e8d2a-….
+            payload:
+              specversion: '1.0'
+              id: 9c4f5d6e-7081-4293-8dae-2f3a4b5c6d7e
+              source: /warehouse/fulfillment-execution
+              type: com.warehouse.wes.fulfillment-execution.task.TaskCompleted
+              subject: task-9p01
+              time: '2026-10-17T12:00:00Z'
+              datacontenttype: application/json
+              dataschema: urn:warehouse:fulfillment-execution:events:TaskCompleted:v1
+              data:
+                task_id: task-9p01
+                station_id: station-03
+                work_unit_id: wu-9p01
+                associate_id: worker-42
+                duration_seconds: 74
+                task_type: REPLENISH
+                sku: SKU-R1
+                from_bin: WH1-STOR-AMB-A01-01-01-A
+                to_bin: WH1-PICK-AMB-A02-01-01-A
+                quantity: 12
+                request_ref: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
         messageId: FulfillmentTaskCompleted
   warehouse.inbound-receiving.events:
     description: |
@@ -4471,39 +4567,39 @@ channels:
               type: string
               enum:
                 - '1.0'
-              x-parser-schema-id: <anonymous-schema-203>
+              x-parser-schema-id: <anonymous-schema-204>
             id:
               type: string
               description: >-
                 CloudEvents id; the dedupe key (claimed in processed_events
                 under consumer `inbound-receipt-line`).
-              x-parser-schema-id: <anonymous-schema-204>
+              x-parser-schema-id: <anonymous-schema-205>
             source:
               type: string
               enum:
                 - /warehouse/inbound-receiving
-              x-parser-schema-id: <anonymous-schema-205>
+              x-parser-schema-id: <anonymous-schema-206>
             type:
               type: string
               const: com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived
-              x-parser-schema-id: <anonymous-schema-206>
+              x-parser-schema-id: <anonymous-schema-207>
             subject:
               type: string
               description: The receipt id (the Kafka key is the ASN number).
-              x-parser-schema-id: <anonymous-schema-207>
+              x-parser-schema-id: <anonymous-schema-208>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-208>
+              x-parser-schema-id: <anonymous-schema-209>
             datacontenttype:
               type: string
               enum:
                 - application/json
-              x-parser-schema-id: <anonymous-schema-209>
+              x-parser-schema-id: <anonymous-schema-210>
             dataschema:
               type: string
               description: urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1
-              x-parser-schema-id: <anonymous-schema-210>
+              x-parser-schema-id: <anonymous-schema-211>
             data:
               type: object
               required:
@@ -4517,27 +4613,27 @@ channels:
               properties:
                 receipt_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-212>
+                  x-parser-schema-id: <anonymous-schema-213>
                 asn_number:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-213>
+                  x-parser-schema-id: <anonymous-schema-214>
                 line_no:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-214>
+                  x-parser-schema-id: <anonymous-schema-215>
                 sku:
                   type: string
                   description: >-
                     Must be non-empty; an empty SKU is logged and committed
                     past.
-                  x-parser-schema-id: <anonymous-schema-215>
+                  x-parser-schema-id: <anonymous-schema-216>
                 quantity:
                   type: integer
                   minimum: 1
                   description: >-
                     Units received on this occurrence. A value <= 0 is logged
                     and committed past.
-                  x-parser-schema-id: <anonymous-schema-216>
+                  x-parser-schema-id: <anonymous-schema-217>
                 condition:
                   type: string
                   enum:
@@ -4546,12 +4642,12 @@ channels:
                   description: >-
                     Only Good is booked as stock (ADR 0037); Damaged is counted
                     and ignored; any other value is logged and committed past.
-                  x-parser-schema-id: <anonymous-schema-217>
+                  x-parser-schema-id: <anonymous-schema-218>
                 received_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-218>
-              x-parser-schema-id: <anonymous-schema-211>
+                  x-parser-schema-id: <anonymous-schema-219>
+              x-parser-schema-id: <anonymous-schema-212>
           x-parser-schema-id: InboundReceivingReceiptLineReceivedEvent
         examples:
           - name: goodLine
@@ -4595,6 +4691,160 @@ channels:
                 condition: Damaged
                 received_at: '2026-10-09T08:12:00Z'
         messageId: InboundReceivingReceiptLineReceived
+  warehouse.network-inventory-planning.events:
+    description: |
+      This context's OWN integration stream (Phase 2). Everything on it is
+      emitted through the transactional outbox: the saga state change and
+      the outbox row commit in one transaction, and a background relay
+      publishes afterwards — a request handler never sends directly.
+    x-eventcatalog-channel-version: 1.0.0
+    subscribe:
+      operationId: allocateTransferStock
+      summary: Apply the transfer-allocation command and reply through the outbox.
+      description: >
+        At-least-once, fixed group: FetchMessage, then CommitMessages only after
+        the handler settles; a transient error retries the SAME message with
+        capped backoff (200ms to 5s), so a failed handler can never drop or skip
+        a command. The CloudEvents `id` is claimed in `processed_events` in the
+        SAME transaction as AllocateTransferStock, so a redelivery is a no-op. A
+        payload that can never be applied (an undecodable payload, an invalid
+        `origin_site_id`, an empty `sku`, a non-positive `quantity`) is logged
+        (WARN) and committed past; there is no DLQ on this topic. The reply —
+        TransferStockAllocated or TransferStockAllocationRejected — is published
+        on this service's own integration topic through the transactional
+        outbox, never back onto the command topic.
+      tags:
+        - name: network-inventory-planning
+          description: Consumed from the network-inventory-planning bounded context.
+      message:
+        name: NetworkInventoryPlanningTransferAllocationRequested
+        title: >-
+          Transfer Allocation Requested (from network-inventory-planning,
+          consumed)
+        summary: >-
+          network-inventory-planning asked this context to allocate origin stock
+          for a transfer line.
+        description: >
+          CONSUMED command, not produced (ADR 0030). Pinned by
+          network-inventory-planning's `apis/asyncapi.yaml`: type
+          `com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested`,
+          `source=/warehouse/network-inventory-planning`, subject and Kafka key
+          = the transfer line id. `data` is exactly five fields — the whole
+          consumed contract; this service replies with TransferStockAllocated or
+          TransferStockAllocationRejected on its own integration topic.
+        contentType: application/cloudevents+json
+        tags:
+          - name: network-inventory-planning
+            description: Consumed from network-inventory-planning.
+        payload:
+          type: object
+          description: >
+            CloudEvents 1.0 envelope of network-inventory-planning's
+            TransferAllocationRequested command as consumed here (not composed
+            from CloudEventBase, whose `source` is this service's own).
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - data
+          properties:
+            specversion:
+              type: string
+              enum:
+                - '1.0'
+              x-parser-schema-id: <anonymous-schema-220>
+            id:
+              type: string
+              description: CloudEvents id; the dedupe key (claimed in processed_events).
+              x-parser-schema-id: <anonymous-schema-221>
+            source:
+              type: string
+              enum:
+                - /warehouse/network-inventory-planning
+              x-parser-schema-id: <anonymous-schema-222>
+            type:
+              type: string
+              const: >-
+                com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
+              x-parser-schema-id: <anonymous-schema-223>
+            subject:
+              type: string
+              description: >-
+                The transfer line id (also the Kafka key and the
+                reply-correlation key).
+              x-parser-schema-id: <anonymous-schema-224>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-225>
+            datacontenttype:
+              type: string
+              enum:
+                - application/json
+              x-parser-schema-id: <anonymous-schema-226>
+            dataschema:
+              type: string
+              description: >-
+                urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
+              x-parser-schema-id: <anonymous-schema-227>
+            data:
+              type: object
+              description: Exactly five fields — the whole consumed contract.
+              required:
+                - transfer_id
+                - transfer_line_id
+                - origin_site_id
+                - sku
+                - quantity
+              properties:
+                transfer_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-229>
+                transfer_line_id:
+                  type: string
+                  description: >-
+                    <transfer_id>:1 in v1's single-line saga; also the
+                    allocation-ledger and reply-correlation key.
+                  x-parser-schema-id: <anonymous-schema-230>
+                origin_site_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-231>
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-232>
+                quantity:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-233>
+              x-parser-schema-id: <anonymous-schema-228>
+          x-parser-schema-id: NetworkInventoryPlanningTransferAllocationRequestedEvent
+        examples:
+          - name: singleLineAllocation
+            summary: >-
+              Allocate 24 units of SKU-1 at the origin site for a transfer's
+              single line.
+            payload:
+              specversion: '1.0'
+              id: b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e
+              source: /warehouse/network-inventory-planning
+              type: >-
+                com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
+              subject: tfr-77451:1
+              time: '2026-10-17T08:15:00Z'
+              datacontenttype: application/json
+              dataschema: >-
+                urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
+              data:
+                transfer_id: tfr-77451
+                transfer_line_id: tfr-77451:1
+                origin_site_id: ABE1
+                sku: SKU-1
+                quantity: 24
+        messageId: NetworkInventoryPlanningTransferAllocationRequested
 components:
   messages:
     StockReceived:
@@ -5032,14 +5282,14 @@ components:
                 type: string
                 description: Fixed event type for LocationRecorded.
                 const: com.warehouse.wms.inventory-storage.stock.LocationRecorded
-                x-parser-schema-id: <anonymous-schema-220>
+                x-parser-schema-id: <anonymous-schema-235>
               dataschema:
                 type: string
                 description: >-
                   Reserved for if LocationRecorded is ever published; it is
                   in-process only today.
                 pattern: ^urn:warehouse:inventory-storage:events:LocationRecorded:v1$
-                x-parser-schema-id: <anonymous-schema-221>
+                x-parser-schema-id: <anonymous-schema-236>
               data:
                 type: object
                 description: Business payload for LocationRecorded.
@@ -5050,13 +5300,13 @@ components:
                   stock_unit_id:
                     type: string
                     description: Identifier of the StockUnit whose location is now known.
-                    x-parser-schema-id: <anonymous-schema-223>
+                    x-parser-schema-id: <anonymous-schema-238>
                   bin_id:
                     type: string
                     description: The bin that authoritatively holds that StockUnit.
-                    x-parser-schema-id: <anonymous-schema-224>
-                x-parser-schema-id: <anonymous-schema-222>
-            x-parser-schema-id: <anonymous-schema-219>
+                    x-parser-schema-id: <anonymous-schema-239>
+                x-parser-schema-id: <anonymous-schema-237>
+            x-parser-schema-id: <anonymous-schema-234>
         x-parser-schema-id: LocationRecordedEvent
       examples:
         - name: locationRecordedForStockUnit
@@ -5470,19 +5720,23 @@ components:
         `com.warehouse.wes.fulfillment-execution.task.TaskCompleted`,
         `source=/warehouse/fulfillment-execution`, subject and Kafka key = task
         id. This service reads only `task_id`, `task_type`, `order_ref`,
-        `line_no` and, on RELOCATE tasks, `sku`, `from_bin`, `to_bin`,
-        `quantity` and `relocation_ref`; every other field (`station_id`,
-        `work_unit_id`, `associate_id`, `duration_seconds`) is ignored.
-        `order_ref` is the additive optional field of ADR 0035 (v1, omitted when
-        empty): the task's order reference, i.e. the OrderId order-management
-        used as `demand_ref`. `line_no` is the additive optional field of ADR
-        0036 (v1, omitted when unknown): the order line the task was for. A
-        message without `order_ref`, or with any `task_type` other than `PICK`
-        or `RELOCATE`, is a successful no-op; one without `line_no` takes the
-        ADR 0035 counting path. The RELOCATE fields are the additive fields of
-        ADR 0039 (decision E1, v1): fulfillment-execution sends them on RELOCATE
+        `line_no` and, on RELOCATE and REPLENISH tasks, `sku`, `from_bin`,
+        `to_bin`, `quantity` and `relocation_ref` (RELOCATE) or `request_ref`
+        (REPLENISH); every other field (`station_id`, `work_unit_id`,
+        `associate_id`, `duration_seconds`) is ignored. `order_ref` is the
+        additive optional field of ADR 0035 (v1, omitted when empty): the task's
+        order reference, i.e. the OrderId order-management used as `demand_ref`.
+        `line_no` is the additive optional field of ADR 0036 (v1, omitted when
+        unknown): the order line the task was for. A message without
+        `order_ref`, or with any `task_type` other than `PICK`, `RELOCATE` or
+        `REPLENISH`, is a successful no-op; one without `line_no` takes the ADR
+        0035 counting path. The RELOCATE fields are the additive fields of ADR
+        0039 (decision E1, v1): fulfillment-execution sends them on RELOCATE
         tasks only, and a RELOCATE completion is applied as an intra-site move
-        (`StockRelocated`).
+        (`StockRelocated`). `request_ref` is the additive field of ADR 0041
+        (v1): REPLENISH tasks only, the replenishment request id, required on a
+        REPLENISH completion; such a completion is applied as an intra-site move
+        with reason `REPLENISHMENT`.
       contentType: application/cloudevents+json
       tags:
         - name: fulfillment-execution
@@ -5513,8 +5767,9 @@ components:
             type: string
             description: >-
               CloudEvents id; the dedupe key (claimed in processed_events under
-              consumer `task-completed-confirm-pick`, or
-              `task-completed-relocate` for RELOCATE tasks).
+              consumer `task-completed-confirm-pick`, `task-completed-relocate`
+              for RELOCATE tasks, or `task-completed-replenish` for REPLENISH
+              tasks).
             x-parser-schema-id: <anonymous-schema-186>
           source:
             type: string
@@ -5560,9 +5815,10 @@ components:
                   - DISPATCH
                   - ARRIVAL
                   - RELOCATE
+                  - REPLENISH
                 description: >-
-                  PICK and RELOCATE are acted on; omitted by the producer when
-                  the task could not be found.
+                  PICK, RELOCATE and REPLENISH are acted on; omitted by the
+                  producer when the task could not be found.
                 x-parser-schema-id: <anonymous-schema-195>
               order_ref:
                 type: string
@@ -5591,28 +5847,30 @@ components:
               sku:
                 type: string
                 description: >
-                  RELOCATE only (additive, ADR 0039): the SKU moved. Required on
-                  a RELOCATE completion (missing or invalid = dead-lettered);
-                  absent on every other task type.
+                  RELOCATE and REPLENISH only (additive, ADR 0039, ADR 0041):
+                  the SKU moved. Required on a RELOCATE or REPLENISH completion
+                  (missing or invalid = dead-lettered); absent on every other
+                  task type.
                 x-parser-schema-id: <anonymous-schema-198>
               from_bin:
                 type: string
                 description: >
-                  RELOCATE only (additive, ADR 0039): the source bin's location
-                  code; its site is the move's site.
+                  RELOCATE and REPLENISH only (additive): the source bin's
+                  location code; its site is the move's site.
                 x-parser-schema-id: <anonymous-schema-199>
               to_bin:
                 type: string
                 description: >
-                  RELOCATE only (additive, ADR 0039): the destination bin's
+                  RELOCATE and REPLENISH only (additive): the destination bin's
                   location code; must be a different bin of the same site.
                 x-parser-schema-id: <anonymous-schema-200>
               quantity:
                 type: integer
                 minimum: 1
                 description: >
-                  RELOCATE only (additive, ADR 0039): the units moved. Missing,
-                  zero or negative on a RELOCATE completion = dead-lettered.
+                  RELOCATE and REPLENISH only (additive): the units moved.
+                  Missing, zero or negative on a RELOCATE or REPLENISH
+                  completion = dead-lettered.
                 x-parser-schema-id: <anonymous-schema-201>
               relocation_ref:
                 type: string
@@ -5622,6 +5880,16 @@ components:
                   move the task executes; stored as the relocation's source_ref
                   (the task id is used when absent).
                 x-parser-schema-id: <anonymous-schema-202>
+              request_ref:
+                type: string
+                maxLength: 200
+                description: >
+                  REPLENISH only (additive, ADR 0041, REQUIRED): the pick-face
+                  replenishment request id; stored as the relocation's
+                  source_ref (reason REPLENISHMENT) and echoed in
+                  StockRelocated. Missing or blank = dead-lettered; there is no
+                  task-id fallback.
+                x-parser-schema-id: <anonymous-schema-203>
             x-parser-schema-id: <anonymous-schema-193>
         x-parser-schema-id: FulfillmentTaskCompletedEvent
       examples:
@@ -5693,6 +5961,32 @@ components:
               to_bin: WH1-STOR-AMB-A02-01-01-A
               quantity: 7
               relocation_ref: plan-9#3
+        - name: replenishTaskCompleted
+          summary: >-
+            A pick-face REPLENISH task completed (ADR 0041); twelve units of
+            SKU-R1 move from a reserve bin to the pick face, closing
+            replenishment request repl-3b0e8d2a-….
+          payload:
+            specversion: '1.0'
+            id: 9c4f5d6e-7081-4293-8dae-2f3a4b5c6d7e
+            source: /warehouse/fulfillment-execution
+            type: com.warehouse.wes.fulfillment-execution.task.TaskCompleted
+            subject: task-9p01
+            time: '2026-10-17T12:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:fulfillment-execution:events:TaskCompleted:v1
+            data:
+              task_id: task-9p01
+              station_id: station-03
+              work_unit_id: wu-9p01
+              associate_id: worker-42
+              duration_seconds: 74
+              task_type: REPLENISH
+              sku: SKU-R1
+              from_bin: WH1-STOR-AMB-A01-01-01-A
+              to_bin: WH1-PICK-AMB-A02-01-01-A
+              quantity: 12
+              request_ref: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
       messageId: FulfillmentTaskCompleted
     InboundReceivingReceiptLineReceived:
       name: InboundReceivingReceiptLineReceived
@@ -5735,39 +6029,39 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-203>
+            x-parser-schema-id: <anonymous-schema-204>
           id:
             type: string
             description: >-
               CloudEvents id; the dedupe key (claimed in processed_events under
               consumer `inbound-receipt-line`).
-            x-parser-schema-id: <anonymous-schema-204>
+            x-parser-schema-id: <anonymous-schema-205>
           source:
             type: string
             enum:
               - /warehouse/inbound-receiving
-            x-parser-schema-id: <anonymous-schema-205>
+            x-parser-schema-id: <anonymous-schema-206>
           type:
             type: string
             const: com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived
-            x-parser-schema-id: <anonymous-schema-206>
+            x-parser-schema-id: <anonymous-schema-207>
           subject:
             type: string
             description: The receipt id (the Kafka key is the ASN number).
-            x-parser-schema-id: <anonymous-schema-207>
+            x-parser-schema-id: <anonymous-schema-208>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-208>
+            x-parser-schema-id: <anonymous-schema-209>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-209>
+            x-parser-schema-id: <anonymous-schema-210>
           dataschema:
             type: string
             description: urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1
-            x-parser-schema-id: <anonymous-schema-210>
+            x-parser-schema-id: <anonymous-schema-211>
           data:
             type: object
             required:
@@ -5781,25 +6075,25 @@ components:
             properties:
               receipt_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-212>
+                x-parser-schema-id: <anonymous-schema-213>
               asn_number:
                 type: string
-                x-parser-schema-id: <anonymous-schema-213>
+                x-parser-schema-id: <anonymous-schema-214>
               line_no:
                 type: integer
                 minimum: 1
-                x-parser-schema-id: <anonymous-schema-214>
+                x-parser-schema-id: <anonymous-schema-215>
               sku:
                 type: string
                 description: Must be non-empty; an empty SKU is logged and committed past.
-                x-parser-schema-id: <anonymous-schema-215>
+                x-parser-schema-id: <anonymous-schema-216>
               quantity:
                 type: integer
                 minimum: 1
                 description: >-
                   Units received on this occurrence. A value <= 0 is logged and
                   committed past.
-                x-parser-schema-id: <anonymous-schema-216>
+                x-parser-schema-id: <anonymous-schema-217>
               condition:
                 type: string
                 enum:
@@ -5808,12 +6102,12 @@ components:
                 description: >-
                   Only Good is booked as stock (ADR 0037); Damaged is counted
                   and ignored; any other value is logged and committed past.
-                x-parser-schema-id: <anonymous-schema-217>
+                x-parser-schema-id: <anonymous-schema-218>
               received_at:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-218>
-            x-parser-schema-id: <anonymous-schema-211>
+                x-parser-schema-id: <anonymous-schema-219>
+            x-parser-schema-id: <anonymous-schema-212>
         x-parser-schema-id: InboundReceivingReceiptLineReceivedEvent
       examples:
         - name: goodLine
@@ -5857,6 +6151,135 @@ components:
               condition: Damaged
               received_at: '2026-10-09T08:12:00Z'
       messageId: InboundReceivingReceiptLineReceived
+    NetworkInventoryPlanningTransferAllocationRequested:
+      name: NetworkInventoryPlanningTransferAllocationRequested
+      title: >-
+        Transfer Allocation Requested (from network-inventory-planning,
+        consumed)
+      summary: >-
+        network-inventory-planning asked this context to allocate origin stock
+        for a transfer line.
+      description: >
+        CONSUMED command, not produced (ADR 0030). Pinned by
+        network-inventory-planning's `apis/asyncapi.yaml`: type
+        `com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested`,
+        `source=/warehouse/network-inventory-planning`, subject and Kafka key =
+        the transfer line id. `data` is exactly five fields — the whole consumed
+        contract; this service replies with TransferStockAllocated or
+        TransferStockAllocationRejected on its own integration topic.
+      contentType: application/cloudevents+json
+      tags:
+        - name: network-inventory-planning
+          description: Consumed from network-inventory-planning.
+      payload:
+        type: object
+        description: >
+          CloudEvents 1.0 envelope of network-inventory-planning's
+          TransferAllocationRequested command as consumed here (not composed
+          from CloudEventBase, whose `source` is this service's own).
+        required:
+          - specversion
+          - id
+          - source
+          - type
+          - subject
+          - time
+          - datacontenttype
+          - data
+        properties:
+          specversion:
+            type: string
+            enum:
+              - '1.0'
+            x-parser-schema-id: <anonymous-schema-220>
+          id:
+            type: string
+            description: CloudEvents id; the dedupe key (claimed in processed_events).
+            x-parser-schema-id: <anonymous-schema-221>
+          source:
+            type: string
+            enum:
+              - /warehouse/network-inventory-planning
+            x-parser-schema-id: <anonymous-schema-222>
+          type:
+            type: string
+            const: >-
+              com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
+            x-parser-schema-id: <anonymous-schema-223>
+          subject:
+            type: string
+            description: >-
+              The transfer line id (also the Kafka key and the reply-correlation
+              key).
+            x-parser-schema-id: <anonymous-schema-224>
+          time:
+            type: string
+            format: date-time
+            x-parser-schema-id: <anonymous-schema-225>
+          datacontenttype:
+            type: string
+            enum:
+              - application/json
+            x-parser-schema-id: <anonymous-schema-226>
+          dataschema:
+            type: string
+            description: >-
+              urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
+            x-parser-schema-id: <anonymous-schema-227>
+          data:
+            type: object
+            description: Exactly five fields — the whole consumed contract.
+            required:
+              - transfer_id
+              - transfer_line_id
+              - origin_site_id
+              - sku
+              - quantity
+            properties:
+              transfer_id:
+                type: string
+                x-parser-schema-id: <anonymous-schema-229>
+              transfer_line_id:
+                type: string
+                description: >-
+                  <transfer_id>:1 in v1's single-line saga; also the
+                  allocation-ledger and reply-correlation key.
+                x-parser-schema-id: <anonymous-schema-230>
+              origin_site_id:
+                type: string
+                x-parser-schema-id: <anonymous-schema-231>
+              sku:
+                type: string
+                x-parser-schema-id: <anonymous-schema-232>
+              quantity:
+                type: integer
+                minimum: 1
+                x-parser-schema-id: <anonymous-schema-233>
+            x-parser-schema-id: <anonymous-schema-228>
+        x-parser-schema-id: NetworkInventoryPlanningTransferAllocationRequestedEvent
+      examples:
+        - name: singleLineAllocation
+          summary: >-
+            Allocate 24 units of SKU-1 at the origin site for a transfer's
+            single line.
+          payload:
+            specversion: '1.0'
+            id: b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e
+            source: /warehouse/network-inventory-planning
+            type: >-
+              com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
+            subject: tfr-77451:1
+            time: '2026-10-17T08:15:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
+            data:
+              transfer_id: tfr-77451
+              transfer_line_id: tfr-77451:1
+              origin_site_id: ABE1
+              sku: SKU-1
+              quantity: 24
+      messageId: NetworkInventoryPlanningTransferAllocationRequested
     StockReserved:
       name: StockReserved
       title: Stock Reserved
@@ -6959,12 +7382,17 @@ components:
         and a redelivered TaskCompleted (same CloudEvents id) is a no-op, so
         neither publishes again. `source_ref` is always present (`""` when
         none); on the task path it is the task's `relocation_ref`, or its task
-        id when the producer sent none.
+        id when the producer sent none. A completed REPLENISH task (ADR 0041)
+        reaches the same use case with reason `REPLENISHMENT` and `source_ref` =
+        the task's `request_ref` (the replenishment request id; required, no
+        task-id fallback), which pick-face-replenishment matches to complete its
+        request.
 
 
         **Integration topic only** (no analytics variant). Kafka key and
         CloudEvents `subject` are the relocation id (ADR 0021).
-        slotting-optimization consumes it to close a slot plan's move.
+        slotting-optimization consumes it to close a slot plan's move; it must
+        act only on `reason = SLOTTING`.
       contentType: application/cloudevents+json
       tags:
         - name: stock
@@ -7122,17 +7550,23 @@ components:
                       - SLOTTING
                       - CONSOLIDATION
                       - MANUAL
+                      - REPLENISHMENT
                     description: >-
                       Why the stock moved. A RELOCATE task is always SLOTTING
-                      (it executes a slot plan).
+                      (it executes a slot plan). REPLENISHMENT (additive, ADR
+                      0041) is set only by a completed REPLENISH task (pick-face
+                      replenishment) and never accepted from POST /relocations;
+                      its source_ref is the replenishment request id. Consumers
+                      that act only on SLOTTING must ignore other values.
                     x-parser-schema-id: <anonymous-schema-95>
                   source_ref:
                     type: string
                     maxLength: 200
                     description: >-
                       The caller's reference (a slot-plan move, the task's
-                      relocation_ref, or the task id); always present, "" when
-                      none.
+                      relocation_ref, or the task id; for REPLENISHMENT the
+                      replenishment request id, the REPLENISH task's
+                      request_ref); always present, "" when none.
                     x-parser-schema-id: <anonymous-schema-96>
                   occurred_at:
                     type: string
@@ -7142,6 +7576,29 @@ components:
             x-parser-schema-id: <anonymous-schema-85>
         x-parser-schema-id: StockRelocatedEvent
       examples:
+        - name: replenishmentFromATask
+          summary: >-
+            Twelve units of SKU-R1 moved from a reserve bin to the pick face by
+            a completed REPLENISH task (ADR 0041).
+          payload:
+            specversion: '1.0'
+            id: 4d0f2b63-8c5e-4f29-b7a3-6e1c9d8f0a32
+            source: /warehouse/inventory-storage
+            type: com.warehouse.wms.inventory-storage.stock.StockRelocated
+            subject: rel-45
+            time: '2026-10-17T12:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inventory-storage:events:StockRelocated:v1
+            data:
+              relocation_id: rel-45
+              site_code: WH1
+              sku: SKU-R1
+              from_bin: WH1-STOR-AMB-A01-01-01-A
+              to_bin: WH1-PICK-AMB-A02-01-01-A
+              quantity: 12
+              reason: REPLENISHMENT
+              source_ref: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              occurred_at: '2026-10-17T12:00:00Z'
         - name: slottingMoveFromATask
           summary: >-
             Seven units of SKU-R1 moved between two WH1 bins by a completed
@@ -7198,12 +7655,13 @@ components:
 
         `reason` is `STOW`, `PICK`, `RELOCATE`, `REPLENISHMENT`, `COUNT`,
         `RESERVE`, `REVOKE` or `UNLOCATED`; consumers ignore values they do not
-        know. `REPLENISHMENT` is reserved for the relocation reason the later
-        pick-face replenishment change adds, and `UNLOCATED` for an unlocated
-        receive with a bin: neither is emitted today (a receive names no bin). A
-        bin whose site cannot be determined (not registered, or neither a
-        recorded site custody nor a facility-layout location code) raises no
-        event.
+        know. `REPLENISHMENT` is the reason of a relocation made by a completed
+        REPLENISH task (ADR 0041: two events, the source bin then the
+        destination bin, like RELOCATE), and `UNLOCATED` is reserved for an
+        unlocated receive with a bin: it is not emitted today (a receive names
+        no bin). A bin whose site cannot be determined (not registered, or
+        neither a recorded site custody nor a facility-layout location code)
+        raises no event.
 
 
         **Integration topic only** (no analytics variant). Kafka key and
@@ -7389,7 +7847,8 @@ components:
                       - UNLOCATED
                     description: >-
                       What moved the level. Consumers ignore values they do not
-                      know. REPLENISHMENT and UNLOCATED are not emitted yet.
+                      know. UNLOCATED is not emitted yet; REPLENISHMENT is
+                      emitted by a completed REPLENISH task (ADR 0041).
                     x-parser-schema-id: <anonymous-schema-109>
                   occurred_at:
                     type: string
@@ -9325,14 +9784,14 @@ components:
               type: string
               description: Fixed event type for LocationRecorded.
               const: com.warehouse.wms.inventory-storage.stock.LocationRecorded
-              x-parser-schema-id: <anonymous-schema-220>
+              x-parser-schema-id: <anonymous-schema-235>
             dataschema:
               type: string
               description: >-
                 Reserved for if LocationRecorded is ever published; it is
                 in-process only today.
               pattern: ^urn:warehouse:inventory-storage:events:LocationRecorded:v1$
-              x-parser-schema-id: <anonymous-schema-221>
+              x-parser-schema-id: <anonymous-schema-236>
             data:
               type: object
               description: Business payload for LocationRecorded.
@@ -9343,13 +9802,13 @@ components:
                 stock_unit_id:
                   type: string
                   description: Identifier of the StockUnit whose location is now known.
-                  x-parser-schema-id: <anonymous-schema-223>
+                  x-parser-schema-id: <anonymous-schema-238>
                 bin_id:
                   type: string
                   description: The bin that authoritatively holds that StockUnit.
-                  x-parser-schema-id: <anonymous-schema-224>
-              x-parser-schema-id: <anonymous-schema-222>
-          x-parser-schema-id: <anonymous-schema-219>
+                  x-parser-schema-id: <anonymous-schema-239>
+              x-parser-schema-id: <anonymous-schema-237>
+          x-parser-schema-id: <anonymous-schema-234>
       x-parser-schema-id: LocationRecordedEvent
     ProductClassifiedEvent:
       description: >
@@ -9652,8 +10111,9 @@ components:
           type: string
           description: >-
             CloudEvents id; the dedupe key (claimed in processed_events under
-            consumer `task-completed-confirm-pick`, or `task-completed-relocate`
-            for RELOCATE tasks).
+            consumer `task-completed-confirm-pick`, `task-completed-relocate`
+            for RELOCATE tasks, or `task-completed-replenish` for REPLENISH
+            tasks).
           x-parser-schema-id: <anonymous-schema-186>
         source:
           type: string
@@ -9699,9 +10159,10 @@ components:
                 - DISPATCH
                 - ARRIVAL
                 - RELOCATE
+                - REPLENISH
               description: >-
-                PICK and RELOCATE are acted on; omitted by the producer when the
-                task could not be found.
+                PICK, RELOCATE and REPLENISH are acted on; omitted by the
+                producer when the task could not be found.
               x-parser-schema-id: <anonymous-schema-195>
             order_ref:
               type: string
@@ -9729,28 +10190,30 @@ components:
             sku:
               type: string
               description: >
-                RELOCATE only (additive, ADR 0039): the SKU moved. Required on a
-                RELOCATE completion (missing or invalid = dead-lettered); absent
-                on every other task type.
+                RELOCATE and REPLENISH only (additive, ADR 0039, ADR 0041): the
+                SKU moved. Required on a RELOCATE or REPLENISH completion
+                (missing or invalid = dead-lettered); absent on every other task
+                type.
               x-parser-schema-id: <anonymous-schema-198>
             from_bin:
               type: string
               description: >
-                RELOCATE only (additive, ADR 0039): the source bin's location
-                code; its site is the move's site.
+                RELOCATE and REPLENISH only (additive): the source bin's
+                location code; its site is the move's site.
               x-parser-schema-id: <anonymous-schema-199>
             to_bin:
               type: string
               description: >
-                RELOCATE only (additive, ADR 0039): the destination bin's
+                RELOCATE and REPLENISH only (additive): the destination bin's
                 location code; must be a different bin of the same site.
               x-parser-schema-id: <anonymous-schema-200>
             quantity:
               type: integer
               minimum: 1
               description: >
-                RELOCATE only (additive, ADR 0039): the units moved. Missing,
-                zero or negative on a RELOCATE completion = dead-lettered.
+                RELOCATE and REPLENISH only (additive): the units moved.
+                Missing, zero or negative on a RELOCATE or REPLENISH completion
+                = dead-lettered.
               x-parser-schema-id: <anonymous-schema-201>
             relocation_ref:
               type: string
@@ -9760,6 +10223,15 @@ components:
                 the task executes; stored as the relocation's source_ref (the
                 task id is used when absent).
               x-parser-schema-id: <anonymous-schema-202>
+            request_ref:
+              type: string
+              maxLength: 200
+              description: >
+                REPLENISH only (additive, ADR 0041, REQUIRED): the pick-face
+                replenishment request id; stored as the relocation's source_ref
+                (reason REPLENISHMENT) and echoed in StockRelocated. Missing or
+                blank = dead-lettered; there is no task-id fallback.
+              x-parser-schema-id: <anonymous-schema-203>
           x-parser-schema-id: <anonymous-schema-193>
       x-parser-schema-id: FulfillmentTaskCompletedEvent
     InboundReceivingReceiptLineReceivedEvent:
@@ -9782,39 +10254,39 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-203>
+          x-parser-schema-id: <anonymous-schema-204>
         id:
           type: string
           description: >-
             CloudEvents id; the dedupe key (claimed in processed_events under
             consumer `inbound-receipt-line`).
-          x-parser-schema-id: <anonymous-schema-204>
+          x-parser-schema-id: <anonymous-schema-205>
         source:
           type: string
           enum:
             - /warehouse/inbound-receiving
-          x-parser-schema-id: <anonymous-schema-205>
+          x-parser-schema-id: <anonymous-schema-206>
         type:
           type: string
           const: com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived
-          x-parser-schema-id: <anonymous-schema-206>
+          x-parser-schema-id: <anonymous-schema-207>
         subject:
           type: string
           description: The receipt id (the Kafka key is the ASN number).
-          x-parser-schema-id: <anonymous-schema-207>
+          x-parser-schema-id: <anonymous-schema-208>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-208>
+          x-parser-schema-id: <anonymous-schema-209>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-209>
+          x-parser-schema-id: <anonymous-schema-210>
         dataschema:
           type: string
           description: urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1
-          x-parser-schema-id: <anonymous-schema-210>
+          x-parser-schema-id: <anonymous-schema-211>
         data:
           type: object
           required:
@@ -9828,25 +10300,25 @@ components:
           properties:
             receipt_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-212>
+              x-parser-schema-id: <anonymous-schema-213>
             asn_number:
               type: string
-              x-parser-schema-id: <anonymous-schema-213>
+              x-parser-schema-id: <anonymous-schema-214>
             line_no:
               type: integer
               minimum: 1
-              x-parser-schema-id: <anonymous-schema-214>
+              x-parser-schema-id: <anonymous-schema-215>
             sku:
               type: string
               description: Must be non-empty; an empty SKU is logged and committed past.
-              x-parser-schema-id: <anonymous-schema-215>
+              x-parser-schema-id: <anonymous-schema-216>
             quantity:
               type: integer
               minimum: 1
               description: >-
                 Units received on this occurrence. A value <= 0 is logged and
                 committed past.
-              x-parser-schema-id: <anonymous-schema-216>
+              x-parser-schema-id: <anonymous-schema-217>
             condition:
               type: string
               enum:
@@ -9855,13 +10327,99 @@ components:
               description: >-
                 Only Good is booked as stock (ADR 0037); Damaged is counted and
                 ignored; any other value is logged and committed past.
-              x-parser-schema-id: <anonymous-schema-217>
+              x-parser-schema-id: <anonymous-schema-218>
             received_at:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-218>
-          x-parser-schema-id: <anonymous-schema-211>
+              x-parser-schema-id: <anonymous-schema-219>
+          x-parser-schema-id: <anonymous-schema-212>
       x-parser-schema-id: InboundReceivingReceiptLineReceivedEvent
+    NetworkInventoryPlanningTransferAllocationRequestedEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of network-inventory-planning's
+        TransferAllocationRequested command as consumed here (not composed from
+        CloudEventBase, whose `source` is this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum:
+            - '1.0'
+          x-parser-schema-id: <anonymous-schema-220>
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+          x-parser-schema-id: <anonymous-schema-221>
+        source:
+          type: string
+          enum:
+            - /warehouse/network-inventory-planning
+          x-parser-schema-id: <anonymous-schema-222>
+        type:
+          type: string
+          const: >-
+            com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
+          x-parser-schema-id: <anonymous-schema-223>
+        subject:
+          type: string
+          description: >-
+            The transfer line id (also the Kafka key and the reply-correlation
+            key).
+          x-parser-schema-id: <anonymous-schema-224>
+        time:
+          type: string
+          format: date-time
+          x-parser-schema-id: <anonymous-schema-225>
+        datacontenttype:
+          type: string
+          enum:
+            - application/json
+          x-parser-schema-id: <anonymous-schema-226>
+        dataschema:
+          type: string
+          description: >-
+            urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
+          x-parser-schema-id: <anonymous-schema-227>
+        data:
+          type: object
+          description: Exactly five fields — the whole consumed contract.
+          required:
+            - transfer_id
+            - transfer_line_id
+            - origin_site_id
+            - sku
+            - quantity
+          properties:
+            transfer_id:
+              type: string
+              x-parser-schema-id: <anonymous-schema-229>
+            transfer_line_id:
+              type: string
+              description: >-
+                <transfer_id>:1 in v1's single-line saga; also the
+                allocation-ledger and reply-correlation key.
+              x-parser-schema-id: <anonymous-schema-230>
+            origin_site_id:
+              type: string
+              x-parser-schema-id: <anonymous-schema-231>
+            sku:
+              type: string
+              x-parser-schema-id: <anonymous-schema-232>
+            quantity:
+              type: integer
+              minimum: 1
+              x-parser-schema-id: <anonymous-schema-233>
+          x-parser-schema-id: <anonymous-schema-228>
+      x-parser-schema-id: NetworkInventoryPlanningTransferAllocationRequestedEvent
     StockReservedEvent:
       description: >
         CloudEvents envelope for a StockReserved domain event, on both topics;
@@ -11649,17 +12207,23 @@ components:
                     - SLOTTING
                     - CONSOLIDATION
                     - MANUAL
+                    - REPLENISHMENT
                   description: >-
                     Why the stock moved. A RELOCATE task is always SLOTTING (it
-                    executes a slot plan).
+                    executes a slot plan). REPLENISHMENT (additive, ADR 0041) is
+                    set only by a completed REPLENISH task (pick-face
+                    replenishment) and never accepted from POST /relocations;
+                    its source_ref is the replenishment request id. Consumers
+                    that act only on SLOTTING must ignore other values.
                   x-parser-schema-id: <anonymous-schema-95>
                 source_ref:
                   type: string
                   maxLength: 200
                   description: >-
                     The caller's reference (a slot-plan move, the task's
-                    relocation_ref, or the task id); always present, "" when
-                    none.
+                    relocation_ref, or the task id; for REPLENISHMENT the
+                    replenishment request id, the REPLENISH task's request_ref);
+                    always present, "" when none.
                   x-parser-schema-id: <anonymous-schema-96>
                 occurred_at:
                   type: string
@@ -11838,7 +12402,8 @@ components:
                     - UNLOCATED
                   description: >-
                     What moved the level. Consumers ignore values they do not
-                    know. REPLENISHMENT and UNLOCATED are not emitted yet.
+                    know. UNLOCATED is not emitted yet; REPLENISHMENT is emitted
+                    by a completed REPLENISH task (ADR 0041).
                   x-parser-schema-id: <anonymous-schema-109>
                 occurred_at:
                   type: string

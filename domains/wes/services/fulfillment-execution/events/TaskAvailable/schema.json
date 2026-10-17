@@ -1,0 +1,179 @@
+{
+  "allOf": [
+    {
+      "type": "object",
+      "description": "CloudEvents 1.0 context attributes; every attribute is required in this fleet.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "description": "CloudEvents spec version.",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "UUID v4, minted once per occurrence and stable across outbox redelivery.",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "Producing service, `/warehouse/<repo>`.",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "type": {
+          "type": "string",
+          "description": "`com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Aggregate instance id; equal to the Kafka message key.",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Domain occurred-at, UTC, RFC 3339.",
+          "x-parser-schema-id": "<anonymous-schema-10>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "description": "Content type of `data`.",
+          "x-parser-schema-id": "<anonymous-schema-11>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.",
+          "x-parser-schema-id": "<anonymous-schema-12>"
+        },
+        "data": {
+          "type": "object",
+          "description": "Event payload (snake_case keys).",
+          "x-parser-schema-id": "<anonymous-schema-13>"
+        }
+      },
+      "x-parser-schema-id": "CloudEvent"
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "source",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.warehouse.wes.fulfillment-execution.task.TaskAvailable",
+          "x-parser-schema-id": "<anonymous-schema-15>"
+        },
+        "source": {
+          "type": "string",
+          "const": "/warehouse/fulfillment-execution",
+          "x-parser-schema-id": "<anonymous-schema-16>"
+        },
+        "dataschema": {
+          "type": "string",
+          "const": "urn:warehouse:fulfillment-execution:events:TaskAvailable:v1",
+          "x-parser-schema-id": "<anonymous-schema-17>"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "task_id",
+            "task_type",
+            "site_id",
+            "from_location",
+            "to_location",
+            "required_capabilities",
+            "priority_band",
+            "available_at"
+          ],
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "description": "The pooled task; also the Kafka key and CloudEvents subject.",
+              "x-parser-schema-id": "<anonymous-schema-19>"
+            },
+            "task_type": {
+              "type": "string",
+              "enum": [
+                "PICK",
+                "PACK",
+                "SLAM",
+                "REBIN",
+                "DISPATCH",
+                "ARRIVAL",
+                "RELOCATE",
+                "REPLENISH"
+              ],
+              "description": "The task's type (the process path claimNext scans).",
+              "x-parser-schema-id": "<anonymous-schema-20>"
+            },
+            "site_id": {
+              "type": "string",
+              "description": "The site the task is worked at - the first segment of the bin's facility-layout LocationCode (`site-area-zone-aisle-bay-level-position`), derived from the task's own bins, never looked up in another context.",
+              "x-parser-schema-id": "<anonymous-schema-21>"
+            },
+            "from_location": {
+              "type": "string",
+              "description": "Where the operator must go first. RELOCATE - the source bin (for an Assign move, whose source the operator scans at completion, the destination bin). REPLENISH - the source (reserve) bin.",
+              "x-parser-schema-id": "<anonymous-schema-22>"
+            },
+            "to_location": {
+              "type": "string",
+              "description": "Where the operator ends. RELOCATE - the destination bin (for a Vacate move, whose destination the operator scans at completion, the source bin). REPLENISH - the destination (pick face) bin.",
+              "x-parser-schema-id": "<anonymous-schema-23>"
+            },
+            "required_capabilities": {
+              "type": "array",
+              "description": "The capabilities claimNext matches a station against, sorted; an empty array (never null) when the task requires none.",
+              "items": {
+                "type": "string",
+                "x-parser-schema-id": "<anonymous-schema-25>"
+              },
+              "x-parser-schema-id": "<anonymous-schema-24>"
+            },
+            "cpt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The task's committed promise time (UTC). Omitted when the task has none.",
+              "x-parser-schema-id": "<anonymous-schema-26>"
+            },
+            "priority_band": {
+              "type": "string",
+              "description": "OPAQUE. Equal across exactly the tasks claimNext orders as peers (same task type and same CPT instant), different for any two it orders strictly. Today `<task_type>:<cpt UTC RFC 3339>`; consumers compare for equality only and must not parse it (ADR-0049). claimNext orders by CPT only, so the NORMAL or URGENT priority of a REPLENISH task does not enter the band (ADR-0050).",
+              "x-parser-schema-id": "<anonymous-schema-27>"
+            },
+            "available_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The instant the task became claimable (UTC) - the creation instant, or the sweep instant on re-entry after a lease expiry.",
+              "x-parser-schema-id": "<anonymous-schema-28>"
+            }
+          },
+          "x-parser-schema-id": "<anonymous-schema-18>"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-14>"
+    }
+  ],
+  "x-parser-schema-id": "<anonymous-schema-4>"
+}
