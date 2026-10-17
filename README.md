@@ -44,6 +44,7 @@ spec text; classification/tier/purpose per context live in `catalog.contexts.mjs
 
 ## Packaging & release
 
+- `license.jwt` is injected at image build time as a BuildKit secret (`eventcatalog_license`), sourced in CI from the `EVENTCATALOG_LICENSE_JWT` repo secret (`gh secret set EVENTCATALOG_LICENSE_JWT -R IQVO/ecosystem < license.jwt`). It is never committed and never in an image layer.
 - `Dockerfile`: multi-stage, digest-pinned (`node:22-bookworm-slim` build → `nginxinc/nginx-unprivileged:1.31-alpine` runtime, uid 101, port 8080). The image regenerates the catalog at build time from the committed `specs/`; `license.jwt` is never in the image.
 - `charts/ecosystem`: Helm chart (ClusterIP 80 → 8080, read-only rootfs, `/healthz` probes), same shape as `warehouse-console`.
 - CI (`.github/workflows/ci.yml`): lint + build + `helm lint` on every PR/push; `docker-publish` (GHCR, cosign-signed, SPDX SBOM) on `main` and `v*` tags.
