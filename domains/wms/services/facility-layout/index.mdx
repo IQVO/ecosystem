@@ -2,7 +2,9 @@
 id: facility-layout
 name: Facility Layout (events)
 version: 1.0.0
-summary: ''
+summary: >-
+  Owns the physical structure of the warehouse: Site, Zone, Aisle and
+  LocationSlot, plus location types, placement rules and geometry.
 badges:
   - content: facility-layout
     textColor: blue
@@ -169,6 +171,29 @@ specifications:
 owners:
   - claudioed
 ---
+## Purpose
+Owns the physical structure of the warehouse: Site, Zone, Aisle and LocationSlot, plus location types, placement rules and geometry. Every other context that needs to know where something can be stored keeps a local copy of this published language.
+
+| | |
+|---|---|
+| Bounded context | `facility-layout` |
+| Domain | WMS (`wms`) |
+| DDD classification | Generic |
+| Tier | WMS-adjacent, extracted |
+| Publishes (Kafka) | `warehouse.facility.events`<br/>`warehouse.facility.analytics` |
+| Consumes (Kafka) | nothing: this context is a pure publisher |
+| CloudEvents type prefix | `com.warehouse.wms.facility-layout.` |
+| Event source | `/warehouse/facility-layout` |
+| Repository | [IQVO/facility-layout](https://github.com/IQVO/facility-layout) |
+| REST API | [facility-layout-api](/docs/services/facility-layout-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
 Domain-event catalog for the **facility-layout** bounded context, the system of record for where things physically are in the building: the site's structural hierarchy (Site, Area, Zone, Aisle) and the coded storage slots inside it. This context is a Generic Subdomain and an **Open Host Service** — these events ARE its Published Language, and every downstream service is a Conformist to them. Unlike a service that forwards a curated subset, this context's Kafka publisher (`internal/adapters/outbound/kafka/publisher.go`) emits **every** domain event to the integration topic — the whole Published Language.
 
 **Envelope: CloudEvents 1.0 (mandatory, ADR-0024).** Every message on this channel is a CloudEvents 1.0 event in **structured content mode** (CloudEvents Kafka protocol binding): the Kafka message value is the JSON event format and every message carries the Kafka header `content-type: application/cloudevents+json; charset=UTF-8`. All of `specversion` (`1.0`), `id` (UUID, minted once per domain event and stable across outbox redelivery), `source` (`/warehouse/facility-layout`), `type`, `subject` (the aggregate instance id), `time` (the domain occurred-at, UTC), `datacontenttype` (`application/json`) and `dataschema` (`urn:warehouse:facility-layout:events:<EventName>:v1`) are required. `data` carries the domain event's own JSON verbatim — note it also carries `eventName`, `eventType` and `occurredAt` fields, because the domain event's struct tags are the wire shape. There is no other envelope: consumers must reject (DLQ/skip) anything that fails CloudEvents validation.

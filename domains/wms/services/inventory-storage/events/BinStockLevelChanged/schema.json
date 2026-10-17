@@ -1,0 +1,179 @@
+{
+  "description": "CloudEvents envelope for a BinStockLevelChanged domain event (ADR 0040).",
+  "allOf": [
+    {
+      "type": "object",
+      "description": "The CloudEvents 1.0 context attributes shared by every message this bounded context emits, in structured-mode JSON. Each concrete event schema composes this with `allOf` and pins `type` to a single value.\n",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "description": "CloudEvents specification version. Always \"1.0\".",
+          "enum": [
+            "1.0"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-1>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this event occurrence, a UUID v4. Together with `source` it uniquely identifies the event, which is what consumers deduplicate on.\n",
+          "x-parser-schema-id": "<anonymous-schema-2>"
+        },
+        "source": {
+          "type": "string",
+          "description": "The context that emitted the event. Always `/warehouse/inventory-storage` for this service.\n",
+          "enum": [
+            "/warehouse/inventory-storage"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-3>"
+        },
+        "type": {
+          "type": "string",
+          "description": "Reverse-DNS event type, of the form `com.warehouse.wms.inventory-storage.<entity>.<EventName>`. Pinned to a single value by each concrete event schema.\n",
+          "x-parser-schema-id": "<anonymous-schema-4>"
+        },
+        "subject": {
+          "type": "string",
+          "description": "The id of the aggregate instance this event is about — a reservation id, a StockUnit id, a bin id, or a SKU, depending on the event. Never empty.\n",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp of when the event occurred in the domain, taken from the injected Clock port, not from wall-clock time at publish.\n",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "description": "Media type of the `data` member. Always application/json.",
+          "enum": [
+            "application/json"
+          ],
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "Absolute URI naming the payload shape and version: `urn:warehouse:inventory-storage:<events|analytics>:<EventName>:v<N>`. Pinned per message by each concrete event schema (the `events` variant for StockReserved/ReservationRevoked, `analytics` for the rest; StockReserved and ReservationRevoked also appear on the analytics topic with the `analytics` variant).\n",
+          "pattern": "^urn:warehouse:inventory-storage:(events|analytics):[A-Za-z]+:v[0-9]+$",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "data": {
+          "type": "object",
+          "description": "The event payload. Shape is fixed by `dataschema`.",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        }
+      },
+      "x-parser-schema-id": "CloudEventBase"
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Fixed event type for BinStockLevelChanged.",
+          "const": "com.warehouse.wms.inventory-storage.stock.BinStockLevelChanged",
+          "x-parser-schema-id": "<anonymous-schema-99>"
+        },
+        "subject": {
+          "type": "string",
+          "description": "The Kafka key too, `<bin>:<sku>`.",
+          "x-parser-schema-id": "<anonymous-schema-100>"
+        },
+        "dataschema": {
+          "type": "string",
+          "description": "urn:warehouse:inventory-storage:events:BinStockLevelChanged:v1",
+          "pattern": "^urn:warehouse:inventory-storage:events:BinStockLevelChanged:v1$",
+          "x-parser-schema-id": "<anonymous-schema-101>"
+        },
+        "data": {
+          "type": "object",
+          "description": "Business payload for BinStockLevelChanged (v1, frozen). `on_hand` and `reserved` are the absolute levels of `sku` in `bin` after the change.",
+          "required": [
+            "site_code",
+            "bin",
+            "sku",
+            "on_hand",
+            "reserved",
+            "version",
+            "reason",
+            "occurred_at"
+          ],
+          "properties": {
+            "site_code": {
+              "type": "string",
+              "description": "The site the bin belongs to (recorded custody, else the site segment of its location code).",
+              "x-parser-schema-id": "<anonymous-schema-103>"
+            },
+            "bin": {
+              "type": "string",
+              "description": "The bin's location code.",
+              "x-parser-schema-id": "<anonymous-schema-104>"
+            },
+            "sku": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-105>"
+            },
+            "on_hand": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Units physically in the bin after the change (located, still-present units).",
+              "x-parser-schema-id": "<anonymous-schema-106>"
+            },
+            "reserved": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The part of on_hand bound to active reservations (never above on_hand).",
+              "x-parser-schema-id": "<anonymous-schema-107>"
+            },
+            "version": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "Per-(bin, sku) strictly increasing counter; keep the highest, ignore lower.",
+              "x-parser-schema-id": "<anonymous-schema-108>"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "STOW",
+                "PICK",
+                "RELOCATE",
+                "REPLENISHMENT",
+                "COUNT",
+                "RESERVE",
+                "REVOKE",
+                "UNLOCATED"
+              ],
+              "description": "What moved the level. Consumers ignore values they do not know. REPLENISHMENT and UNLOCATED are not emitted yet.",
+              "x-parser-schema-id": "<anonymous-schema-109>"
+            },
+            "occurred_at": {
+              "type": "string",
+              "format": "date-time",
+              "x-parser-schema-id": "<anonymous-schema-110>"
+            }
+          },
+          "x-parser-schema-id": "<anonymous-schema-102>"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-98>"
+    }
+  ],
+  "x-parser-schema-id": "BinStockLevelChangedEvent"
+}

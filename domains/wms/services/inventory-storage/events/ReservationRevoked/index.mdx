@@ -11,6 +11,24 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Raised by the RevokeReservation use case. Revocation is the mechanism that keeps a physical failure — a blocked pod, a lost tote, a chute jam, a short pick — from stranding an order: the quantity goes back to usable and the demand can be re-allocated against a different holding.
+
+**Published to both topics.** On `warehouse.inventory.events` (dataschema `urn:warehouse:inventory-storage:events:ReservationRevoked:v1`) the domain event carries only the reservation id, so the adapter enriches it through `ports.ReservationRepo` and emits the same `sku` / `quantity` / `demand_ref` shape as StockReserved; if the lookup finds nothing the publish fails rather than emitting a partial payload. The reservation id is the `subject` and the Kafka key. wes-work-planning consumes this exact `type`. On `warehouse.inventory.analytics` `data` is `{reservation_id, sku}`.
+
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inventory-storage.reservation.ReservationRevoked` |
+| CloudEvents `source` | `/warehouse/inventory-storage` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `res-1`) |
+| CloudEvents `dataschema` | `urn:warehouse:inventory-storage:events:ReservationRevoked:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inventory.events` |
+| Entity / aggregate | `reservation` |
+
+
 ## Architecture
 <NodeGraph />
 

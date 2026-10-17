@@ -1,0 +1,106 @@
+---
+id: pick-face-replenishment-api
+version: 1.0.0
+name: Pick Face Replenishment API
+summary: >-
+  REST API of pick-face-replenishment. Min/max forward pick-face replenishment:
+  raises requests that move stock from reserve to forward slots, driven by
+  event-fed local copies of stock levels and slot plans.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Pick-Face Replenishment API
+badges:
+  - content: Policies
+    textColor: blue
+    backgroundColor: blue
+  - content: Pick faces
+    textColor: blue
+    backgroundColor: blue
+  - content: Replenishments
+    textColor: blue
+    backgroundColor: blue
+  - content: Sites
+    textColor: blue
+    backgroundColor: blue
+  - content: Health
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: pick-face-replenishment-api-listPolicies
+    version: 1.0.0
+  - id: pick-face-replenishment-api-declarePolicy
+    version: 1.0.0
+  - id: pick-face-replenishment-api-getPolicy
+    version: 1.0.0
+  - id: pick-face-replenishment-api-removePolicy
+    version: 1.0.0
+  - id: pick-face-replenishment-api-listPickFaces
+    version: 1.0.0
+  - id: pick-face-replenishment-api-requestReplenishment
+    version: 1.0.0
+  - id: pick-face-replenishment-api-listReplenishments
+    version: 1.0.0
+  - id: pick-face-replenishment-api-getReplenishment
+    version: 1.0.0
+  - id: pick-face-replenishment-api-cancelReplenishment
+    version: 1.0.0
+  - id: pick-face-replenishment-api-evaluateSite
+    version: 1.0.0
+  - id: pick-face-replenishment-api-healthz
+    version: 1.0.0
+  - id: pick-face-replenishment-api-readyz
+    version: 1.0.0
+---
+## Purpose
+Min/max forward pick-face replenishment: raises requests that move stock from reserve to forward slots, driven by event-fed local copies of stock levels and slot plans.
+
+| | |
+|---|---|
+| Bounded context | `pick-face-replenishment` |
+| Domain | WMS (`wms`) |
+| DDD classification | Supporting |
+| Tier | WMS |
+| Repository | [IQVO/pick-face-replenishment](https://github.com/IQVO/pick-face-replenishment) |
+| Events | [pick-face-replenishment](/docs/services/pick-face-replenishment) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+The WMS-tier owner of forward pick-face replenishment in the warehouse-systems
+platform (ADR 0001, ADR 0002). It watches the stock level of every forward
+pick face against an explicit **min/max policy** per site and SKU, and when
+the projected level reaches the minimum it raises a **replenishment request**:
+move a quantity of the SKU from a reserve bin to the forward bin, never more
+than the policy maximum. Policy `MIN_MAX` is the only v1 policy; the source
+bin policy is `fullest-reserve-bin-v1` (the reserve bin of the same site with
+the most usable stock).
+
+This service moves no stock and creates no floor work. A request is
+published as `ReplenishmentRequested`; wes-work-planning plans it as
+`REPLENISH` work, fulfillment-execution runs it with an operator and
+inventory-storage records the relocation (reason `REPLENISHMENT`). The
+resulting `StockRelocated` comes back and completes the request. A request is
+cancelled when the operator says so, when a newer approved slot plan no longer
+assigns the SKU to that forward bin, or when its policy is removed.
+
+Stock levels, forward assignments and locations are read from local copies fed
+by events (ADR 0003); this API never calls a sibling context. Events are
+published as CloudEvents on `warehouse.pick-face-replenishment.events` through
+a transactional outbox (see `apis/asyncapi.yaml`).
+
+Errors are RFC 7807 problem documents with
+`type = https://errors.pick-face-replenishment.warehouse-systems.dev/<slug>`.
+There is no authentication layer (fleet decision 2026-09-11).
+  
+
+## Architecture diagram
+<NodeGraph />

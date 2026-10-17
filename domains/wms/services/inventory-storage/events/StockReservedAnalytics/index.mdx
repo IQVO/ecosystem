@@ -11,6 +11,24 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Raised by the ReserveStock use case when a reservation is successfully created against *usable* inventory (on-hand minus active reservations minus held/unlocated stock). The binding is revocable and carries a timeout, so a physical failure downstream never strands the demand.
+
+**Published to both topics.** On `warehouse.inventory.events` (dataschema `urn:warehouse:inventory-storage:events:StockReserved:v1`) the `data` payload is the adapter's `reservationData` shape — `sku`, `quantity`, `demand_ref` — and the reservation id is the CloudEvents `subject` and the Kafka key. wes-work-planning consumes this exact `type` to update its `UsableInventoryObserved` read model by SKU. On `warehouse.inventory.analytics` (dataschema `...:analytics:StockReserved:v1`, Kafka key = reservation id — ADR 0021) `data` is `{sku, reservation_id, quantity}`.
+
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inventory-storage.reservation.StockReserved` |
+| CloudEvents `source` | `/warehouse/inventory-storage` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `res-1`) |
+| CloudEvents `dataschema` | `urn:warehouse:inventory-storage:events:StockReserved:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inventory.analytics` |
+| Entity / aggregate | `reservation` |
+
+
 ## Architecture
 <NodeGraph />
 

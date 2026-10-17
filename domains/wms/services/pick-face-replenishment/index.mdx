@@ -1,0 +1,144 @@
+---
+id: pick-face-replenishment
+name: Pick Face Replenishment (events)
+version: 1.0.0
+summary: >-
+  Min/max forward pick-face replenishment: raises requests that move stock from
+  reserve to forward slots, driven by event-fed local copies of stock levels and
+  slot plans.
+badges:
+  - content: pick-face-replenishment
+    textColor: blue
+    backgroundColor: blue
+  - content: replenishment
+    textColor: blue
+    backgroundColor: blue
+  - content: policy
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: ReplenishmentRequested
+    version: 1.0.0
+    to:
+      - id: warehouse.pick-face-replenishment.events
+        version: 1.0.0
+  - id: ReplenishmentCompleted
+    version: 1.0.0
+    to:
+      - id: warehouse.pick-face-replenishment.events
+        version: 1.0.0
+  - id: ReplenishmentCancelled
+    version: 1.0.0
+    to:
+      - id: warehouse.pick-face-replenishment.events
+        version: 1.0.0
+  - id: ReplenishmentPolicyDeclared
+    version: 1.0.0
+    to:
+      - id: warehouse.pick-face-replenishment.analytics
+        version: 1.0.0
+receives:
+  - id: BinStockLevelChanged
+    version: 1.0.0
+    from:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+  - id: StockRelocated
+    version: 1.0.0
+    from:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+  - id: SlotPlanApproved
+    version: 1.0.0
+    from:
+      - id: warehouse.slotting-optimization.events
+        version: 1.0.0
+  - id: ZoneRegistered
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationSlotRegistered
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationSlotDecommissioned
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Min/max forward pick-face replenishment: raises requests that move stock from reserve to forward slots, driven by event-fed local copies of stock levels and slot plans.
+
+| | |
+|---|---|
+| Bounded context | `pick-face-replenishment` |
+| Domain | WMS (`wms`) |
+| DDD classification | Supporting |
+| Tier | WMS |
+| Publishes (Kafka) | `warehouse.pick-face-replenishment.events`<br/>`warehouse.pick-face-replenishment.analytics` |
+| Consumes (Kafka) | `warehouse.inventory.events`<br/>`warehouse.slotting-optimization.events`<br/>`warehouse.facility.events` |
+| CloudEvents type prefix | `com.warehouse.wms.pick-face-replenishment.` |
+| Event source | `/warehouse/pick-face-replenishment` |
+| Repository | [IQVO/pick-face-replenishment](https://github.com/IQVO/pick-face-replenishment) |
+| REST API | [pick-face-replenishment-api](/docs/services/pick-face-replenishment-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **pick-face-replenishment** bounded context (WMS
+subdomain): min/max replenishment of forward pick faces from reserve bins
+(ADR 0001, ADR 0002).
+
+**Published.** The `ReplenishmentRequest` aggregate raises three events,
+published to `warehouse.pick-face-replenishment.events` through a
+**transactional outbox**: the request row and its already-encoded events are
+written in ONE database transaction and a relay drains them to Kafka
+(at-least-once; the CloudEvents `id` is stored with the outbox row, so a retry
+republishes the same `id`). `ReplenishmentRequested` is what wes-work-planning
+turns into `REPLENISH` work; `ReplenishmentCompleted` and
+`ReplenishmentCancelled` close the request. The same three types are mirrored
+on `warehouse.pick-face-replenishment.analytics` (dataschema
+`urn:warehouse:pick-face-replenishment:analytics:<EventName>:v1`), together
+with `ReplenishmentPolicyDeclared`, which is analytics-only.
+
+**Consumed (ADR 0003).** `BinStockLevelChanged` (pending producer change P1)
+and `StockRelocated` from inventory-storage, `SlotPlanApproved` from
+slotting-optimization, and `ZoneRegistered`, `LocationSlotRegistered` and
+`LocationSlotDecommissioned` from facility-layout. Each feeds a durable local
+copy or closes a request (modes `INVENTORY_MODE`, `SLOTTING_MODE`,
+`LAYOUT_MODE`, default `permissive`; consumer groups from
+`INVENTORY_CONSUMER_GROUP`, `SLOTTING_CONSUMER_GROUP`,
+`LAYOUT_CONSUMER_GROUP`). The consumed messages below are the producers' own
+contracts, decoded independently here and never imported.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`.
+Optional W3C trace-context headers (`traceparent`, and `tracestate` /
+`baggage` when present) carry the trace of the request that wrote the outbox
+row; consumers may extract them, and must not require them.
+`specversion`, `id`, `source` (`/warehouse/pick-face-replenishment`), `type`,
+`subject` (the request id; `<site_id>/<sku>` for the policy event), `time`,
+`datacontenttype` (`application/json`) and `dataschema`
+(`urn:warehouse:pick-face-replenishment:<events|analytics>:<EventName>:v1`)
+are all required. Kafka key = the subject. Type =
+`com.warehouse.wms.pick-face-replenishment.<entity>.<EventName>`. A breaking
+payload change is a new `.v2` type, never a mutation.
+
+
+## Architecture diagram
+<NodeGraph />

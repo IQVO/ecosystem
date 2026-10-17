@@ -6,6 +6,8 @@ export default {
     'best-practices/summary-required': 'warn',
   },
   overrides: [
+    // REST queries are rendered from the OpenAPI files attached to their <ctx>-api service.
+    { files: ['domains/**/queries/**'], rules: { 'best-practices/schema-required': 'off' } },
     { files: ['channels/**'], rules: { 'best-practices/owner-required': 'off', 'best-practices/summary-required': 'off' } },
   ],
 };

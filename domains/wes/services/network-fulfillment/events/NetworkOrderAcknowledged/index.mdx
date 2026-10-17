@@ -16,6 +16,26 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Raised by the `NetworkOrder` aggregate when `ReconcileSubmittedOrders` settles the order `SUBMITTED -> ACKNOWLEDGED` (ADR 0016), in the same atomic scope as the state save and before the held order is released. It is a settled commitment. `receivedAt` is carried so consumers can compute acknowledgement latency (`at - receivedAt`) without a second lookup — the analytics projection does exactly that. A pending submission raises nothing; a failed one raises `NetworkOrderRejected` with `reason=SUBMISSION_FAILED` and never this event.
+
+**Versioning (breaking change).** Until ADR 0016 this event was published when the order moved to `SUBMITTED`. Because its meaning changed, it is published as a NEW `.v2` type and `:v2` dataschema (fleet CloudEvents standard §4); the v1 type `com.warehouse.wes.network-fulfillment.networkorder.NetworkOrderAcknowledged` is no longer published. The payload field set is unchanged. The earlier fact is now `NetworkOrderSubmitted`.
+
+`type`: `com.warehouse.wes.network-fulfillment.networkorder.NetworkOrderAcknowledged.v2` — `dataschema`: `urn:warehouse:network-fulfillment:events:NetworkOrderAcknowledged:v2`.
+
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wes.network-fulfillment.networkorder.NetworkOrderAcknowledged.v2` |
+| CloudEvents `source` | `/warehouse/network-fulfillment` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `po-1`) |
+| CloudEvents `dataschema` | `urn:warehouse:network-fulfillment:events:NetworkOrderAcknowledged:v2` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.network-fulfillment.events` |
+| Entity / aggregate | `networkorder`, `network-fulfillment` |
+
+
 ## Architecture
 <NodeGraph />
 

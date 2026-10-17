@@ -13,6 +13,25 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Raised by the StowTransferStock use case (ADR 0033 — POST /transfers/\{transferLineId\}/stow): the ONLY path that raises the destination site's usable stock for a transfer. One StockUnit per bin leg was created AT the destination site (NewStockUnitAtSite), every bin verified to belong to that site's custody, the quantities summed exactly to the receipt's received_quantity, and the receipt moved STAGED -> STOWED.
+
+Idempotent at the database level: a replayed stow for a STOWED receipt returns the original outcome and republishes NOTHING — exactly one of these events exists per transfer_line_id.
+
+**Integration topic only** (no analytics variant). Kafka key and CloudEvents `subject` are the transfer_line_id, matching TransferReceiptStaged so a line's facts stay per-line ordered (ADR 0021).
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inventory-storage.stock.TransferStockStowed` |
+| CloudEvents `source` | `/warehouse/inventory-storage` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `tl-77-1`) |
+| CloudEvents `dataschema` | `urn:warehouse:inventory-storage:events:TransferStockStowed:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inventory.events` |
+| Entity / aggregate | `stock` |
+
+
 ## Architecture
 <NodeGraph />
 

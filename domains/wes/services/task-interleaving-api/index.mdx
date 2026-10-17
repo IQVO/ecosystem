@@ -1,0 +1,101 @@
+---
+id: task-interleaving-api
+version: 1.0.0
+name: Task Interleaving API
+summary: >-
+  REST API of task-interleaving. Advisory next-task hints that chain compatible
+  tasks by travel distance, keeping fulfillment-execution pull-based: hints are
+  offered, never imposed.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Task Interleaving API
+badges:
+  - content: Policy
+    textColor: blue
+    backgroundColor: blue
+  - content: Hints
+    textColor: blue
+    backgroundColor: blue
+  - content: Stations
+    textColor: blue
+    backgroundColor: blue
+  - content: Recommendations
+    textColor: blue
+    backgroundColor: blue
+  - content: Health
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: task-interleaving-api-declareInterleavingPolicy
+    version: 1.0.0
+  - id: task-interleaving-api-getInterleavingPolicy
+    version: 1.0.0
+  - id: task-interleaving-api-listHints
+    version: 1.0.0
+  - id: task-interleaving-api-getHint
+    version: 1.0.0
+  - id: task-interleaving-api-getStation
+    version: 1.0.0
+  - id: task-interleaving-api-recommendTasks
+    version: 1.0.0
+  - id: task-interleaving-api-healthz
+    version: 1.0.0
+  - id: task-interleaving-api-readyz
+    version: 1.0.0
+---
+## Purpose
+Advisory next-task hints that chain compatible tasks by travel distance, keeping fulfillment-execution pull-based: hints are offered, never imposed.
+
+| | |
+|---|---|
+| Bounded context | `task-interleaving` |
+| Domain | WES (`wes`) |
+| DDD classification | Supporting |
+| Tier | WES |
+| Repository | [IQVO/task-interleaving](https://github.com/IQVO/task-interleaving) |
+| Events | [task-interleaving](/docs/services/task-interleaving) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+The WES-tier advisor of task interleaving in the warehouse-systems platform
+(ADR 0001, ADR 0002). When a station completes a task, this context looks at
+the open-task pool and, if one or more open tasks are close enough to where the
+operator now stands, issues an **interleaving hint**: a short ranked list of
+candidate tasks. Policy `rectilinear-v1`: the detour of a candidate is the
+rectilinear distance `|dx| + |dy| + verticalWeight*|dz|` in metres, rounded to
+0.1 m, from the station's position to the candidate's first location.
+
+The hint is **advisory**. fulfillment-execution may use it only as a tie-break
+inside one priority band, fails open when it is absent or expired, and keeps
+`claimNext` as its only claim path; nothing in this API assigns work to a
+worker (ADR 0001, ADR 0002).
+
+A site is **inert** until an operator declares its interleaving policy with
+`PUT /sites/{siteId}/policy`: no hint is issued for a site without one. Hints
+are computed from local copies fed by events (open-task pool, claims, location
+geometry; ADR 0003); this API never calls a sibling context. Events are
+published as CloudEvents on `warehouse.task-interleaving.events` through a
+transactional outbox (see `apis/asyncapi.yaml`).
+
+Mutable resources carry a `version` (starts at 1, +1 per accepted change) and a
+matching strong `ETag: "<version>"` header. A policy update sends `If-Match`;
+a stale value is a 412 `version-mismatch`, and a write that loses a race at the
+database is a 409 `concurrent-modification`.
+
+Errors are RFC 7807 problem documents with
+`type = https://errors.task-interleaving.warehouse-systems.dev/<slug>`.
+There is no authentication layer (fleet decision 2026-09-11).
+  
+
+## Architecture diagram
+<NodeGraph />

@@ -23,21 +23,15 @@ tags:
   - name: transfers
     description: Inter-warehouse transfer saga (approval and lifecycle).
   - name: rebalance
-    description: >-
-      Scheduled (observe-only) rebalance run history (ADR 0007) and the
-      operator-managed Rebalance Policy and Transfer Lane catalogues the
-      scheduled pass plans from (ADR 0015).
+    description: Scheduled (observe-only) rebalance run history (ADR 0007) and the operator-managed Rebalance Policy and Transfer Lane catalogues the scheduled pass plans from (ADR 0015).
   - name: reports
-    description: >-
-      Read-only saga-health analytics reports (ADR 0009) served by the separate
-      nip-reports binary on port 8092, from the analytical database the
-      nip-projector builds from this service's analytics topic. Not part of the
-      OLTP API on port 8080.
+    description: Read-only saga-health analytics reports (ADR 0009) served by the separate nip-reports binary on port 8092, from the analytical database the nip-projector builds from this service's analytics topic. Not part of the OLTP API on port 8080.
 paths:
   /healthz:
     get:
       operationId: getHealth
-      tags: [health]
+      tags:
+        - health
       summary: Liveness probe.
       description: Returns 204 when the process is up. Carries no dependency state.
       responses:
@@ -46,7 +40,8 @@ paths:
   /v1/transfer-proposals:generate:
     post:
       operationId: generateTransferProposals
-      tags: [planning]
+      tags:
+        - planning
       summary: Generate advisory transfer proposals from an explicit snapshot.
       description: |
         Deterministic, explainable proposal generation over a caller-provided
@@ -73,7 +68,8 @@ paths:
   /v1/transfer-simulations:
     get:
       operationId: simulateTransferOptions
-      tags: [planning]
+      tags:
+        - planning
       summary: Simulate advisory transfer options from local read models.
       description: |
         Serves an advisory-only simulation built from the service's projected
@@ -92,7 +88,8 @@ paths:
   /v1/transfers:approve:
     post:
       operationId: approveTransfer
-      tags: [transfers]
+      tags:
+        - transfers
       summary: Approve a transfer proposal and start the allocation saga.
       description: |
         Takes a proposal snapshot (origin, destination, SKU, quantity, policy
@@ -143,7 +140,8 @@ paths:
   /v1/rebalance-runs:
     get:
       operationId: listRebalanceRuns
-      tags: [rebalance]
+      tags:
+        - rebalance
       summary: List scheduled rebalance runs, newest first.
       description: |
         The observe-only scheduled-rebalance run history (ADR 0007): one
@@ -173,11 +171,11 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
-
   /v1/rebalance-policies:
     get:
       operationId: listRebalancePolicies
-      tags: [rebalance]
+      tags:
+        - rebalance
       summary: List the Rebalance Policy catalogue.
       description: |
         The operator-managed Rebalance Policy catalogue (ADR 0015), one entry
@@ -196,7 +194,8 @@ paths:
           $ref: '#/components/responses/Problem'
     put:
       operationId: putRebalancePolicy
-      tags: [rebalance]
+      tags:
+        - rebalance
       summary: Create or revise one Rebalance Policy (idempotent).
       description: |
         Upserts the Policy in the body, keyed by its Site + SKU. Idempotent:
@@ -249,7 +248,8 @@ paths:
   /v1/transfer-lanes:
     get:
       operationId: listTransferLanes
-      tags: [rebalance]
+      tags:
+        - rebalance
       summary: List the Transfer Lane catalogue.
       description: |
         The operator-managed Transfer Lane catalogue (ADR 0015), one entry
@@ -269,7 +269,8 @@ paths:
           $ref: '#/components/responses/Problem'
     put:
       operationId: putTransferLane
-      tags: [rebalance]
+      tags:
+        - rebalance
       summary: Create or revise one Transfer Lane (idempotent).
       description: |
         Upserts the Lane in the body, keyed by its Origin → Destination
@@ -315,11 +316,11 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
-
   /v1/transfers:
     get:
       operationId: listTransfers
-      tags: [transfers]
+      tags:
+        - transfers
       summary: List transfers, newest first.
       description: |
         Read-only page of inter-warehouse transfers from the saga store,
@@ -377,7 +378,8 @@ paths:
   /v1/transfers/{id}:
     get:
       operationId: getTransfer
-      tags: [transfers]
+      tags:
+        - transfers
       summary: Get one transfer with its audit trail.
       description: |
         Read-only view of one transfer: its current state and facts plus the
@@ -410,7 +412,8 @@ paths:
     get:
       operationId: getTransferFunnelReport
       summary: How many distinct transfers reached each saga state, per day
-      tags: [reports]
+      tags:
+        - reports
       description: |
         For the TransferStateAdvanced analytics occurrences in the half-open range [from, to) (by the
         CloudEvents time: from inclusive, to exclusive), counts per UTC day and state `to` the DISTINCT
@@ -439,7 +442,8 @@ paths:
     get:
       operationId: getStateDwellReport
       summary: Saga age percentiles at the moment of leaving each state, per day
-      tags: [reports]
+      tags:
+        - reports
       description: |
         For the TransferStateAdvanced occurrences in [from, to), per UTC day and state `from` (the state
         the transition LEFT), the number of transitions and the continuous p50/p95 (linear
@@ -469,7 +473,8 @@ paths:
     get:
       operationId: getStuckTransfersReport
       summary: TransferStuckDetected occurrences per state per day, plus the latest ones
-      tags: [reports]
+      tags:
+        - reports
       description: |
         For the TransferStuckDetected occurrences in [from, to), `days`: per UTC day and `state`, the
         detections (the health ticker re-detects a transfer on every pass while it stays stuck) and the
@@ -506,7 +511,8 @@ paths:
     get:
       operationId: getRebalanceRunsReport
       summary: Scheduled rebalance runs, proposals against rejected, per day
-      tags: [reports]
+      tags:
+        - reports
       description: |
         For the RebalanceRunCompleted occurrences in [from, to), per UTC day: the runs, the proposals the
         planner produced in total, how many of them the runs' own safety checks rejected (never an
@@ -534,7 +540,8 @@ paths:
     get:
       operationId: getReportsFreshness
       summary: How far the analytics projection is behind
-      tags: [reports]
+      tags:
+        - reports
       description: |
         The freshness lag of the projection all the reports read: `as_of` is the CloudEvents time of the
         newest event the projector has applied and `lag_seconds` is now minus `as_of` (never negative).
@@ -598,7 +605,10 @@ components:
   schemas:
     Problem:
       type: object
-      required: [type, title, status]
+      required:
+        - type
+        - title
+        - status
       properties:
         type:
           type: string
@@ -618,7 +628,11 @@ components:
       minLength: 1
     Position:
       type: object
-      required: [Site, SKU, Available, AsOf]
+      required:
+        - Site
+        - SKU
+        - Available
+        - AsOf
       properties:
         Site:
           $ref: '#/components/schemas/SiteID'
@@ -641,7 +655,10 @@ components:
           format: date-time
     Policy:
       type: object
-      required: [Version, Site, SKU]
+      required:
+        - Version
+        - Site
+        - SKU
       properties:
         Version:
           type: string
@@ -659,7 +676,10 @@ components:
           type: integer
     Lane:
       type: object
-      required: [Origin, Destination, Enabled]
+      required:
+        - Origin
+        - Destination
+        - Enabled
       properties:
         Origin:
           $ref: '#/components/schemas/SiteID'
@@ -674,11 +694,17 @@ components:
           type: boolean
     CatalogueOutcome:
       type: string
-      enum: [CREATED, UPDATED, UNCHANGED]
+      enum:
+        - CREATED
+        - UPDATED
+        - UNCHANGED
       description: What a catalogue PUT did (UNCHANGED = idempotent replay, nothing written).
     RebalancePolicyEntry:
       type: object
-      required: [policy, revision, updatedAt]
+      required:
+        - policy
+        - revision
+        - updatedAt
       properties:
         policy:
           $ref: '#/components/schemas/Policy'
@@ -694,7 +720,8 @@ components:
           $ref: '#/components/schemas/CatalogueOutcome'
     RebalancePolicyList:
       type: object
-      required: [policies]
+      required:
+        - policies
       properties:
         policies:
           type: array
@@ -702,7 +729,10 @@ components:
             $ref: '#/components/schemas/RebalancePolicyEntry'
     TransferLaneEntry:
       type: object
-      required: [lane, revision, updatedAt]
+      required:
+        - lane
+        - revision
+        - updatedAt
       properties:
         lane:
           $ref: '#/components/schemas/Lane'
@@ -718,7 +748,8 @@ components:
           $ref: '#/components/schemas/CatalogueOutcome'
     TransferLaneList:
       type: object
-      required: [lanes]
+      required:
+        - lanes
       properties:
         lanes:
           type: array
@@ -726,7 +757,11 @@ components:
             $ref: '#/components/schemas/TransferLaneEntry'
     GenerateRequest:
       type: object
-      required: [asOf, positions, policies, lanes]
+      required:
+        - asOf
+        - positions
+        - policies
+        - lanes
       properties:
         asOf:
           type: string
@@ -745,7 +780,15 @@ components:
             $ref: '#/components/schemas/Lane'
     Proposal:
       type: object
-      required: [Origin, Destination, SKU, Quantity, PolicyVersion, PositionAsOf, Reasons, ScoreBreakdown]
+      required:
+        - Origin
+        - Destination
+        - SKU
+        - Quantity
+        - PolicyVersion
+        - PositionAsOf
+        - Reasons
+        - ScoreBreakdown
       properties:
         Origin:
           $ref: '#/components/schemas/SiteID'
@@ -765,10 +808,16 @@ components:
           type: array
           items:
             type: string
-            enum: [DESTINATION_BELOW_TARGET, ORIGIN_ABOVE_SAFETY_STOCK, APPROVED_LANE]
+            enum:
+              - DESTINATION_BELOW_TARGET
+              - ORIGIN_ABOVE_SAFETY_STOCK
+              - APPROVED_LANE
         ScoreBreakdown:
           type: object
-          required: [PriorityBenefit, HandlingPenalty, LeadTimePenalty]
+          required:
+            - PriorityBenefit
+            - HandlingPenalty
+            - LeadTimePenalty
           properties:
             PriorityBenefit:
               type: integer
@@ -778,7 +827,8 @@ components:
               type: integer
     GenerateResponse:
       type: object
-      required: [proposals]
+      required:
+        - proposals
       properties:
         proposals:
           type: array
@@ -786,7 +836,10 @@ components:
             $ref: '#/components/schemas/Proposal'
     SimulationResponse:
       type: object
-      required: [advisory, asOf, sites]
+      required:
+        - advisory
+        - asOf
+        - sites
       properties:
         advisory:
           type: boolean
@@ -841,7 +894,13 @@ components:
           format: date-time
     ApproveTransferRequest:
       type: object
-      required: [originSiteId, destinationSiteId, sku, quantity, policyVersion, proposalAsOf]
+      required:
+        - originSiteId
+        - destinationSiteId
+        - sku
+        - quantity
+        - policyVersion
+        - proposalAsOf
       properties:
         originSiteId:
           $ref: '#/components/schemas/SiteID'
@@ -865,14 +924,35 @@ components:
           description: The advisory proposal snapshot's as-of watermark.
     ApproveTransferResponse:
       type: object
-      required: [transferId, state, originSiteId, destinationSiteId, sku, quantity, policyVersion, replayed, expiresAt, transferLineId]
+      required:
+        - transferId
+        - state
+        - originSiteId
+        - destinationSiteId
+        - sku
+        - quantity
+        - policyVersion
+        - replayed
+        - expiresAt
+        - transferLineId
       properties:
         transferId:
           type: string
           description: The saga aggregate id.
         state:
           type: string
-          enum: [DRAFT, PROPOSED, APPROVED, ALLOCATING, ALLOCATED, PICKED, IN_TRANSIT, ARRIVED, RECEIVED, UNFULFILLABLE, CANCELLED]
+          enum:
+            - DRAFT
+            - PROPOSED
+            - APPROVED
+            - ALLOCATING
+            - ALLOCATED
+            - PICKED
+            - IN_TRANSIT
+            - ARRIVED
+            - RECEIVED
+            - UNFULFILLABLE
+            - CANCELLED
           description: |
             The persisted saga state at response time — ALLOCATING
             immediately after a fresh approval (awaiting inventory-storage's
@@ -894,7 +974,10 @@ components:
           description: inventory-storage's reservation id, present once ALLOCATED.
         rejectionReason:
           type: string
-          enum: [ORIGIN_SITE_UNKNOWN, INSUFFICIENT_USABLE, IDEMPOTENCY_CONFLICT]
+          enum:
+            - ORIGIN_SITE_UNKNOWN
+            - INSUFFICIENT_USABLE
+            - IDEMPOTENCY_CONFLICT
           description: The closed rejection reason, present once UNFULFILLABLE.
         replayed:
           type: boolean
@@ -910,7 +993,12 @@ components:
             inventory-storage allocation ledger key and the reply subject.
     RebalanceRun:
       type: object
-      required: [id, startedAt, proposalCount, rejectedCount, outcome]
+      required:
+        - id
+        - startedAt
+        - proposalCount
+        - rejectedCount
+        - outcome
       properties:
         id:
           type: integer
@@ -928,13 +1016,16 @@ components:
           type: integer
         outcome:
           type: string
-          enum: [COMPLETED, FAILED]
+          enum:
+            - COMPLETED
+            - FAILED
         failClosedReason:
           type: string
           description: The fail-closed snapshot refusal; present only when outcome is FAILED.
     RebalanceRunsResponse:
       type: object
-      required: [runs]
+      required:
+        - runs
       properties:
         runs:
           type: array
@@ -942,13 +1033,35 @@ components:
             $ref: '#/components/schemas/RebalanceRun'
     TransferState:
       type: string
-      enum: [DRAFT, PROPOSED, APPROVED, ALLOCATING, ALLOCATED, PICKED, IN_TRANSIT, ARRIVED, RECEIVED, UNFULFILLABLE, CANCELLED]
+      enum:
+        - DRAFT
+        - PROPOSED
+        - APPROVED
+        - ALLOCATING
+        - ALLOCATED
+        - PICKED
+        - IN_TRANSIT
+        - ARRIVED
+        - RECEIVED
+        - UNFULFILLABLE
+        - CANCELLED
       description: |
         Saga lifecycle state. RECEIVED, UNFULFILLABLE and CANCELLED are
         terminal; every other state is waiting for a next step.
     TransferView:
       type: object
-      required: [id, state, sku, quantity, originSiteId, destinationSiteId, policyVersion, expiresAt, createdAt, updatedAt, version]
+      required:
+        - id
+        - state
+        - sku
+        - quantity
+        - originSiteId
+        - destinationSiteId
+        - policyVersion
+        - expiresAt
+        - createdAt
+        - updatedAt
+        - version
       properties:
         id:
           type: string
@@ -974,7 +1087,10 @@ components:
           description: inventory-storage's reservation id, present once ALLOCATED.
         rejectionReason:
           type: string
-          enum: [ORIGIN_SITE_UNKNOWN, INSUFFICIENT_USABLE, IDEMPOTENCY_CONFLICT]
+          enum:
+            - ORIGIN_SITE_UNKNOWN
+            - INSUFFICIENT_USABLE
+            - IDEMPOTENCY_CONFLICT
           description: The closed rejection reason, present once UNFULFILLABLE.
         expiresAt:
           type: string
@@ -992,7 +1108,12 @@ components:
           description: Optimistic-concurrency version (the number of persisted state transitions).
     AuditEntry:
       type: object
-      required: [seq, to, event, cause, occurredAt]
+      required:
+        - seq
+        - to
+        - event
+        - cause
+        - occurredAt
       properties:
         seq:
           type: integer
@@ -1016,7 +1137,8 @@ components:
       allOf:
         - $ref: '#/components/schemas/TransferView'
         - type: object
-          required: [audit]
+          required:
+            - audit
           properties:
             audit:
               type: array
@@ -1025,7 +1147,11 @@ components:
                 $ref: '#/components/schemas/AuditEntry'
     TransferList:
       type: object
-      required: [items, total, limit, offset]
+      required:
+        - items
+        - total
+        - limit
+        - offset
       properties:
         items:
           type: array
@@ -1040,21 +1166,29 @@ components:
           type: integer
     ReportsFreshness:
       type: object
-      required: [as_of, lag_seconds]
+      required:
+        - as_of
+        - lag_seconds
       properties:
         as_of:
-          type: [string, 'null']
+          type:
+            - string
+            - 'null'
           format: date-time
           description: CloudEvents time of the newest event applied; null when none.
         lag_seconds:
-          type: [number, 'null']
+          type:
+            - number
+            - 'null'
           format: double
           minimum: 0
           description: now - as_of, in seconds; null when nothing was applied.
           example: 4.2
     ReportRange:
       type: object
-      required: [from, to]
+      required:
+        - from
+        - to
       properties:
         from:
           type: string
@@ -1066,7 +1200,10 @@ components:
           description: The effective exclusive end.
     TransferFunnelDay:
       type: object
-      required: [day, state, transfers]
+      required:
+        - day
+        - state
+        - transfers
       properties:
         day:
           type: string
@@ -1086,7 +1223,8 @@ components:
       allOf:
         - $ref: '#/components/schemas/ReportRange'
         - type: object
-          required: [days]
+          required:
+            - days
           properties:
             days:
               type: array
@@ -1094,7 +1232,12 @@ components:
                 $ref: '#/components/schemas/TransferFunnelDay'
     StateDwellDay:
       type: object
-      required: [day, state, transitions, p50_age_seconds, p95_age_seconds]
+      required:
+        - day
+        - state
+        - transitions
+        - p50_age_seconds
+        - p95_age_seconds
       properties:
         day:
           type: string
@@ -1122,7 +1265,8 @@ components:
       allOf:
         - $ref: '#/components/schemas/ReportRange'
         - type: object
-          required: [days]
+          required:
+            - days
           properties:
             days:
               type: array
@@ -1130,7 +1274,11 @@ components:
                 $ref: '#/components/schemas/StateDwellDay'
     StuckDay:
       type: object
-      required: [day, state, detections, transfers]
+      required:
+        - day
+        - state
+        - detections
+        - transfers
       properties:
         day:
           type: string
@@ -1151,7 +1299,12 @@ components:
           example: 1
     StuckOccurrence:
       type: object
-      required: [transfer_id, state, age_seconds, threshold_seconds, detected_at]
+      required:
+        - transfer_id
+        - state
+        - age_seconds
+        - threshold_seconds
+        - detected_at
       properties:
         transfer_id:
           type: string
@@ -1172,7 +1325,9 @@ components:
       allOf:
         - $ref: '#/components/schemas/ReportRange'
         - type: object
-          required: [days, latest]
+          required:
+            - days
+            - latest
           properties:
             days:
               type: array
@@ -1184,7 +1339,13 @@ components:
                 $ref: '#/components/schemas/StuckOccurrence'
     RebalanceRunsDay:
       type: object
-      required: [day, runs, proposals, rejected, rejection_rate, stale_facts]
+      required:
+        - day
+        - runs
+        - proposals
+        - rejected
+        - rejection_rate
+        - stale_facts
       properties:
         day:
           type: string
@@ -1219,7 +1380,8 @@ components:
       allOf:
         - $ref: '#/components/schemas/ReportRange'
         - type: object
-          required: [days]
+          required:
+            - days
           properties:
             days:
               type: array

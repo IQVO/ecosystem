@@ -17,6 +17,28 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Raised by `SweepOrphanedHolds` (ADR 0024) once per hold it frees: the order-management order raised for this demand was still held after `acknowledgeBy` plus `ORPHAN_HOLD_GRACE`, the `NetworkOrder` was never committed to (still `NEW`, or `REJECTED` with the cancel never confirmed), and order-management confirmed the hold is gone. The sweep NEVER changes the order's state — `RejectOverdueOrders` owns that and publishes `NetworkOrderRejected` — and it raises this event only when the hold was actually freed: a hold order-management reports as already released (409/422) was not an orphan and raises nothing. The outcome is recorded in the same transaction as the event, so it fires once per hold and is not re-raised on later passes.
+
+`answer` is what order-management said to the cancel: `CANCELLED` (2xx) or `NOT_FOUND` (404, the hold no longer existed — still done). `localOrderId` is the order-management order that was held; it is published here and nowhere else for an order that was never submitted, because `GET /network-orders/{networkRef}` exposes `localOrderId` only from `SUBMITTED` on.
+
+Published on the analytics topic like every other event (the composition root's fan-out publishes each event to both topics). Not used by the analytics projector today (ignored as an unknown type).
+
+`type`: `com.warehouse.wes.network-fulfillment.networkorder.OrphanedHoldCancelled` — `dataschema`: `urn:warehouse:network-fulfillment:analytics:OrphanedHoldCancelled:v1`.
+
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wes.network-fulfillment.networkorder.OrphanedHoldCancelled` |
+| CloudEvents `source` | `/warehouse/network-fulfillment` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `po-1`) |
+| CloudEvents `dataschema` | `urn:warehouse:network-fulfillment:analytics:OrphanedHoldCancelled:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.network-fulfillment.analytics` |
+| Entity / aggregate | `networkorder`, `analytics` |
+
+
 ## Architecture
 <NodeGraph />
 

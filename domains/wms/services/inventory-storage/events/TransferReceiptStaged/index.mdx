@@ -11,6 +11,25 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Raised by the StageTransferReceipt use case (ADR 0033, destination receipt custody — POST /transfers/\{transferLineId\}/receipt). The transfer_line_id was found in the transfer_allocations ledger with outcome ALLOCATED: a transfer_receipts row (state STAGED, DB-unique on transfer_line_id) now records expected_quantity from the ledger, received_quantity as counted, and the SIGNED variance (received - expected; positive = over, negative = short). Over/short is explicit on the wire, never silently absorbed.
+
+NO usable stock moves at this step — the destination site's usable rises only when the stow completes (TransferStockStowed). An unrecognized scan is NOT this event: it is quarantined as an inventory_exceptions row and publishes nothing that raises availability.
+
+**Integration topic only** (no analytics variant: the Inventory Flow & Accuracy projection has no transfer dimension). Kafka key and CloudEvents `subject` are the transfer_line_id, so a line's stage-then-stow facts stay ordered on one partition (ADR 0021).
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inventory-storage.stock.TransferReceiptStaged` |
+| CloudEvents `source` | `/warehouse/inventory-storage` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `tl-77-1`) |
+| CloudEvents `dataschema` | `urn:warehouse:inventory-storage:events:TransferReceiptStaged:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inventory.events` |
+| Entity / aggregate | `stock` |
+
+
 ## Architecture
 <NodeGraph />
 

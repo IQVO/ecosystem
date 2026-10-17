@@ -17,6 +17,8 @@ services:
     version: 1.0.0
   - id: process-path-management
     version: 1.0.0
+  - id: task-interleaving
+    version: 1.0.0
   - id: warehouse-planning
     version: 0.5.0
   - id: wes-work-planning
@@ -35,6 +37,8 @@ services:
     version: 2.0.0
   - id: process-path-management-api
     version: 1.0.0
+  - id: task-interleaving-api
+    version: 1.0.0
   - id: warehouse-planning-api
     version: 0.1.0
   - id: wes-work-planning-api
@@ -42,5 +46,27 @@ services:
   - id: workforce-management-api
     version: 1.0.0
 ---
+## Overview
+The WES tier turns demand into work and work into completed tasks: orders arrive, capacity is planned, work is released waveless, tasks are claimed pull-style, labor is assigned and performance is scored. It also owns the edge to the external retail fulfillment network.
+
+CloudEvents types in this domain follow `com.warehouse.wes.<bounded-context>.<entity>.<EventName>`.
+Each bounded context below is documented twice: as an **events** service (the Kafka contract, from its
+AsyncAPI file) and as a **REST API** service (`<context>-api`, from its OpenAPI files, including the
+separate `*-reports` analytics binary where one exists).
+
+## Bounded contexts
+| Context | Classification | Tier | Purpose |
+|---|---|---|---|
+| [fulfillment-execution](/docs/services/fulfillment-execution) | Core | WES | Pick, pack and SLAM task lifecycle with pull-based claimNext dispatch and lease semantics. The execution side of the WES: work is claimed by stations and associates, never pushed. |
+| [labor-performance](/docs/services/labor-performance) | Supporting | WES, downstream observer | Engineered labor standards and actual-versus-standard performance scoring. Observes task completion from fulfillment-execution; it never drives work. |
+| [network-fulfillment](/docs/services/network-fulfillment) | Supporting | WES, external network edge (anti-corruption layer) | Anti-corruption layer between the fleet and an external retail fulfillment network (Amazon Selling Partner API): network-originated demand, the acknowledgement clock and capacity-aware advertised availability. |
+| [network-inventory-planning](/docs/services/network-inventory-planning) | Core | WES, inter-warehouse transfer planning | SKU placement, inventory balancing and inter-warehouse transfer orchestration: advisory transfer proposals and an operator-approved transfer saga. Fails closed when its local facts are empty or stale. |
+| [order-management](/docs/services/order-management) | Generic/Supporting | WES, upstream front door | Order intake, allocation, promise dates and release. The front door of the fleet; consumes its upstreams through their published contracts only. |
+| [process-path-management](/docs/services/process-path-management) | Generic | WES, extracted catalogue | Operator-configurable process-path topology (id, capability requirements, activation lifecycle, CPT schedules), replacing a static YAML catalogue. Source of the process-path published language for the fleet. |
+| [task-interleaving](/docs/services/task-interleaving) | Supporting | WES | Advisory next-task hints that chain compatible tasks by travel distance, keeping fulfillment-execution pull-based: hints are offered, never imposed. |
+| [warehouse-planning](/docs/services/warehouse-planning) | Core | WES, capacity planning | Process and process-path capacity, normalisation across native units, and forward-looking capacity shortage detection. |
+| [wes-work-planning](/docs/services/wes-work-planning) | Core | WES, the conductor | The core WES context: charge forecasts, waveless release and flow balancing. Decides which work is released to the floor and when. |
+| [workforce-management](/docs/services/workforce-management) | Supporting | WES | Shift planning and labor assignment. Stops deliberately at the process-path boundary: it assigns people to paths, it does not plan work. |
+
 ## Architecture diagram
 <NodeGraph />

@@ -11,6 +11,24 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+LEGACY (ADR 0034). product-master owns product classification; no write path in this service raises this event any more. It is emitted only by the one-shot `republish-product-classifications` command (product-master ADR 0003 stage B): one message per `product_classifications` row, enqueued through the transactional outbox and published by the running pod's relay, on `warehouse.inventory.events` only (dataschema `urn:warehouse:inventory-storage:events:ProductClassified:v1`). product-master's legacy importer turns it into product-master data. The wire contract is unchanged from ADR 0031. Retired at product-master ADR 0003 stage E.
+
+CloudEvents `subject` and the Kafka key are the SKU. `data` is `{sku, handling_tags, temperature_class?, dot_hazard_class?}`. It is a **full-state replacement**: overwrite your local row; an absent optional field means "none". `handling_tags` is in the stable enum order. No PII. Re-running the backfill re-emits the same states, which is harmless.
+
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inventory-storage.product.ProductClassified` |
+| CloudEvents `source` | `/warehouse/inventory-storage` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `SKU-9`) |
+| CloudEvents `dataschema` | `urn:warehouse:inventory-storage:events:ProductClassified:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inventory.events` |
+| Entity / aggregate | `product` |
+
+
 ## Architecture
 <NodeGraph />
 

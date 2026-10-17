@@ -1,0 +1,113 @@
+---
+id: warehouse-ops-agent
+name: Warehouse Ops Agent
+version: 1.0.0
+summary: "Read-side decision support for operators: daily brief, flow-balance advice, order lifecycle and report dashboards, built from request-time reads of the bounded contexts."
+owners:
+  - claudioed
+receives:
+  - id: getDailyBrief
+    version: 1.0.0
+  - id: getOrderLifecycle
+    version: 1.0.0
+  - id: getWmsReports
+    version: 1.0.0
+  - id: getWesReports
+    version: 1.0.0
+  - id: getFlowBalance
+    version: 1.0.0
+  - id: getRuntimeSignals
+    version: 1.0.0
+  - id: getMasterDataGaps
+    version: 1.0.0
+  - id: getInboundOutlook
+    version: 1.0.0
+sends:
+  - id: order-management-api-getOrder
+    version: 2.0.0
+  - id: inventory-storage-api-getReservationsByDemandRef
+    version: 1.0.0
+  - id: wes-work-planning-api-getWorkUnitsByReference
+    version: 1.0.0
+  - id: fulfillment-execution-api-getTasksByOrderRef
+    version: 1.0.0
+  - id: order-management-api-getOrderFunnelReport
+    version: 2.0.0
+  - id: order-management-api-getOrderFunnelReportFreshness
+    version: 2.0.0
+  - id: inventory-storage-api-getFlowAccuracyReport
+    version: 1.0.0
+  - id: inventory-storage-api-getFlowAccuracyFreshness
+    version: 1.0.0
+  - id: facility-layout-api-getCatalogGrowthReport
+    version: 1.0.0
+  - id: facility-layout-api-getCatalogGrowthFreshness
+    version: 1.0.0
+  - id: wes-work-planning-api-getReleaseThroughputReport
+    version: 1.0.0
+  - id: wes-work-planning-api-getReleaseThroughputReportFreshness
+    version: 1.0.0
+  - id: fulfillment-execution-api-getThroughputReport
+    version: 1.0.0
+  - id: fulfillment-execution-api-getThroughputFreshness
+    version: 1.0.0
+  - id: workforce-management-api-getLaborReport
+    version: 1.0.0
+  - id: workforce-management-api-getLaborReportFreshness
+    version: 1.0.0
+  - id: labor-performance-api-getLaborPerformanceReport
+    version: 1.0.0
+  - id: labor-performance-api-getLaborPerformanceReportFreshness
+    version: 1.0.0
+badges:
+  - content: Supporting
+    textColor: blue
+    backgroundColor: blue
+  - content: stateless
+    textColor: gray
+    backgroundColor: gray
+---
+## Purpose
+A decision-support **customer** of the bounded contexts, not a new domain context: it has no aggregate, no database, publishes no events and subscribes to none. It answers "what needs attention right now" for an LLM host or an operator, and acts as the **console-bff** REST fan-out host for the [warehouse-console](/docs/services/warehouse-console) browser SPA.
+
+| | |
+|---|---|
+| Repository | [IQVO/warehouse-ops-agent](https://github.com/IQVO/warehouse-ops-agent) |
+| DDD classification | Supporting, WES tier (operator tooling, no aggregate) |
+| Kafka | none: no produce, no consume |
+| Storage | none: stateless |
+| Inbound | REST (console, operators); MCP Streamable HTTP at `/mcp`, up to ten read-only tools |
+| Writes to other contexts | forbidden; enforced by zero-write architecture tests |
+
+## Three relationships to the fleet
+1. **MCP customer.** Reads each context's published MCP server synchronously, per call, with a 10 s timeout (table below). MCP tools are not modelled as catalog messages; they are listed here.
+2. **REST fan-out host for console-bff.** `GET /console/orders/{id}/lifecycle` reads four OLTP APIs and `GET /console/reports/wms|wes` reads seven `*-reports` APIs. These calls are the `sends` edges of this service in the diagram.
+3. **Telemetry reader.** `GET /runtime-signals` queries Prometheus (Istio request metrics) and Loki (error log lines). Neither is a bounded context.
+
+## Upstream MCP servers
+"core" upstreams are reported as unavailable when they fail; "optional" ones switch the feature off until their `*_MCP_ENDPOINT` is set.
+
+| Upstream | Kind | Tools called | Used by |
+|---|---|---|---|
+| wes-work-planning | core | `get_backlog_telemetry`, `get_rebalance_recommendation` | daily brief, flow balance |
+| fulfillment-execution | core | `get_queue_status`, `diagnose_stuck_tasks` | daily brief, flow balance, stranded-reservation detection |
+| workforce-management | core | `get_staffing_gap` | daily brief, flow balance |
+| facility-layout | core | `list_sites`, `estimate_travel_distance` | daily brief, explain-travel-factor |
+| inventory-storage | core | `check_availability`, `get_bin_occupancy` | stranded-reservation detection |
+| labor-performance | core | `get_task_type_utilization` | flow-balance utilization overlay |
+| warehouse-planning | optional | `get_process_path_capacity` | daily-brief capacity outlook |
+| product-master | optional | `list_products` | master-data gaps |
+| inbound-receiving | optional | `list_asns`, `list_appointments`, `list_receipts` | inbound outlook |
+| network-inventory-planning | optional | `find_stuck_transfers`, `get_transfer`, `simulate_transfer_options` | transfer watch |
+| order-management | core | none called yet (`get_order` wired) | n/a |
+| process-path-management | core | none called yet (`get_process_path`, `list_process_paths` wired) | n/a |
+
+## External systems
+- **Anthropic Messages API** (`POST /v1/messages`): only for flow-balance reasoning, when `LLM_MODE` is `shadow` or `on`. The model must answer through a `submit_plan` tool and a deterministic policy layer validates the plan. A circuit breaker falls back to the deterministic decision.
+- **Prometheus** and **Loki**: read by `/runtime-signals`.
+
+## Edges that do not exist
+Kafka in either direction, network-fulfillment, slotting-optimization, any write call to a sibling, and any Go import of a sibling module.
+
+## Architecture diagram
+<NodeGraph />

@@ -2,7 +2,7 @@
 id: inventory-storage
 name: Inventory Storage (events)
 version: 1.0.0
-summary: ''
+summary: Authoritative record of what is held where and how much of it is usable.
 badges:
   - content: inventory-storage
     textColor: blue
@@ -60,6 +60,11 @@ sends:
       - id: warehouse.inventory.events
         version: 1.0.0
   - id: StockRelocated
+    version: 1.0.0
+    to:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+  - id: BinStockLevelChanged
     version: 1.0.0
     to:
       - id: warehouse.inventory.events
@@ -136,6 +141,29 @@ specifications:
 owners:
   - claudioed
 ---
+## Purpose
+Authoritative record of what is held where and how much of it is usable. Implements chaotic (random) stow and makes allocation a revocable reservation, so a failed physical pick never strands an order.
+
+| | |
+|---|---|
+| Bounded context | `inventory-storage` |
+| Domain | WMS (`wms`) |
+| DDD classification | Core |
+| Tier | WMS |
+| Publishes (Kafka) | `warehouse.inventory.events`<br/>`warehouse.inventory.analytics` |
+| Consumes (Kafka) | `warehouse.product-master.events`<br/>`warehouse.fulfillment.events`<br/>`warehouse.inbound-receiving.events` |
+| CloudEvents type prefix | `com.warehouse.wms.inventory-storage.` |
+| Event source | `/warehouse/inventory-storage` |
+| Repository | [IQVO/inventory-storage](https://github.com/IQVO/inventory-storage) |
+| REST API | [inventory-storage-api](/docs/services/inventory-storage-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
 Domain-event catalog for the **inventory-storage** bounded context, the WMS-tier authoritative record of what is held where, and what portion of it is usable. This context implements Amazon-style chaotic (random) stow: there is no fixed product location — an inbound item may be stowed into any free bin, and this service records the exact bin it landed in. It supplies "stock reality" to the Work Planning bounded context (wes-work-planning) and makes allocation a *revocable* reservation, so a failed physical pick never strands an order.
 
 **Envelope.** Every message on this channel is a CloudEvents 1.0 *structured-mode* JSON document with content type `application/cloudevents+json`. The CloudEvents context attributes carry routing and identity (`specversion`, `id`, `source`, `type`, `subject`, `time`, `datacontenttype`); the business payload lives entirely under `data`. `source` is always `/warehouse/inventory-storage`, and `subject` is the id of the aggregate instance the event is about (a reservation id, a stock unit id, or a bin id).
@@ -144,7 +172,7 @@ Domain-event catalog for the **inventory-storage** bounded context, the WMS-tier
 
 **Aggregates and entity groupings.** Three aggregates raise every event documented here. The **StockUnit** aggregate (entity segment `stock`) raises `StockReceived`, `ItemStowed`, `LocationRecorded` and `ItemUnlocated`. The **Reservation** aggregate (entity segment `reservation`) raises `StockReserved`, `ReservationExpired`, `ReservationRevoked` and `StockPicked` — `StockPicked` is grouped with the reservation because it is emitted by ConfirmPick when a reservation is consumed, and reservation id is the only identity it carries. The **Bin/Location** aggregate (entity segment `bin`) raises `CycleCountCompleted` and `DiscrepancyDetected`.
 
-**What reaches Kafka.** This document is the complete domain-event catalog for the bounded context. Two topics carry a subset of it: `warehouse.inventory.events` (the integration contract — `StockReserved`, `ReservationRevoked`, the transfer replies, the transfer receipt/stow events, and the legacy `ProductClassified`, from `internal/adapters/outbound/kafka/publisher.go`) and `warehouse.inventory.analytics` (the analytics data product — every message below except `LocationRecorded` and `ProductClassified`, from `internal/adapters/outbound/kafka/analytics_publisher.go`). Each message says which topics it reaches. `LocationRecorded` is in-process only (no consumer; decided 2026-10-06). Since ADR 0034 product-master owns product classification: `ProductClassified` is no longer raised by any write path and is emitted only by the one-shot `republish-product-classifications` backfill command (product-master ADR 0003 stage B), on the integration topic.
+**What reaches Kafka.** This document is the complete domain-event catalog for the bounded context. Two topics carry a subset of it: `warehouse.inventory.events` (the integration contract — `StockReserved`, `ReservationRevoked`, the transfer replies, the transfer receipt/stow events, `BinStockLevelChanged` (the per-bin absolute level feed, ADR 0040), and the legacy `ProductClassified`, from `internal/adapters/outbound/kafka/publisher.go`) and `warehouse.inventory.analytics` (the analytics data product — every message below except `LocationRecorded` and `ProductClassified`, from `internal/adapters/outbound/kafka/analytics_publisher.go`). Each message says which topics it reaches. `LocationRecorded` is in-process only (no consumer; decided 2026-10-06). Since ADR 0034 product-master owns product classification: `ProductClassified` is no longer raised by any write path and is emitted only by the one-shot `republish-product-classifications` backfill command (product-master ADR 0003 stage B), on the integration topic.
 
 **Consumed.** This service also consumes product-master's `warehouse.product-master.events` (channel below, ADR 0034) into a local copy of every SKU's classification that StowStock reads. Applying it raises no event here. It also consumes fulfillment-execution's `TaskCompleted` from `warehouse.fulfillment.events` (channel below, ADR 0035) to confirm a completed order's reservations as picked once the order's LAST PICK task completes (one PICK task per order line, counted per order); that raises this service's own `StockPicked` (analytics topic) per reservation. And it consumes inbound-receiving's `ReceiptLineReceived` from `warehouse.inbound-receiving.events` (channel below, ADR 0037): a line with `condition=Good` is booked as a staged receipt through the existing ReceiveStock use case (the same `StockReceived` as `POST /stock/receive`, analytics topic; quantity staged, stow stays the RF action); `Damaged` is not booked in v1.
 

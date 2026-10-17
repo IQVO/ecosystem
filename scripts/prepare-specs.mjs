@@ -19,6 +19,8 @@
 //  4. v3 ids      AsyncAPI 3 files (network-inventory-planning) key messages in camelCase while
 //                 every 2.6 file yields PascalCase ids; the catalog keys on the id, so
 //                 camelCase keys are renamed (and their $refs rewritten) to line up cross-context.
+//  6. openapi     Path-level `parameters` are copied into each operation (and removed from the
+//                 path item): the generator otherwise lists them as a bogus "PARAMETERS" endpoint.
 //  5. channels    Several contracts re-declare channels they only consume. The generator
 //                 writes channels globally (last writer wins), so every declaration of a topic
 //                 is aligned to the OWNER's description and version.
@@ -43,6 +45,22 @@ for (const [ctx, { topics }] of Object.entries(CONTEXTS)) {
   for (const t of topics) {
     const ch = docs[ctx]?.channels?.[t];
     if (ch) topicOwner[t] = { ctx, description: ch.description, version: String(docs[ctx].info.version) };
+  }
+}
+
+const HTTP = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'];
+function hoistPathParameters(api) {
+  for (const item of Object.values(api.paths ?? {})) {
+    const shared = item.parameters;
+    if (!shared) continue;
+    delete item.parameters;
+    for (const m of HTTP) {
+      if (!item[m]) continue;
+      const own = item[m].parameters ?? [];
+      const key = (p) => `${p.in}:${p.name}:${p.$ref ?? ''}`;
+      const have = new Set(own.map(key));
+      item[m].parameters = [...shared.filter((p) => !have.has(key(p))), ...own];
+    }
   }
 }
 
@@ -127,7 +145,12 @@ fs.rmSync(OUT, { recursive: true, force: true });
 for (const ctx of fs.readdirSync(SRC)) {
   fs.mkdirSync(path.join(OUT, ctx), { recursive: true });
   for (const file of fs.readdirSync(path.join(SRC, ctx))) {
-    if (file !== 'asyncapi.yaml') fs.copyFileSync(path.join(SRC, ctx, file), path.join(OUT, ctx, file));
+    if (file === 'asyncapi.yaml') continue;
+    const target = path.join(OUT, ctx, file);
+    if (!file.startsWith('openapi')) { fs.copyFileSync(path.join(SRC, ctx, file), target); continue; }
+    const api = load(fs.readFileSync(path.join(SRC, ctx, file), 'utf8'));
+    hoistPathParameters(api);
+    fs.writeFileSync(target, dump(api, { lineWidth: -1, noRefs: true }));
   }
   normalise(ctx, docs[ctx]);
   fs.writeFileSync(path.join(OUT, ctx, 'asyncapi.yaml'), dump(docs[ctx], { lineWidth: -1, noRefs: true }));

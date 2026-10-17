@@ -11,6 +11,8 @@ services:
     version: 1.0.0
   - id: inventory-storage
     version: 1.0.0
+  - id: pick-face-replenishment
+    version: 1.0.0
   - id: product-master
     version: 1.0.0
   - id: slotting-optimization
@@ -21,10 +23,30 @@ services:
     version: 1.0.0
   - id: inventory-storage-api
     version: 1.0.0
+  - id: pick-face-replenishment-api
+    version: 1.0.0
   - id: product-master-api
     version: 1.0.0
   - id: slotting-optimization-api
     version: 1.0.0
 ---
+## Overview
+The WMS tier is the system of record for physical inventory and the facility around it: the layout of the building, the product master, what has been received, where every unit is stowed and what portion of it is usable. WMS contexts publish facts; the WES tier reads them as local copies and never asks WMS synchronously at decision time.
+
+CloudEvents types in this domain follow `com.warehouse.wms.<bounded-context>.<entity>.<EventName>`.
+Each bounded context below is documented twice: as an **events** service (the Kafka contract, from its
+AsyncAPI file) and as a **REST API** service (`<context>-api`, from its OpenAPI files, including the
+separate `*-reports` analytics binary where one exists).
+
+## Bounded contexts
+| Context | Classification | Tier | Purpose |
+|---|---|---|---|
+| [facility-layout](/docs/services/facility-layout) | Generic | WMS-adjacent, extracted | Owns the physical structure of the warehouse: Site, Zone, Aisle and LocationSlot, plus location types, placement rules and geometry. Every other context that needs to know where something can be stored keeps a local copy of this published language. |
+| [inbound-receiving](/docs/services/inbound-receiving) | Supporting | WMS | Everything before the first stow: advance ship notices (ASN), dock-door appointments, goods receipt and discrepancy capture. Hands received units to inventory-storage as events. |
+| [inventory-storage](/docs/services/inventory-storage) | Core | WMS | Authoritative record of what is held where and how much of it is usable. Implements chaotic (random) stow and makes allocation a revocable reservation, so a failed physical pick never strands an order. |
+| [pick-face-replenishment](/docs/services/pick-face-replenishment) | Supporting | WMS | Min/max forward pick-face replenishment: raises requests that move stock from reserve to forward slots, driven by event-fed local copies of stock levels and slot plans. |
+| [product-master](/docs/services/product-master) | Supporting | WMS | SKU-level product master data: handling classification and physical profile (declared versus measured dimensions and weight). Publishes ProductClassified, which several contexts keep as a local copy. |
+| [slotting-optimization](/docs/services/slotting-optimization) | Supporting | WMS | Decides which SKUs deserve a forward pick slot: velocity-ranked slot plans and slot moves that a human approves, derived purely from event-fed local copies. |
+
 ## Architecture diagram
 <NodeGraph />

@@ -3,6 +3,7 @@ import url from 'node:url';
 import fs from 'node:fs';
 
 import { CONTEXTS, SUBDOMAINS as SUBDOMAIN_META } from './catalog.contexts.mjs';
+import { apiServiceMarkdown, domainMarkdown, eventsServiceMarkdown, messageMarkdown } from './catalog.markdown.mjs';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const spec = (ctx, file) => path.join(__dirname, '.generated-specs', ctx, file);
@@ -16,14 +17,16 @@ const SUBDOMAINS = Object.fromEntries(
 
 const title = (ctx) => ctx.split('-').map((w) => (w === 'wes' ? 'WES' : w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
 const OWNERS = ['claudioed'];
-const domainFor = (id, { name }) => ({ id, name, version: '1.0.0', owners: OWNERS });
+const domainFor = (id, { name }) => ({ id, name, version: '1.0.0', owners: OWNERS, generateMarkdown: () => domainMarkdown(id) });
+const summaryOf = (ctx) => CONTEXTS[ctx].purpose.split(/(?<=\.)\s/)[0];
 const reportsSpec = (ctx) => (fs.existsSync(spec(ctx, 'openapi-reports.yaml')) ? [spec(ctx, 'openapi-reports.yaml')] : []);
 
 const asyncapiGenerators = Object.entries(SUBDOMAINS).map(([id, sd]) => [
   '@eventcatalog/generator-asyncapi',
   {
-    services: sd.contexts.map((ctx) => ({ id: ctx, name: `${title(ctx)} (events)`, path: spec(ctx, 'asyncapi.yaml'), owners: OWNERS })),
+    services: sd.contexts.map((ctx) => ({ id: ctx, name: `${title(ctx)} (events)`, summary: summaryOf(ctx), path: spec(ctx, 'asyncapi.yaml'), owners: OWNERS, generateMarkdown: eventsServiceMarkdown })),
     domain: domainFor(id, sd),
+    messages: { generateMarkdown: messageMarkdown },
     parseChannels: true,
     saveParsedSpecFile: true,
   },
@@ -32,7 +35,7 @@ const asyncapiGenerators = Object.entries(SUBDOMAINS).map(([id, sd]) => [
 const openapiGenerators = Object.entries(SUBDOMAINS).map(([id, sd]) => [
   '@eventcatalog/generator-openapi',
   {
-    services: sd.contexts.map((ctx) => ({ id: `${ctx}-api`, name: `${title(ctx)} API`, path: [spec(ctx, 'openapi.yaml'), ...reportsSpec(ctx)], owners: OWNERS })),
+    services: sd.contexts.map((ctx) => ({ id: `${ctx}-api`, name: `${title(ctx)} API`, summary: `REST API of ${ctx}. ${summaryOf(ctx)}`, generateMarkdown: apiServiceMarkdown, path: [spec(ctx, 'openapi.yaml'), ...reportsSpec(ctx)], owners: OWNERS })),
     domain: domainFor(id, sd),
     sidebarBadgeType: 'HTTP_METHOD',
     // operationIds repeat across services (getHealthz, ...); keep message ids globally unique.

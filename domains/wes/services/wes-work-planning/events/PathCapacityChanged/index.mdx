@@ -13,6 +13,22 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Raised when `SampleBacklog` is asked (via the optional `cutoffAt` query parameter on `GET /paths/{pathId}/telemetry`, see ADR-0018) to report the path's currently remaining admission capacity, correlated against a CPT cutoff timestamp. This PUBLISHES state this service already tracks on its own `WorkPool` aggregate (`wipLimit` minus current WIP) — it introduces no new domain concept or per-CPT capacity bucket. `known` is `false` for a FlowFed path (no hard admission ceiling — only an alarm threshold, which is not a capacity figure) or a ReleaseFed path with no WIP limit provisioned; when `known` is `false`, `remaining_units` is always `0`.
+`cutoff_at` is this service's own native CPT currency (a concrete RFC3339 timestamp), not process-path-management's site-schedule `cptId` string, which this service has zero dependency on. A future order-management consumer is responsible for correlating `cutoff_at` against its own cached `CPTWindow.CutoffAt` (exact match or nearest- window match) to resolve which `cptId` this figure applies to — see ADR-0018 for the full correlation-by-timestamp design and its accepted imprecision trade-off. Actively published to `warehouse.work-planning.events`.
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` |
+| CloudEvents `source` | `/warehouse/wes-work-planning` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `pick-to-tote`) |
+| CloudEvents `dataschema` | `urn:warehouse:wes-work-planning:events:PathCapacityChanged:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.work-planning.events` |
+| Entity / aggregate | `workpool` |
+
+
 ## Architecture
 <NodeGraph />
 

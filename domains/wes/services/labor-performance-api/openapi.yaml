@@ -1,14 +1,9 @@
 openapi: 3.0.3
 info:
   title: Labor Performance API
-  description: >
-    Engineered labor standards (expected time per TaskType) and
-    actual-vs-standard performance scoring for completed fulfillment-execution
-    tasks. This service defines standards and reads performance/scorecards; it
-    NEVER accepts a TaskPerformance write over REST — that is exclusively
-    driven by the inbound Kafka consumer of fulfillment-execution's
-    TaskCompleted event (see apis/asyncapi.yaml).
-  version: "1.0.0"
+  description: |
+    Engineered labor standards (expected time per TaskType) and actual-vs-standard performance scoring for completed fulfillment-execution tasks. This service defines standards and reads performance/scorecards; it NEVER accepts a TaskPerformance write over REST — that is exclusively driven by the inbound Kafka consumer of fulfillment-execution's TaskCompleted event (see apis/asyncapi.yaml).
+  version: 1.0.0
   license:
     name: MIT
   contact:
@@ -29,12 +24,13 @@ tags:
 paths:
   /healthz:
     get:
-      tags: [health]
+      tags:
+        - health
       operationId: getHealthz
       summary: Liveness probe
       description: Reports whether the service process is up and able to serve requests.
       responses:
-        "200":
+        '200':
           description: Service is up
           content:
             application/json:
@@ -46,17 +42,13 @@ paths:
                     example: ok
   /readyz:
     get:
-      tags: [health]
+      tags:
+        - health
       operationId: getReadyz
       summary: Readiness probe
-      description: >-
-        Distinct from liveness (GET /healthz): readiness flips to
-        not-ready as the FIRST step of a graceful shutdown drain
-        (503 with a problem body), so a Kubernetes readinessProbe stops
-        routing new traffic while in-flight requests finish. Liveness
-        never flips.
+      description: 'Distinct from liveness (GET /healthz): readiness flips to not-ready as the FIRST step of a graceful shutdown drain (503 with a problem body), so a Kubernetes readinessProbe stops routing new traffic while in-flight requests finish. Liveness never flips.'
       responses:
-        "200":
+        '200':
           description: The service is ready to receive traffic
           content:
             application/json:
@@ -66,115 +58,94 @@ paths:
                   status:
                     type: string
                     example: ready
-        "503":
-          description: >-
-            The service is draining (shutdown in progress) and must not
-            receive new traffic.
+        '503':
+          description: The service is draining (shutdown in progress) and must not receive new traffic.
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
-
+                $ref: '#/components/schemas/ProblemDetails'
   /standards:
     post:
-      tags: [standards]
+      tags:
+        - standards
       operationId: defineStandard
       summary: Define (or revise) the engineered labor standard for a TaskType
-      description: >
-        If a standard is already active for this TaskType, it is closed
-        (its effective range ends now) and a new one starts — append-only
-        history, never an in-place overwrite.
+      description: |
+        If a standard is already active for this TaskType, it is closed (its effective range ends now) and a new one starts — append-only history, never an in-place overwrite.
 
-
-        Idempotent retries: clients MUST always send a non-empty
-        `Idempotency-Key` header (any unique value per logical request)
-        when the Postgres backing is configured; a retried request with
-        the same key and body replays the original response byte-for-byte
-        instead of defining the standard a second time.
+        Idempotent retries: clients MUST always send a non-empty `Idempotency-Key` header (any unique value per logical request) when the Postgres backing is configured; a retried request with the same key and body replays the original response byte-for-byte instead of defining the standard a second time.
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DefineStandardRequest"
+              $ref: '#/components/schemas/DefineStandardRequest'
       responses:
-        "201":
+        '201':
           description: Standard defined (or the revision recorded)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Standard"
-        "400":
-          description: >
-            Unknown task type, malformed body, or a missing/empty
-            Idempotency-Key header on a route protected by the
-            idempotency middleware.
+                $ref: '#/components/schemas/Standard'
+        '400':
+          description: |
+            Unknown task type, malformed body, or a missing/empty Idempotency-Key header on a route protected by the idempotency middleware.
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
-        "409":
-          description: >
-            The write lost a concurrency race: another writer modified the
-            same labor standard after this request's snapshot
-            (concurrent-modification), or another standard is already open
-            for this task type (standard-conflict). Re-fetch and retry.
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: |
+            The write lost a concurrency race: another writer modified the same labor standard after this request's snapshot (concurrent-modification), or another standard is already open for this task type (standard-conflict). Re-fetch and retry.
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
-        "422":
-          description: >-
-            Expected seconds must be greater than zero, travelComponentSeconds
-            is negative or exceeds expectedSeconds, or the Idempotency-Key
-            header on this request was already used with a different request
-            body (idempotency-key-reused).
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Expected seconds must be greater than zero, travelComponentSeconds is negative or exceeds expectedSeconds, or the Idempotency-Key header on this request was already used with a different request body (idempotency-key-reused).
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
+                $ref: '#/components/schemas/ProblemDetails'
   /standards/{taskType}:
     get:
-      tags: [standards]
+      tags:
+        - standards
       operationId: getStandard
       summary: Get the currently-active labor standard for a TaskType
-      description: >
-        Returns the LaborStandard whose effective range currently covers
-        "now" for this TaskType (EffectiveTo is null), or a 404 if none
-        does.
+      description: |
+        Returns the LaborStandard whose effective range currently covers "now" for this TaskType (EffectiveTo is null), or a 404 if none does.
       parameters:
-        - $ref: "#/components/parameters/TaskTypePathParam"
+        - $ref: '#/components/parameters/TaskTypePathParam'
       responses:
-        "200":
+        '200':
           description: The currently-active standard
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Standard"
-        "400":
+                $ref: '#/components/schemas/Standard'
+        '400':
           description: Unknown task type
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
-        "404":
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
           description: No active standard for this task type
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
+                $ref: '#/components/schemas/ProblemDetails'
   /associates/{associateId}/scorecard:
     get:
-      tags: [performance]
+      tags:
+        - performance
       operationId: getAssociateScorecard
       summary: Get one associate's performance scorecard
-      description: >
-        404 only when this service has never recorded a single
-        TaskPerformance row for this associate. An associate with 1+ rows
-        but an all-nil efficiency still returns 200 with
-        meanEfficiencyPct: null.
+      description: |
+        404 only when this service has never recorded a single TaskPerformance row for this associate. An associate with 1+ rows but an all-nil efficiency still returns 200 with meanEfficiencyPct: null.
       parameters:
         - name: associateId
           in: path
@@ -182,95 +153,87 @@ paths:
           schema:
             type: string
       responses:
-        "200":
+        '200':
           description: The associate's scorecard
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Scorecard"
-        "404":
+                $ref: '#/components/schemas/Scorecard'
+        '404':
           description: No task performance recorded for this associate
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
+                $ref: '#/components/schemas/ProblemDetails'
   /task-types/{taskType}/performance:
     get:
-      tags: [performance]
+      tags:
+        - performance
       operationId: getTaskTypePerformance
       summary: Get fleet-wide (all-associates) performance for a TaskType
-      description: >
-        Always returns 200, including a zero-count result for a TaskType
-        this service has never recorded — there is no "not found" case for
-        a closed, known enum.
+      description: |
+        Always returns 200, including a zero-count result for a TaskType this service has never recorded — there is no "not found" case for a closed, known enum.
       parameters:
-        - $ref: "#/components/parameters/TaskTypePathParam"
+        - $ref: '#/components/parameters/TaskTypePathParam'
       responses:
-        "200":
+        '200':
           description: The fleet-wide task-type performance read model
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaskTypePerformance"
-        "400":
+                $ref: '#/components/schemas/TaskTypePerformance'
+        '400':
           description: Unknown task type
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
+                $ref: '#/components/schemas/ProblemDetails'
   /task-types/{taskType}/utilization:
     get:
-      tags: [utilization]
+      tags:
+        - utilization
       operationId: getTaskTypeUtilization
       summary: Get fleet-wide idle-gap / utilization for a TaskType over a trailing window
-      description: >
-        Measured task time vs. measured idle time (between-task waits
-        that already ended) for one TaskType. The still-running open gap
-        of someone idle right now is NOT included at this scope:
-        openGapSeconds is always 0 here, and the open gap is computed
-        per associate only (see /associates/{associateId}/utilization).
-        Always returns 200, including a zero-count result for a TaskType
-        this service has never observed.
+      description: |
+        Measured task time vs. measured idle time (between-task waits that already ended) for one TaskType. The still-running open gap of someone idle right now is NOT included at this scope: openGapSeconds is always 0 here, and the open gap is computed per associate only (see /associates/{associateId}/utilization). Always returns 200, including a zero-count result for a TaskType this service has never observed.
       parameters:
-        - $ref: "#/components/parameters/TaskTypePathParam"
-        - $ref: "#/components/parameters/WindowQueryParam"
+        - $ref: '#/components/parameters/TaskTypePathParam'
+        - $ref: '#/components/parameters/WindowQueryParam'
       responses:
-        "200":
+        '200':
           description: The task-type utilization read model
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Utilization"
-        "400":
+                $ref: '#/components/schemas/Utilization'
+        '400':
           description: Unknown task type
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
+                $ref: '#/components/schemas/ProblemDetails'
   /associates/{associateId}/utilization:
     get:
-      tags: [utilization]
+      tags:
+        - utilization
       operationId: getAssociateUtilization
       summary: Get one associate's idle-gap / utilization over a trailing window
-      description: >
-        Measured task time vs. measured idle time for one associate,
-        plus the still-running open-gap contribution when that associate
-        is idle right now. Always returns 200, including a zero-count
-        result for an associate this service has never observed.
+      description: |
+        Measured task time vs. measured idle time for one associate, plus the still-running open-gap contribution when that associate is idle right now. Always returns 200, including a zero-count result for an associate this service has never observed.
       parameters:
         - name: associateId
           in: path
           required: true
           schema:
             type: string
-        - $ref: "#/components/parameters/WindowQueryParam"
+        - $ref: '#/components/parameters/WindowQueryParam'
       responses:
-        "200":
+        '200':
           description: The associate utilization read model
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Utilization"
+                $ref: '#/components/schemas/Utilization'
 components:
   parameters:
     TaskTypePathParam:
@@ -278,62 +241,58 @@ components:
       in: path
       required: true
       schema:
-        $ref: "#/components/schemas/TaskType"
+        $ref: '#/components/schemas/TaskType'
     IdempotencyKeyHeader:
       name: Idempotency-Key
       in: header
       required: false
-      description: >
-        A caller-minted unique key per logical request (e.g. a UUID).
-        Clients must always send a non-empty key on POST /standards: with
-        the Postgres backing configured, a retry carrying the same key and
-        an identical body replays the original stored response instead of
-        re-executing the create; the same key with a different body is
-        rejected with 422 idempotency-key-reused. Declared required: false
-        because the in-memory configuration accepts the request without a
-        key (no transactional backing to gate on) — never rely on that in
-        a real deployment.
+      description: |
+        A caller-minted unique key per logical request (e.g. a UUID). Clients must always send a non-empty key on POST /standards: with the Postgres backing configured, a retry carrying the same key and an identical body replays the original stored response instead of re-executing the create; the same key with a different body is rejected with 422 idempotency-key-reused. Declared required: false because the in-memory configuration accepts the request without a key (no transactional backing to gate on) — never rely on that in a real deployment.
       schema:
         type: string
     WindowQueryParam:
       name: window
       in: query
       required: false
-      description: >
-        A Go duration string (e.g. "1h", "30m") for the trailing window
-        to measure over. Defaults to 1 hour when omitted or malformed.
+      description: |
+        A Go duration string (e.g. "1h", "30m") for the trailing window to measure over. Defaults to 1 hour when omitted or malformed.
       schema:
         type: string
-        example: "1h"
+        example: 1h
   schemas:
     TaskType:
       type: string
-      enum: [PICK, PACK, SLAM]
+      enum:
+        - PICK
+        - PACK
+        - SLAM
       description: Mirrors fulfillment-execution's task.Type enum exactly.
     DefineStandardRequest:
       type: object
-      required: [taskType, expectedSeconds]
+      required:
+        - taskType
+        - expectedSeconds
       properties:
         taskType:
-          $ref: "#/components/schemas/TaskType"
+          $ref: '#/components/schemas/TaskType'
         expectedSeconds:
           type: integer
           format: int64
           minimum: 1
           example: 45
         travelComponentSeconds:
-          $ref: "#/components/schemas/TravelComponentSeconds"
+          $ref: '#/components/schemas/TravelComponentSeconds'
     Standard:
       type: object
       properties:
         taskType:
-          $ref: "#/components/schemas/TaskType"
+          $ref: '#/components/schemas/TaskType'
         expectedSeconds:
           type: integer
           format: int64
           example: 45
         travelComponentSeconds:
-          $ref: "#/components/schemas/TravelComponentSeconds"
+          $ref: '#/components/schemas/TravelComponentSeconds'
         effectiveFrom:
           type: string
           format: date-time
@@ -347,16 +306,7 @@ components:
       format: int64
       minimum: 0
       nullable: true
-      description: >-
-        Optional declaration of how much of expectedSeconds is
-        attributable to travel between locations for this TaskType. This
-        service never computes it: it is supplied by the caller, grounded
-        in a real distance estimate performed elsewhere (e.g.
-        facility-layout's estimate_travel_distance) since this service
-        has no REST dependency in either direction with any sibling
-        context (ADR 0015). Omitted entirely means not broken out, the
-        default and most common case. When present, must be between 0
-        and expectedSeconds inclusive.
+      description: 'Optional declaration of how much of expectedSeconds is attributable to travel between locations for this TaskType. This service never computes it: it is supplied by the caller, grounded in a real distance estimate performed elsewhere (e.g. facility-layout''s estimate_travel_distance) since this service has no REST dependency in either direction with any sibling context (ADR 0015). Omitted entirely means not broken out, the default and most common case. When present, must be between 0 and expectedSeconds inclusive.'
       example: 15
     TaskTypeBreakdown:
       type: object
@@ -381,28 +331,25 @@ components:
         byTaskType:
           type: object
           additionalProperties:
-            $ref: "#/components/schemas/TaskTypeBreakdown"
+            $ref: '#/components/schemas/TaskTypeBreakdown'
         trend:
           type: string
-          enum: [IMPROVING, DECLINING, STABLE, INSUFFICIENT_DATA]
-          description: >
-            How this associate's most recent scored tasks (up to the
-            last 10) compare to their all-time mean EfficiencyPct.
-            INSUFFICIENT_DATA when fewer than 3 recent tasks were
-            scored -- always present, never omitted, since
-            "not enough data yet" is itself a meaningful signal.
+          enum:
+            - IMPROVING
+            - DECLINING
+            - STABLE
+            - INSUFFICIENT_DATA
+          description: |
+            How this associate's most recent scored tasks (up to the last 10) compare to their all-time mean EfficiencyPct. INSUFFICIENT_DATA when fewer than 3 recent tasks were scored -- always present, never omitted, since "not enough data yet" is itself a meaningful signal.
         coachingFlag:
           type: boolean
-          description: >
-            True iff this associate's 3 most recent SCORED tasks were
-            all below the coaching floor (85% efficiency). Visibility
-            only -- this service never automates coaching, pay, or
-            task-claim decisions from this signal.
+          description: |
+            True iff this associate's 3 most recent SCORED tasks were all below the coaching floor (85% efficiency). Visibility only -- this service never automates coaching, pay, or task-claim decisions from this signal.
     TaskTypePerformance:
       type: object
       properties:
         taskType:
-          $ref: "#/components/schemas/TaskType"
+          $ref: '#/components/schemas/TaskType'
         taskCount:
           type: integer
         meanEfficiencyPct:
@@ -413,13 +360,8 @@ components:
           type: number
           format: double
           nullable: true
-          description: >
-            The real measured mean duration (seconds) for this TaskType,
-            across every recorded row with a positive ActualSeconds --
-            independent of whether an engineered labor standard exists to
-            compare it against. Null iff no measurable row has ever been
-            recorded for this TaskType. Distinct from meanEfficiencyPct,
-            which additionally requires an active standard.
+          description: |
+            The real measured mean duration (seconds) for this TaskType, across every recorded row with a positive ActualSeconds -- independent of whether an engineered labor standard exists to compare it against. Null iff no measurable row has ever been recorded for this TaskType. Distinct from meanEfficiencyPct, which additionally requires an active standard.
     ProblemDetails:
       type: object
       description: RFC 7807 Problem Details for HTTP APIs.
@@ -435,27 +377,24 @@ components:
           type: string
         instance:
           type: string
-      required: [type, title, status, detail]
+      required:
+        - type
+        - title
+        - status
+        - detail
     Utilization:
       type: object
-      description: >
-        Idle-gap / utilization read model for either one TaskType
-        (fleet-wide) or one associate, over a trailing window. taskType
-        and associateId are mutually exclusive -- whichever endpoint
-        served the request populates its own identifying field and omits
-        the other.
+      description: |
+        Idle-gap / utilization read model for either one TaskType (fleet-wide) or one associate, over a trailing window. taskType and associateId are mutually exclusive -- whichever endpoint served the request populates its own identifying field and omits the other.
       properties:
         taskType:
-          $ref: "#/components/schemas/TaskType"
+          $ref: '#/components/schemas/TaskType'
         associateId:
           type: string
         associates:
           type: integer
-          description: >
-            The distinct associate count contributing to this result.
-            Always 1 for a per-associate result; for a task-type result,
-            the distinct-associate count over the window (0 for a
-            never-observed task type).
+          description: |
+            The distinct associate count contributing to this result. Always 1 for a per-associate result; for a task-type result, the distinct-associate count over the window (0 for a never-observed task type).
         windowSeconds:
           type: integer
           format: int64
@@ -466,25 +405,16 @@ components:
         idleSeconds:
           type: integer
           format: int64
-          description: >
-            Summed recorded (closed) idle-gap seconds over the window --
-            never includes openGapSeconds.
+          description: |
+            Summed recorded (closed) idle-gap seconds over the window -- never includes openGapSeconds.
         openGapSeconds:
           type: integer
           format: int64
-          description: >
-            The still-running idle time for a subject idle right now:
-            now minus their last known activity, clamped to the window.
-            Computed at READ time, never persisted (see the idleness
-            ADR's "Trailing idleness" limitation). Zero when the subject
-            is not currently idle, and always zero on the task-type
-            endpoint: an open gap belongs to one associate, so it is only
-            reported by the per-associate endpoint.
+          description: |
+            The still-running idle time for a subject idle right now: now minus their last known activity, clamped to the window. Computed at READ time, never persisted (see the idleness ADR's "Trailing idleness" limitation). Zero when the subject is not currently idle, and always zero on the task-type endpoint: an open gap belongs to one associate, so it is only reported by the per-associate endpoint.
         utilizationPct:
           type: number
           format: double
           nullable: true
-          description: >
-            100 * taskSeconds / (taskSeconds + idleSeconds +
-            openGapSeconds). Null when nothing was observed in the
-            window -- never a fabricated number.
+          description: |
+            100 * taskSeconds / (taskSeconds + idleSeconds + openGapSeconds). Null when nothing was observed in the window -- never a fabricated number.

@@ -1,24 +1,11 @@
 openapi: 3.0.3
 info:
   title: Facility Layout Reports API
-  description: >
-    The READ-ONLY analytical surface of the facility-layout "Layout Catalog
-    Growth & Change" data product, served by the separate
-    `cmd/facility-reports` binary over a read-only pool
-    (`default_transaction_read_only=on`) against the analytical database —
-    NOT by the OLTP `cmd/facility` binary documented in apis/openapi.yaml.
-
-    The report is a projection over this service's own domain events
-    (SiteRegistered, ZoneRegistered, AisleRegistered, LocationTypeRegistered,
-    PlacementRuleDefined, LocationSlotRegistered, LocationSlotDecommissioned,
-    FacilityLayoutImported), delivered on the `warehouse.facility.analytics`
-    topic and applied by `cmd/facility-projector`, the single writer. It is
-    therefore EVENTUALLY CONSISTENT: use GET /reports/catalog-growth/freshness
-    to see how far behind the event stream the read model currently is.
-
-    The layout is a slow-changing reference catalog, so rows are bucketed by
-    UTC DAY, not by hour.
-  version: "1.0.0"
+  description: |
+    The READ-ONLY analytical surface of the facility-layout "Layout Catalog Growth & Change" data product, served by the separate `cmd/facility-reports` binary over a read-only pool (`default_transaction_read_only=on`) against the analytical database — NOT by the OLTP `cmd/facility` binary documented in apis/openapi.yaml.
+    The report is a projection over this service's own domain events (SiteRegistered, ZoneRegistered, AisleRegistered, LocationTypeRegistered, PlacementRuleDefined, LocationSlotRegistered, LocationSlotDecommissioned, FacilityLayoutImported), delivered on the `warehouse.facility.analytics` topic and applied by `cmd/facility-projector`, the single writer. It is therefore EVENTUALLY CONSISTENT: use GET /reports/catalog-growth/freshness to see how far behind the event stream the read model currently is.
+    The layout is a slow-changing reference catalog, so rows are bucketed by UTC DAY, not by hour.
+  version: 1.0.0
   license:
     name: MIT
   contact:
@@ -35,64 +22,55 @@ tags:
 paths:
   /healthz:
     get:
-      tags: [health]
+      tags:
+        - health
       operationId: getReportsHealthz
       summary: Liveness probe
       description: Reports whether the reports process is up and able to serve requests.
       responses:
-        "200":
+        '200':
           description: Service is up
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Status"
+                $ref: '#/components/schemas/Status'
               example:
                 status: ok
-
   /readyz:
     get:
-      tags: [health]
+      tags:
+        - health
       operationId: getReportsReadyz
       summary: Readiness probe
-      description: >
-        200 while the process accepts traffic; 503 once graceful shutdown has
-        begun, so the load balancer stops routing to it before the listener
-        closes.
+      description: |
+        200 while the process accepts traffic; 503 once graceful shutdown has begun, so the load balancer stops routing to it before the listener closes.
       responses:
-        "200":
+        '200':
           description: Ready to serve
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Status"
+                $ref: '#/components/schemas/Status'
               example:
                 status: ready
-        "503":
+        '503':
           description: Shutting down; not ready
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Status"
+                $ref: '#/components/schemas/Status'
               example:
                 status: not_ready
-
   /reports/catalog-growth:
     get:
-      tags: [reports]
+      tags:
+        - reports
       operationId: getCatalogGrowthReport
       summary: Layout Catalog Growth report, keyed by scope and UTC day
-      description: >
-        Returns the catalog-growth rows whose day bucket falls in the
-        half-open window [from, to), ordered by day bucket then scope.
-
-        Rows are bucketed by the BUSINESS time of the underlying event (its
-        CloudEvents `time`), never by ingestion time, so a replayed or
-        late-projected event lands on the day the change actually happened.
-
-        `scope` is the part of the map a change belongs to: a site code for
-        site- and zone-level changes, a zone id for aisle- and slot-level
-        changes, and the empty string for catalog-wide definitions (location
-        types, placement rules, bulk imports).
+      description: |
+        Returns the catalog-growth rows whose day bucket falls in the half-open window [from, to), ordered by day bucket then scope.
+        Rows are bucketed by the BUSINESS time of the underlying event (its CloudEvents `time`), never by ingestion time, so a replayed or late-projected event lands on the day the change actually happened.
+        `scope` is the part of the map a change belongs to: a site code for site- and zone-level changes, a zone id for aisle- and slot-level changes, and the empty string for catalog-wide definitions (location types, placement rules, bulk imports).
       parameters:
         - name: from
           in: query
@@ -101,24 +79,21 @@ paths:
           schema:
             type: string
             format: date-time
-          example: "2026-03-01T00:00:00Z"
+          example: '2026-03-01T00:00:00Z'
         - name: to
           in: query
           required: true
-          description: >
-            Exclusive end of the window, RFC 3339. A window whose `to` is not
-            after `from` is not rejected; it simply matches no rows.
+          description: |
+            Exclusive end of the window, RFC 3339. A window whose `to` is not after `from` is not rejected; it simply matches no rows.
           schema:
             type: string
             format: date-time
-          example: "2026-03-08T00:00:00Z"
+          example: '2026-03-08T00:00:00Z'
         - name: scope
           in: query
           required: false
-          description: >
-            Optional exact-match filter on the row scope (a site code or a
-            zone id). Omit it, or send it empty, for every scope including
-            the catalog-wide one.
+          description: |
+            Optional exact-match filter on the row scope (a site code or a zone id). Omit it, or send it empty, for every scope including the catalog-wide one.
           schema:
             type: string
           example: WH1
@@ -128,69 +103,63 @@ paths:
           description: Bucket resolution. Only daily buckets are modelled.
           schema:
             type: string
-            enum: [day]
+            enum:
+              - day
             default: day
       responses:
-        "200":
-          description: >
-            The report for the requested window. An empty window is a 200
-            with an empty `rows` array, not a 404.
+        '200':
+          description: |
+            The report for the requested window. An empty window is a 200 with an empty `rows` array, not a 404.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CatalogGrowthReport"
-        "400":
+                $ref: '#/components/schemas/CatalogGrowthReport'
+        '400':
           description: The query is malformed or missing a required parameter (`invalid-report-query`).
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Problem"
-        "500":
+                $ref: '#/components/schemas/Problem'
+        '500':
           description: The report could not be served (`report-store-error`).
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Problem"
-
+                $ref: '#/components/schemas/Problem'
   /reports/catalog-growth/freshness:
     get:
-      tags: [reports]
+      tags:
+        - reports
       operationId: getCatalogGrowthFreshness
       summary: How far the read model trails the event stream
-      description: >
-        Returns the age of the most recently projected event: the data
-        product's published freshness signal. A growing lag means the
-        projector is falling behind or has stopped. A lag of 0 on a
-        never-populated read model looks the same as a perfectly fresh one,
-        so read it alongside the report's own counts.
+      description: |
+        Returns the age of the most recently projected event: the data product's published freshness signal. A growing lag means the projector is falling behind or has stopped. A lag of 0 on a never-populated read model looks the same as a perfectly fresh one, so read it alongside the report's own counts.
       responses:
-        "200":
+        '200':
           description: The current projection lag.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Freshness"
-        "500":
+                $ref: '#/components/schemas/Freshness'
+        '500':
           description: The freshness signal could not be read (`report-store-error`).
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Problem"
-
+                $ref: '#/components/schemas/Problem'
 components:
   schemas:
     CatalogGrowthReport:
       type: object
-      required: [rows]
+      required:
+        - rows
       properties:
         rows:
           type: array
-          description: >
-            One row per (scope, day bucket), ordered by day bucket then
-            scope. Always present; empty for a window with no data.
+          description: |
+            One row per (scope, day bucket), ordered by day bucket then scope. Always present; empty for a window with no data.
           items:
-            $ref: "#/components/schemas/CatalogGrowthRow"
-
+            $ref: '#/components/schemas/CatalogGrowthRow'
     CatalogGrowthRow:
       type: object
       required:
@@ -210,15 +179,14 @@ components:
       properties:
         scope:
           type: string
-          description: >
-            Site code, zone id, or the empty string for catalog-wide
-            definitions.
+          description: |
+            Site code, zone id, or the empty string for catalog-wide definitions.
           example: WH1
         dayBucket:
           type: string
           format: date-time
           description: Start (midnight UTC) of the day this row aggregates.
-          example: "2026-03-01T00:00:00Z"
+          example: '2026-03-01T00:00:00Z'
         sitesRegistered:
           type: integer
           minimum: 0
@@ -274,31 +242,32 @@ components:
           minimum: 0
           description: Rows rejected across this bucket's bulk imports.
           example: 0
-
     Freshness:
       type: object
-      required: [lagSeconds]
+      required:
+        - lagSeconds
       properties:
         lagSeconds:
           type: number
           format: double
-          description: >
-            Seconds between now and the business time of the most recently
-            projected event. 0 when the read model is empty.
+          description: |
+            Seconds between now and the business time of the most recently projected event. 0 when the read model is empty.
           example: 4.2
-
     Status:
       type: object
-      required: [status]
+      required:
+        - status
       properties:
         status:
           type: string
           example: ok
-
     Problem:
       type: object
       description: RFC 7807 problem detail, identical in shape to the OLTP API's.
-      required: [type, title, status]
+      required:
+        - type
+        - title
+        - status
       properties:
         type:
           type: string
@@ -316,7 +285,7 @@ components:
         detail:
           type: string
           description: Human-readable explanation specific to this occurrence.
-          example: "query parameter 'from' is required (RFC3339)"
+          example: query parameter 'from' is required (RFC3339)
         instance:
           type: string
           description: The request path this problem occurred on.

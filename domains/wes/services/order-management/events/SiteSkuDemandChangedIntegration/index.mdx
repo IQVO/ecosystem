@@ -13,6 +13,21 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Raised inside the same order-save/outbox transaction as the allocation, re-allocation, re-promise, or cancellation that produced the line state, derived purely from the Order aggregate's line (SKU, quantity) plus the explicitly versioned static demand-site scope configured for the deployment (`DEMAND_PROJECTION_SITE_ID`, assignment_version `static-site-v1`). The site is application configuration, never an Order field, and Phase-1 performs no dynamic assignment. subject and the Kafka key are `<source_order_id>/line/<line_no>` — the LINE is the stream identity here, so one line's demand history is totally ordered on its own partition (deliberately not the bare order id every Order* event uses). `due_at` is the line's own promise-group cutoff (ADR 0017) where one is recorded, else the order-level promise date. `demanded_units` is the line quantity; `state` is `ACTIVE` (create / allocate / re-promise) or `REMOVED` (cancellation). No customer PII ever appears on this event.
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wes.order-management.siteskudemand.SiteSkuDemandChanged` |
+| CloudEvents `source` | `/warehouse/order-management` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `ord-7c9e6679-7d5a-4b37-b2f1-93b0c4a1d8f2/line/3`) |
+| CloudEvents `dataschema` | `urn:warehouse:order-management:events:SiteSkuDemandChanged:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.order-management.events` |
+| Entity / aggregate | `order-management` |
+
+
 ## Architecture
 <NodeGraph />
 

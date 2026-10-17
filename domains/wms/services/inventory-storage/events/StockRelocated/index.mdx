@@ -13,6 +13,25 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Raised by the RelocateStock use case (ADR 0039), reached two ways: POST /relocations (Idempotency-Key) and the RELOCATE branch of the TaskCompleted consumer (a completed slot-plan RELOCATE task from fulfillment-execution). In ONE transaction the source bin's occupancy fell and the destination bin's rose by `quantity`, the touched source StockUnits were decremented, ONE new StockUnit was created at `to_bin`, the immutable `relocations` row was written and this outbox row enqueued. Site-level on-hand is unchanged.
+
+Exactly once per relocation: a replayed POST returns the stored response and a redelivered TaskCompleted (same CloudEvents id) is a no-op, so neither publishes again. `source_ref` is always present (`""` when none); on the task path it is the task's `relocation_ref`, or its task id when the producer sent none.
+
+**Integration topic only** (no analytics variant). Kafka key and CloudEvents `subject` are the relocation id (ADR 0021). slotting-optimization consumes it to close a slot plan's move.
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inventory-storage.stock.StockRelocated` |
+| CloudEvents `source` | `/warehouse/inventory-storage` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `rel-42`) |
+| CloudEvents `dataschema` | `urn:warehouse:inventory-storage:events:StockRelocated:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inventory.events` |
+| Entity / aggregate | `stock` |
+
+
 ## Architecture
 <NodeGraph />
 

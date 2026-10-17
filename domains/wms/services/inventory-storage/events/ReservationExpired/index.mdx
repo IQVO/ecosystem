@@ -11,6 +11,24 @@ schemaPath: schema.json
 owners:
   - claudioed
 ---
+## Description
+Describes a reservation that timed out without being confirmed or revoked, so its quantity returns to usable. Raised lazily: the Reservation aggregate's `IsExpired`/`Expire()` are invoked the next time the reservation is read (GetReservationsByDemandRef, RevokeReservation, ConfirmPick, or ReserveStock's own idempotency lookup), not by a background sweeper — see ADR 0003's "Lazy expiry" section for the full rationale.
+
+Published to `warehouse.inventory.analytics` only (subject = Kafka key = reservation id), with the reservation's SKU enriched in: analytics `data` is `{reservation_id, sku}`. It does not cross to the integration topic.
+
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inventory-storage.reservation.ReservationExpired` |
+| CloudEvents `source` | `/warehouse/inventory-storage` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `res-9`) |
+| CloudEvents `dataschema` | `urn:warehouse:inventory-storage:analytics:ReservationExpired:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inventory.analytics` |
+| Entity / aggregate | `reservation` |
+
+
 ## Architecture
 <NodeGraph />
 

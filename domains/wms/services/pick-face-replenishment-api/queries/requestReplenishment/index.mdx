@@ -1,0 +1,92 @@
+---
+id: pick-face-replenishment-api-requestReplenishment
+version: 1.0.0
+name: requestReplenishment
+summary: Raise a replenishment request by hand
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Replenishments'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /replenishments
+  statusCodes:
+    - '201'
+    - '400'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Raises a request for a SKU of a site outside the periodic detection. The
+forward bin is the one the site's latest approved slot plan assigns to the
+SKU (422 `no-forward-assignment` when there is none). Without `quantity`
+the detector rules size it from the current levels (a request is then
+raised only when the pick face is at or below its minimum, otherwise
+422 `nothing-to-replenish`; 422 `no-source-stock` when the face is low
+but nothing can be moved); with
+`quantity` the same invariants apply: at least 1, the projected level plus
+the quantity at most the policy maximum (so a policy is required, 422
+`no-policy`), at most the source bin's usable stock (422 `no-source-stock`).
+At most one request is open per forward bin and SKU (409
+`replenishment-already-open`). Publishes `ReplenishmentRequested`. Requires
+an `Idempotency-Key`; replaying the same key and body returns the original
+request.
+
+
+
+
+
+## POST `(/replenishments)`
+
+### Parameters
+- **Idempotency-Key** (header): Caller-generated unique key (a UUID per logical submit) that makes a
+retried request safe. Required whenever the service runs with Postgres,
+that is in every deployment, and answered with 400
+`idempotency-key-required` when absent; a replay with the same key and
+the same body returns the original response, while the same key with a
+different body is 422 `idempotency-key-reused`. The in-memory development
+mode (no `DATABASE_URL`) does not enforce it, which is why the header is
+not marked `required` here.
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

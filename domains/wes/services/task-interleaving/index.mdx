@@ -1,0 +1,165 @@
+---
+id: task-interleaving
+name: Task Interleaving (events)
+version: 1.0.0
+summary: >-
+  Advisory next-task hints that chain compatible tasks by travel distance,
+  keeping fulfillment-execution pull-based: hints are offered, never imposed.
+badges:
+  - content: task-interleaving
+    textColor: blue
+    backgroundColor: blue
+  - content: stationtrip
+    textColor: blue
+    backgroundColor: blue
+  - content: policy
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+  - content: analytics
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: InterleavingHintIssued
+    version: 1.0.0
+    to:
+      - id: warehouse.task-interleaving.events
+        version: 1.0.0
+  - id: InterleavingHintIssuedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.task-interleaving.analytics
+        version: 1.0.0
+  - id: InterleavingHintConsumed
+    version: 1.0.0
+    to:
+      - id: warehouse.task-interleaving.analytics
+        version: 1.0.0
+  - id: InterleavingHintExpired
+    version: 1.0.0
+    to:
+      - id: warehouse.task-interleaving.analytics
+        version: 1.0.0
+  - id: InterleavingPolicyDeclared
+    version: 1.0.0
+    to:
+      - id: warehouse.task-interleaving.analytics
+        version: 1.0.0
+receives:
+  - id: TaskAvailable
+    version: 1.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: TaskClaimed
+    version: 1.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: TaskCompleted
+    version: 2.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: ZoneRegistered
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationSlotRegistered
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationSlotDecommissioned
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationGeometryUpdated
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Advisory next-task hints that chain compatible tasks by travel distance, keeping fulfillment-execution pull-based: hints are offered, never imposed.
+
+| | |
+|---|---|
+| Bounded context | `task-interleaving` |
+| Domain | WES (`wes`) |
+| DDD classification | Supporting |
+| Tier | WES |
+| Publishes (Kafka) | `warehouse.task-interleaving.events`<br/>`warehouse.task-interleaving.analytics` |
+| Consumes (Kafka) | `warehouse.fulfillment.events`<br/>`warehouse.facility.events` |
+| CloudEvents type prefix | `com.warehouse.wes.task-interleaving.` |
+| Event source | `/warehouse/task-interleaving` |
+| Repository | [IQVO/task-interleaving](https://github.com/IQVO/task-interleaving) |
+| REST API | [task-interleaving-api](/docs/services/task-interleaving-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **task-interleaving** bounded context (WES subdomain):
+when a station completes a task, which open task nearby could the operator do
+next with the smallest detour (ADR 0001, ADR 0002). The output is an
+**advisory hint**, never an assignment.
+
+**Published.** The `StationTrip` aggregate (one per station) raises
+`InterleavingHintIssued` when it issues a hint, `InterleavingHintConsumed`
+when the hinted station claims one of the candidates, and
+`InterleavingHintExpired` when an unclaimed hint reaches its `expires_at`;
+the `InterleavingPolicy` aggregate raises `InterleavingPolicyDeclared`.
+Only `InterleavingHintIssued` is on the integration topic
+`warehouse.task-interleaving.events` (fulfillment-execution reads it, ADR
+0002). All four types are on the analytics topic
+`warehouse.task-interleaving.analytics`. Events are written through a
+**transactional outbox**: the aggregate row and its already-encoded events
+are written in ONE database transaction and a relay drains them to Kafka
+(at-least-once; the CloudEvents `id` is stored with the outbox row, so a retry
+republishes the same `id`). A superseded hint raises no event of its own: a
+consumer learns of it from the next `InterleavingHintIssued` of the same
+station.
+
+**Consumed (ADR 0003).** `TaskAvailable`, `TaskClaimed` and `TaskCompleted`
+from fulfillment-execution (`TaskAvailable` and `TaskClaimed` are **pending
+producer change P2**: they do not exist on its integration topic yet, this
+context ships first and accepts them), and `ZoneRegistered`,
+`LocationSlotRegistered`, `LocationSlotDecommissioned` and
+`LocationGeometryUpdated` from facility-layout. Each feeds a durable local
+copy (modes `FULFILLMENT_MODE` and `LAYOUT_MODE`, default `permissive`;
+consumer groups from `FULFILLMENT_CONSUMER_GROUP` and
+`LAYOUT_CONSUMER_GROUP`). The consumed messages below are the producers' own
+contracts, decoded independently here and never imported.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`. Optional
+W3C trace-context headers (`traceparent`, and `tracestate` / `baggage` when
+present) carry the trace of the writing request; consumers may extract them
+and must not require them. `specversion`, `id`, `source`
+(`/warehouse/task-interleaving`), `type`, `subject`, `time`,
+`datacontenttype` (`application/json`) and `dataschema`
+(`urn:warehouse:task-interleaving:<events|analytics>:<EventName>:v1`) are all
+required. Kafka key and `subject` = the station id for hint events and the
+site id for the policy event. Type =
+`com.warehouse.wes.task-interleaving.<entity>.<EventName>` where `<entity>`
+is the raising aggregate, lowercase, no separators: `stationtrip` or
+`policy`. `data` is snake_case, optional fields are omitted when unset and
+timestamps are RFC 3339 UTC. A breaking payload change is a new `.v2` type,
+never a mutation.
+
+
+## Architecture diagram
+<NodeGraph />
