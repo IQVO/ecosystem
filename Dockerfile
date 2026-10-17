@@ -25,7 +25,6 @@ ENV NODE_OPTIONS=--max_old_space_size=2048
 # build still succeeds, it just carries the trial notice). EventCatalog reads
 # the EC_LICENSE path at build time; the file never lands in any image layer.
 RUN --mount=type=secret,id=eventcatalog_license,required=false \
-    sh -c 'if [ -f /run/secrets/eventcatalog_license ]; then wc -c < /run/secrets/eventcatalog_license; sha256sum /run/secrets/eventcatalog_license; fi' && \
     EC_LICENSE=/run/secrets/eventcatalog_license \
     npm run build && printf 'ok' > dist/healthz
 
