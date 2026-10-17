@@ -1,0 +1,80 @@
+# Default values for the ecosystem EventCatalog chart.
+
+replicaCount: 1
+
+image:
+  # What CI's docker-publish job pushes (ghcr.io/iqvo/ecosystem:
+  # latest, <short-sha> and the release vX.Y.Z tag).
+  repository: ghcr.io/iqvo/ecosystem
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# nginx-unprivileged runs as uid/gid 101 by default.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  fsGroup: 101
+
+# Static content server: nothing to write. nginx's runtime cache/pid/tmp dirs
+# are provided as emptyDir volumes so the root filesystem stays read-only.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+# The fleet keeps its two edges independent (Kong never serves assets); when
+# this is exposed it is through the web gateway, not through Kong.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: ecosystem.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 5
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

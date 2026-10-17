@@ -42,6 +42,13 @@ spec text; classification/tier/purpose per context live in `catalog.contexts.mjs
 1. Add it to `catalog.contexts.mjs` (subdomain + the Kafka topics it **publishes**).
 2. `npm run sync && npm run generate`.
 
+## Packaging & release
+
+- `Dockerfile`: multi-stage, digest-pinned (`node:22-bookworm-slim` build → `nginxinc/nginx-unprivileged:1.31-alpine` runtime, uid 101, port 8080). The image regenerates the catalog at build time from the committed `specs/`; `license.jwt` is never in the image.
+- `charts/ecosystem`: Helm chart (ClusterIP 80 → 8080, read-only rootfs, `/healthz` probes), same shape as `warehouse-console`.
+- CI (`.github/workflows/ci.yml`): lint + build + `helm lint` on every PR/push; `docker-publish` (GHCR, cosign-signed, SPDX SBOM) on `main` and `v*` tags.
+- Release: PR into `develop`, then PR `develop`→`main`, tag `vX.Y.Z` on `main`, GitHub Release. The chart's `appVersion` must equal the release tag without the `v`.
+
 ## Notes
 
 - Generated pages are committed so they can be enriched by hand (`preserveExistingMessages` keeps edits on regenerate).
