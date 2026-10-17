@@ -2,9 +2,23 @@
 // graph; these templates add what a reader needs to place a resource: what it is for, where it
 // sits in the DDD map, which topics it publishes/consumes and how its messages are enveloped.
 import { CONTEXTS, SUBDOMAINS } from './catalog.contexts.mjs';
+import { derive } from './scripts/check-orphan-events.mjs';
 
 const REPO = (ctx) => `https://github.com/IQVO/${ctx}`;
 const code = (s) => '`' + s + '`';
+
+// Types excused from having a consumer, from the same derivation the CI sensor
+// runs (native `x-no-consumer-reason` on the producer, or the
+// specs/no-consumer-reasons.yaml allowlist). Cached: one scan per generate,
+// not one per event page. A reason starting with `pending:` is transitional
+// and renders verbatim.
+let noConsumerByType;
+function noConsumerReasonFor(type) {
+  if (!noConsumerByType) {
+    noConsumerByType = new Map(derive().reasoned.map((r) => [r.type, r.reason]));
+  }
+  return type ? noConsumerByType.get(type) : undefined;
+}
 
 // Same rule as the generators: leave code spans/blocks alone, escape what breaks MDX elsewhere.
 export function escapeMdx(text = '') {
@@ -109,8 +123,13 @@ export function messageMarkdown({ message, markdown }) {
   const payload = example?.payload?.();
   const type = payload?.type;
   const dataschema = payload?.dataschema;
-  const channels = message.channels().all().map((ch) => code(ch.id()));
+  const channelIds = message.channels().all().map((ch) => ch.id());
+  const channels = channelIds.map(code);
   const tags = (message.tags().all() || []).map((t) => t.name());
+  // The notice states a fact about the type's INTEGRATION publication: only
+  // the `.events` channel page carries it. The `.analytics` mirror has its own
+  // consumer (the context's projector) and must not show it.
+  const noConsumer = channelIds.some((id) => id.endsWith('.events')) ? noConsumerReasonFor(type) : undefined;
   const rows = [
     type && ['CloudEvents `type`', code(type)],
     payload?.source && ['CloudEvents `source`', code(payload.source)],
@@ -120,7 +139,7 @@ export function messageMarkdown({ message, markdown }) {
     channels.length && ['Kafka topic', [...new Set(channels)].join('<br/>')],
     tags.length && ['Entity / aggregate', tags.map(code).join(', ')],
   ].filter(Boolean);
-  return `${description ? `## Description\n${description}\n` : ''}
+  return `${description ? `## Description\n${description}\n` : ''}${noConsumer ? `> **No consumer by design:** ${escapeMdx(noConsumer)}\n` : ''}
 ${rows.length ? `## Envelope\n| | |\n|---|---|\n${table(rows)}\n` : ''}
 ${markdown}`;
 }
