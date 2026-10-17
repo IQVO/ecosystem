@@ -23,7 +23,7 @@ Each context is two services: `<ctx>` (events, from `apis/asyncapi.yaml`) and `<
 npm run sync       # copy apis/*.yaml from each repo's origin/develop into specs/  (WAREHOUSE_ROOT, default ..)
 npm run generate   # specs/ -> .generated-specs/ -> domains/ + channels/
 npm run lint       # eventcatalog-linter
-npm run dev        # http://localhost:3000 (3001 if taken)
+npm run dev        # http://localhost:3000/catalog (3001 if taken; served under /catalog on the cluster's web gateway)
 npm run build      # static site in build/
 ```
 
