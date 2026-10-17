@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [develop, main]
     tags: ['v*']
@@ -11,6 +12,18 @@ permissions:
   contents: read
 
 jobs:
+  # Manual diagnostic: proves what the EVENTCATALOG_LICENSE_JWT secret contains
+  # (hash + length only; GitHub masks the value itself, and a hash leaks nothing).
+  license-debug:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          printf 'len=%s\n' "${#EVENTCATALOG_LICENSE_JWT}"
+          printf '%s' "$EVENTCATALOG_LICENSE_JWT" | sha256sum
+        env:
+          EVENTCATALOG_LICENSE_JWT: ${{ secrets.EVENTCATALOG_LICENSE_JWT }}
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
