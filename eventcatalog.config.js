@@ -58,7 +58,7 @@ export default {
   trailingSlash: false,
   // Change to make the base url of the site different, by default https://{website}.com/docs,
   // changing to /company would be https://{website}.com/company/docs,
-  base: '/',
+  base: '/catalog/',
   // Resource search is the default lightweight search. Change this to { type: 'indexed' }
   // to enable full-content search. Indexed search requires running a build to generate the index.
   search: {
