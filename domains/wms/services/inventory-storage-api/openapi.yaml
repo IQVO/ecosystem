@@ -94,9 +94,10 @@ paths:
   /stock/receive:
     post:
       operationId: receiveStock
+      deprecated: true
       summary: Acknowledge inbound stock for a SKU
       description: |
-        Stages a quantity of a SKU as received into the building (publishes StockReceived) without assigning it to a bin yet. This does NOT create a StockUnit aggregate: a StockUnit requires both an item-scan and a location-scan by construction (the stow-requires-both invariant), and a staged receipt has no bin yet. The durable, addressable record only starts at StowStock — that is why this operation returns 202 Accepted rather than 201 Created: there is no resource here to hand back a Location for.
+        Stages a quantity of a SKU as received into the building (publishes StockReceived) without assigning it to a bin yet. This does NOT create a StockUnit aggregate: a StockUnit requires both an item-scan and a location-scan by construction (the stow-requires-both invariant), and a staged receipt has no bin yet. The durable, addressable record only starts at StowStock — that is why this operation returns 202 Accepted rather than 201 Created: there is no resource here to hand back a Location for. Superseded by the inbound-receiving handover (K24, ADR 0037: inbound-receiving publishes `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived`, whose Good lines are booked as staged stock through the same ReceiveStock use case); this endpoint stays as the documented manual fallback; removal planned with the next breaking window.
       tags:
         - Stock
       parameters:
@@ -560,9 +561,10 @@ paths:
   /reservations/{id}/confirm-pick:
     post:
       operationId: confirmPick
+      deprecated: true
       summary: Confirm a reservation's physical pick
       description: |
-        Consumes a reservation: for every Allocation it holds, the allocated quantity is physically removed from its StockUnit (StockUnit transitions toward PICKED/REMOVED) and the corresponding bin capacity is released. This is a terminal, one-way command on the resource in the domain command style (not forced into PUT/PATCH) — a reservation that is already resolved, expired, or has no allocations cannot be confirmed again.
+        Consumes a reservation: for every Allocation it holds, the allocated quantity is physically removed from its StockUnit (StockUnit transitions toward PICKED/REMOVED) and the corresponding bin capacity is released. This is a terminal, one-way command on the resource in the domain command style (not forced into PUT/PATCH) — a reservation that is already resolved, expired, or has no allocations cannot be confirmed again. Superseded by the TaskCompleted consumer (K37: fulfillment-execution's TaskCompleted for a PICK task confirms the reservation — ADR 0035 / ADR 0036); removal planned with the next breaking window.
       tags:
         - Reservations
       parameters:
@@ -944,7 +946,7 @@ paths:
       deprecated: true
       summary: Retired - classify the SKU in product-master instead (410)
       description: |
-        Retired by ADR 0034 (product-master ADR 0003 stage C). product-master owns product classification; this service keeps a read-only local copy fed by product-master's `ProductClassified` events. Every call returns `410 Gone` with problem type `classification-moved`, naming product-master's `PUT /products/{sku}/classification` (same request body). Any request body is ignored and nothing is written. Removed at product-master ADR 0003 stage E.
+        Retired by ADR 0034 (product-master ADR 0003 stage C). product-master owns product classification; this service keeps a read-only local copy fed by product-master's `ProductClassified` events. Every call returns `410 Gone` with problem type `classification-moved`, naming product-master's `PUT /products/{sku}/classification` (same request body). Any request body is ignored and nothing is written. Removed at product-master ADR 0003 stage E. Superseded by product-master's `PUT /products/{sku}/classification` (product-master ADR 0003; R2 migration edge retired); removal planned with the next breaking window.
       tags:
         - Products
       parameters:
@@ -970,7 +972,7 @@ paths:
       deprecated: true
       summary: Get a SKU's product classification (deprecated local copy)
       description: |
-        DEPRECATED (ADR 0034): product-master owns product classification; read it from product-master's `GET /products/{sku}/classification` (same response shape). This endpoint stays until product-master ADR 0003 stage E and is served from this service's local copy of product-master's `ProductClassified` events (the copy StowStock reads), so it can lag product-master briefly. Side-effect-free. Unlike GetUsableInventory, an unclassified SKU is a 404, not a zero-value response — there is no meaningful "empty" classification to return.
+        DEPRECATED (ADR 0034): product-master owns product classification; read it from product-master's `GET /products/{sku}/classification` (same response shape). This endpoint stays until product-master ADR 0003 stage E and is served from this service's local copy of product-master's `ProductClassified` events (the copy StowStock reads), so it can lag product-master briefly. Side-effect-free. Unlike GetUsableInventory, an unclassified SKU is a 404, not a zero-value response — there is no meaningful "empty" classification to return. Superseded by product-master's `GET /products/{sku}/classification` (product-master ADR 0003; the legacy importer path winds down with K21); removal planned with the next breaking window.
       tags:
         - Products
       parameters:
@@ -2226,6 +2228,8 @@ components:
             - SLOTTING
             - CONSOLIDATION
             - MANUAL
+            - REPLENISHMENT
+          description: Why the stock moved. REPLENISHMENT (ADR 0041) appears only on relocations made by a completed REPLENISH task; it is never accepted on the request.
           example: SLOTTING
         sourceRef:
           type: string

@@ -8,45 +8,92 @@ info:
     email: slotting-optimization@iqvo.example.com
   license:
     name: UNLICENSED
-  description: |
+  description: >
     Event catalog for the **slotting-optimization** bounded context (WMS
+
     subdomain): reviewable plans that assign SKUs to forward pick slots, and the
+
     human decision taken on them (ADR 0001, ADR 0002).
 
+
     **Published.** The `SlotPlan` aggregate raises three events, published to
+
     `warehouse.slotting-optimization.events` through a **transactional outbox**:
+
     the plan row and its already-encoded events are written in ONE database
+
     transaction and a relay drains them to Kafka (at-least-once; the CloudEvents
+
     `id` is stored with the outbox row, so a retry republishes the same `id`).
+
     `SlotPlanApproved` carries the FULL forward assignment map and the moves, so
+
     a consumer needs no lookup; `supersedes_plan_id` names the previously
+
     Approved plan of the site, if any.
 
+
     **Consumed (ADR 0003).** `SiteSkuDemandChanged` from order-management,
+
     `ProductClassified`, `ProductDimensionsDeclared` and `ProductMeasured` from
+
     product-master, and `ZoneRegistered`, `LocationSlotRegistered` and
+
     `LocationSlotDecommissioned` from facility-layout. Each feeds a durable
+
     local copy (modes `DEMAND_MODE`, `PRODUCT_MODE`, `LAYOUT_MODE`, default
+
     `permissive`; consumer groups from `DEMAND_CONSUMER_GROUP`,
+
     `PRODUCT_CONSUMER_GROUP`, `LAYOUT_CONSUMER_GROUP`). The consumed messages
+
     below are the producers' own contracts, decoded independently here and never
+
     imported.
 
-    **Analytics (later phase).** `warehouse.slotting-optimization.analytics` is
-    reserved for this service's own analytics read side (ADR 0004). Nothing is
-    published there yet, so it is not declared as a channel.
+
+    **Analytics (ADR 0006).** The same three events are ALSO published, in
+
+    the same transaction and under the same `id` per occurrence, to
+
+    `warehouse.slotting-optimization.analytics` with
+
+    `dataschema urn:warehouse:slotting-optimization:analytics:<EventName>:v1`.
+
+    That stream is not an integration contract: only this service's own
+
+    projector (`cmd/slotting-projector`, consumer group from
+
+    `ANALYTICS_CONSUMER_GROUP`) consumes it, folding it into the slot-plan
+
+    funnel read model; `cmd/slotting-reports` serves the report. Other
+
+    contexts keep reading `warehouse.slotting-optimization.events`.
+
 
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+
     header `content-type: application/cloudevents+json; charset=UTF-8`.
+
     Optional W3C trace-context headers (`traceparent`, and `tracestate` /
+
     `baggage` when present) carry the trace of the request that wrote the
+
     outbox row (ADR 0009); consumers may extract them, and must not require
+
     them.
+
     `specversion`, `id`, `source` (`/warehouse/slotting-optimization`), `type`,
+
     `subject` (the plan id), `time`, `datacontenttype` (`application/json`) and
-    `dataschema` (`urn:warehouse:slotting-optimization:events:<EventName>:v1`)
+
+    `dataschema`
+    (`urn:warehouse:slotting-optimization:<events|analytics>:<EventName>:v1`)
+
     are all required. Kafka key = the plan id. Type =
+
     `com.warehouse.wms.slotting-optimization.slotplan.<EventName>`. A breaking
+
     payload change is a new `.v2` type, never a mutation.
 servers:
   production:
@@ -64,6 +111,8 @@ tags:
     description: Events raised by the SlotPlan aggregate.
   - name: consumed
     description: Events produced by sibling contexts that this service consumes (ADR 0003).
+  - name: analytics
+    description: This service's own analytics stream and read side (ADR 0006).
 channels:
   warehouse.slotting-optimization.events:
     description: |
@@ -506,6 +555,423 @@ channels:
                     rejected_at: '2026-10-08T12:15:00Z'
                     reason: Too many relocations before peak season.
             messageId: SlotPlanRejected
+  warehouse.slotting-optimization.analytics:
+    description: |
+      This service's own analytics stream (ADR 0006), written by the SAME
+      transactional outbox as the integration topic: every published event
+      appears here too, under the SAME CloudEvents id and `type`, with only
+      the `dataschema` stream segment different
+      (urn:warehouse:slotting-optimization:analytics:<EventName>:v1). It is
+      NOT an integration contract: the only consumer is this service's
+      cmd/slotting-projector (fixed group from ANALYTICS_CONSUMER_GROUP),
+      which folds the events into the analytical database; its deterministic
+      poison goes to warehouse.slotting-optimization.analytics.dlq. Other
+      contexts keep reading warehouse.slotting-optimization.events.
+    subscribe:
+      operationId: receiveSlotPlanAnalytics
+      summary: Receive the analytics twin of every SlotPlan event.
+      description: |
+        Payloads are byte-for-byte the integration payloads (ADR 0006
+        section 2); only the dataschema names the analytics stream.
+      tags:
+        - name: analytics
+      message:
+        oneOf:
+          - name: SlotPlanGenerated
+            title: Slot plan generated (analytics twin)
+            summary: The analytics-stream twin of SlotPlanGenerated (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:slotting-optimization:analytics:SlotPlanGenerated:v1`.
+              Consumed only by cmd/slotting-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the plan id for published
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - plan_id
+                        - site_id
+                        - window_from
+                        - window_to
+                        - policy
+                        - assignment_count
+                        - move_count
+                        - unassigned_count
+                      properties:
+                        plan_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-11>
+                        site_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-12>
+                        window_from:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-13>
+                        window_to:
+                          type: string
+                          format: date-time
+                          description: Exclusive.
+                          x-parser-schema-id: <anonymous-schema-14>
+                        policy:
+                          type: string
+                          example: abc-velocity-v1
+                          x-parser-schema-id: <anonymous-schema-15>
+                        assignment_count:
+                          type: integer
+                          minimum: 0
+                          x-parser-schema-id: <anonymous-schema-16>
+                        move_count:
+                          type: integer
+                          minimum: 0
+                          x-parser-schema-id: <anonymous-schema-17>
+                        unassigned_count:
+                          type: integer
+                          minimum: 0
+                          x-parser-schema-id: <anonymous-schema-18>
+                      x-parser-schema-id: <anonymous-schema-10>
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: SlotPlanGeneratedEvent
+            examples:
+              - name: generated
+                summary: The analytics twin of the generated example above.
+                payload:
+                  specversion: '1.0'
+                  id: 6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f
+                  source: /warehouse/slotting-optimization
+                  type: >-
+                    com.warehouse.wms.slotting-optimization.slotplan.SlotPlanGenerated
+                  subject: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                  time: '2026-10-08T12:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:slotting-optimization:analytics:SlotPlanGenerated:v1
+                  data:
+                    plan_id: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                    site_id: SITE-1
+                    window_from: '2026-09-10T12:00:00Z'
+                    window_to: '2026-10-08T12:00:00Z'
+                    policy: abc-velocity-v1
+                    assignment_count: 2
+                    move_count: 3
+                    unassigned_count: 1
+            messageId: SlotPlanGeneratedAnalytics
+          - name: SlotPlanApproved
+            title: Slot plan approved (analytics twin)
+            summary: The analytics-stream twin of SlotPlanApproved (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:slotting-optimization:analytics:SlotPlanApproved:v1`.
+              The `supersedes_plan_id`, when present, stamps the SUPERSEDED
+              plan's supersession day in the read model.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the plan id for published
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - plan_id
+                        - site_id
+                        - approved_at
+                        - assignments
+                        - moves
+                      properties:
+                        plan_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-21>
+                        site_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-22>
+                        approved_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-23>
+                        supersedes_plan_id:
+                          type: string
+                          description: Omitted when the site had no Approved plan.
+                          x-parser-schema-id: <anonymous-schema-24>
+                        assignments:
+                          type: array
+                          description: The FULL assignment map of the plan.
+                          items:
+                            type: object
+                            required:
+                              - sku
+                              - slot
+                            properties:
+                              sku:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-26>
+                              slot:
+                                type: string
+                                description: >-
+                                  The facility-layout location code of the
+                                  forward slot.
+                                x-parser-schema-id: <anonymous-schema-27>
+                            x-parser-schema-id: SlotAssignment
+                          x-parser-schema-id: <anonymous-schema-25>
+                        moves:
+                          type: array
+                          items:
+                            type: object
+                            required:
+                              - sku
+                              - kind
+                            properties:
+                              sku:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-29>
+                              from_slot:
+                                type: string
+                                description: Omitted for an Assign.
+                                x-parser-schema-id: <anonymous-schema-30>
+                              to_slot:
+                                type: string
+                                description: Omitted for a Vacate.
+                                x-parser-schema-id: <anonymous-schema-31>
+                              kind:
+                                type: string
+                                enum:
+                                  - Assign
+                                  - Relocate
+                                  - Vacate
+                                x-parser-schema-id: <anonymous-schema-32>
+                            x-parser-schema-id: SlotMove
+                          x-parser-schema-id: <anonymous-schema-28>
+                      x-parser-schema-id: <anonymous-schema-20>
+                  x-parser-schema-id: <anonymous-schema-19>
+              x-parser-schema-id: SlotPlanApprovedEvent
+            examples:
+              - name: approvedWithSupersede
+                summary: The analytics twin of the approved example above.
+                payload:
+                  specversion: '1.0'
+                  id: 0b9a8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d
+                  source: /warehouse/slotting-optimization
+                  type: >-
+                    com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved
+                  subject: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                  time: '2026-10-08T12:30:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:slotting-optimization:analytics:SlotPlanApproved:v1
+                  data:
+                    plan_id: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                    site_id: SITE-1
+                    approved_at: '2026-10-08T12:30:00Z'
+                    supersedes_plan_id: plan-8e7d6c5b-4a39-4281-b0c9-d8e7f6a5b4c3
+                    assignments:
+                      - sku: SKU-1
+                        slot: WH1-FWD-A01-01-01-A
+                      - sku: SKU-2
+                        slot: WH1-FWD-A01-01-02-A
+                    moves:
+                      - sku: SKU-1
+                        to_slot: WH1-FWD-A01-01-01-A
+                        kind: Assign
+            messageId: SlotPlanApprovedAnalytics
+          - name: SlotPlanRejected
+            title: Slot plan rejected (analytics twin)
+            summary: The analytics-stream twin of SlotPlanRejected (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:slotting-optimization:analytics:SlotPlanRejected:v1`.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the plan id for published
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - plan_id
+                        - site_id
+                        - rejected_at
+                      properties:
+                        plan_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-35>
+                        site_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-36>
+                        rejected_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-37>
+                        reason:
+                          type: string
+                          maxLength: 500
+                          description: Omitted when none was given.
+                          x-parser-schema-id: <anonymous-schema-38>
+                      x-parser-schema-id: <anonymous-schema-34>
+                  x-parser-schema-id: <anonymous-schema-33>
+              x-parser-schema-id: SlotPlanRejectedEvent
+            examples:
+              - name: rejected
+                summary: The analytics twin of the rejected example above.
+                payload:
+                  specversion: '1.0'
+                  id: 4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a
+                  source: /warehouse/slotting-optimization
+                  type: >-
+                    com.warehouse.wms.slotting-optimization.slotplan.SlotPlanRejected
+                  subject: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                  time: '2026-10-08T12:15:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:slotting-optimization:analytics:SlotPlanRejected:v1
+                  data:
+                    plan_id: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                    site_id: SITE-1
+                    rejected_at: '2026-10-08T12:15:00Z'
+                    reason: Too many relocations before peak season.
+            messageId: SlotPlanRejectedAnalytics
   warehouse.order-management.events:
     description: >-
       The outbound integration topic owned by the Order Management bounded
@@ -1727,6 +2193,13 @@ channels:
                             - SLOTTING
                             - CONSOLIDATION
                             - MANUAL
+                            - REPLENISHMENT
+                          description: >-
+                            Only SLOTTING can execute a slot-plan move; every
+                            other reason (including REPLENISHMENT, added by
+                            pick-face-replenishment's REPLENISH tasks) is
+                            recorded as unmatched with
+                            reason=reason-not-slotting.
                           x-parser-schema-id: <anonymous-schema-100>
                         source_ref:
                           type: string
@@ -3271,6 +3744,12 @@ components:
                       - SLOTTING
                       - CONSOLIDATION
                       - MANUAL
+                      - REPLENISHMENT
+                    description: >-
+                      Only SLOTTING can execute a slot-plan move; every other
+                      reason (including REPLENISHMENT, added by
+                      pick-face-replenishment's REPLENISH tasks) is recorded as
+                      unmatched with reason=reason-not-slotting.
                     x-parser-schema-id: <anonymous-schema-100>
                   source_ref:
                     type: string
@@ -3311,6 +3790,392 @@ components:
               source_ref: plan-9:0
               occurred_at: '2026-10-13T12:00:00Z'
       messageId: StockRelocated
+    SlotPlanGeneratedAnalytics:
+      name: SlotPlanGenerated
+      title: Slot plan generated (analytics twin)
+      summary: The analytics-stream twin of SlotPlanGenerated (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:slotting-optimization:analytics:SlotPlanGenerated:v1`.
+        Consumed only by cmd/slotting-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the plan id for published events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - plan_id
+                  - site_id
+                  - window_from
+                  - window_to
+                  - policy
+                  - assignment_count
+                  - move_count
+                  - unassigned_count
+                properties:
+                  plan_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-11>
+                  site_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-12>
+                  window_from:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-13>
+                  window_to:
+                    type: string
+                    format: date-time
+                    description: Exclusive.
+                    x-parser-schema-id: <anonymous-schema-14>
+                  policy:
+                    type: string
+                    example: abc-velocity-v1
+                    x-parser-schema-id: <anonymous-schema-15>
+                  assignment_count:
+                    type: integer
+                    minimum: 0
+                    x-parser-schema-id: <anonymous-schema-16>
+                  move_count:
+                    type: integer
+                    minimum: 0
+                    x-parser-schema-id: <anonymous-schema-17>
+                  unassigned_count:
+                    type: integer
+                    minimum: 0
+                    x-parser-schema-id: <anonymous-schema-18>
+                x-parser-schema-id: <anonymous-schema-10>
+            x-parser-schema-id: <anonymous-schema-9>
+        x-parser-schema-id: SlotPlanGeneratedEvent
+      examples:
+        - name: generated
+          summary: The analytics twin of the generated example above.
+          payload:
+            specversion: '1.0'
+            id: 6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f
+            source: /warehouse/slotting-optimization
+            type: com.warehouse.wms.slotting-optimization.slotplan.SlotPlanGenerated
+            subject: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: '2026-10-08T12:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:slotting-optimization:analytics:SlotPlanGenerated:v1
+            data:
+              plan_id: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: SITE-1
+              window_from: '2026-09-10T12:00:00Z'
+              window_to: '2026-10-08T12:00:00Z'
+              policy: abc-velocity-v1
+              assignment_count: 2
+              move_count: 3
+              unassigned_count: 1
+      messageId: SlotPlanGeneratedAnalytics
+    SlotPlanApprovedAnalytics:
+      name: SlotPlanApproved
+      title: Slot plan approved (analytics twin)
+      summary: The analytics-stream twin of SlotPlanApproved (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:slotting-optimization:analytics:SlotPlanApproved:v1`. The
+        `supersedes_plan_id`, when present, stamps the SUPERSEDED plan's
+        supersession day in the read model.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the plan id for published events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - plan_id
+                  - site_id
+                  - approved_at
+                  - assignments
+                  - moves
+                properties:
+                  plan_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-21>
+                  site_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-22>
+                  approved_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-23>
+                  supersedes_plan_id:
+                    type: string
+                    description: Omitted when the site had no Approved plan.
+                    x-parser-schema-id: <anonymous-schema-24>
+                  assignments:
+                    type: array
+                    description: The FULL assignment map of the plan.
+                    items:
+                      type: object
+                      required:
+                        - sku
+                        - slot
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-26>
+                        slot:
+                          type: string
+                          description: >-
+                            The facility-layout location code of the forward
+                            slot.
+                          x-parser-schema-id: <anonymous-schema-27>
+                      x-parser-schema-id: SlotAssignment
+                    x-parser-schema-id: <anonymous-schema-25>
+                  moves:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - sku
+                        - kind
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-29>
+                        from_slot:
+                          type: string
+                          description: Omitted for an Assign.
+                          x-parser-schema-id: <anonymous-schema-30>
+                        to_slot:
+                          type: string
+                          description: Omitted for a Vacate.
+                          x-parser-schema-id: <anonymous-schema-31>
+                        kind:
+                          type: string
+                          enum:
+                            - Assign
+                            - Relocate
+                            - Vacate
+                          x-parser-schema-id: <anonymous-schema-32>
+                      x-parser-schema-id: SlotMove
+                    x-parser-schema-id: <anonymous-schema-28>
+                x-parser-schema-id: <anonymous-schema-20>
+            x-parser-schema-id: <anonymous-schema-19>
+        x-parser-schema-id: SlotPlanApprovedEvent
+      examples:
+        - name: approvedWithSupersede
+          summary: The analytics twin of the approved example above.
+          payload:
+            specversion: '1.0'
+            id: 0b9a8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d
+            source: /warehouse/slotting-optimization
+            type: com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved
+            subject: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: '2026-10-08T12:30:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:slotting-optimization:analytics:SlotPlanApproved:v1
+            data:
+              plan_id: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: SITE-1
+              approved_at: '2026-10-08T12:30:00Z'
+              supersedes_plan_id: plan-8e7d6c5b-4a39-4281-b0c9-d8e7f6a5b4c3
+              assignments:
+                - sku: SKU-1
+                  slot: WH1-FWD-A01-01-01-A
+                - sku: SKU-2
+                  slot: WH1-FWD-A01-01-02-A
+              moves:
+                - sku: SKU-1
+                  to_slot: WH1-FWD-A01-01-01-A
+                  kind: Assign
+      messageId: SlotPlanApprovedAnalytics
+    SlotPlanRejectedAnalytics:
+      name: SlotPlanRejected
+      title: Slot plan rejected (analytics twin)
+      summary: The analytics-stream twin of SlotPlanRejected (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:slotting-optimization:analytics:SlotPlanRejected:v1`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the plan id for published events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - plan_id
+                  - site_id
+                  - rejected_at
+                properties:
+                  plan_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-35>
+                  site_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-36>
+                  rejected_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-37>
+                  reason:
+                    type: string
+                    maxLength: 500
+                    description: Omitted when none was given.
+                    x-parser-schema-id: <anonymous-schema-38>
+                x-parser-schema-id: <anonymous-schema-34>
+            x-parser-schema-id: <anonymous-schema-33>
+        x-parser-schema-id: SlotPlanRejectedEvent
+      examples:
+        - name: rejected
+          summary: The analytics twin of the rejected example above.
+          payload:
+            specversion: '1.0'
+            id: 4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a
+            source: /warehouse/slotting-optimization
+            type: com.warehouse.wms.slotting-optimization.slotplan.SlotPlanRejected
+            subject: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: '2026-10-08T12:15:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:slotting-optimization:analytics:SlotPlanRejected:v1
+            data:
+              plan_id: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: SITE-1
+              rejected_at: '2026-10-08T12:15:00Z'
+              reason: Too many relocations before peak season.
+      messageId: SlotPlanRejectedAnalytics
   schemas:
     CloudEventEnvelope:
       type: object
@@ -4354,6 +5219,12 @@ components:
                     - SLOTTING
                     - CONSOLIDATION
                     - MANUAL
+                    - REPLENISHMENT
+                  description: >-
+                    Only SLOTTING can execute a slot-plan move; every other
+                    reason (including REPLENISHMENT, added by
+                    pick-face-replenishment's REPLENISH tasks) is recorded as
+                    unmatched with reason=reason-not-slotting.
                   x-parser-schema-id: <anonymous-schema-100>
                 source_ref:
                   type: string

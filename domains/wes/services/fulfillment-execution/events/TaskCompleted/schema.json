@@ -82,17 +82,17 @@
         "type": {
           "type": "string",
           "const": "com.warehouse.wes.fulfillment-execution.task.TaskCompleted",
-          "x-parser-schema-id": "<anonymous-schema-15>"
+          "x-parser-schema-id": "<anonymous-schema-41>"
         },
         "source": {
           "type": "string",
           "const": "/warehouse/fulfillment-execution",
-          "x-parser-schema-id": "<anonymous-schema-16>"
+          "x-parser-schema-id": "<anonymous-schema-42>"
         },
         "dataschema": {
           "type": "string",
           "const": "urn:warehouse:fulfillment-execution:events:TaskCompleted:v1",
-          "x-parser-schema-id": "<anonymous-schema-17>"
+          "x-parser-schema-id": "<anonymous-schema-43>"
         },
         "data": {
           "type": "object",
@@ -105,28 +105,28 @@
             "task_id": {
               "type": "string",
               "description": "Completed task id.",
-              "x-parser-schema-id": "<anonymous-schema-19>"
+              "x-parser-schema-id": "<anonymous-schema-45>"
             },
             "station_id": {
               "type": "string",
               "description": "Station that completed the task.",
-              "x-parser-schema-id": "<anonymous-schema-20>"
+              "x-parser-schema-id": "<anonymous-schema-46>"
             },
             "work_unit_id": {
               "type": "string",
               "description": "The completed task's order reference (empty only when the task can no longer be found at publish time).",
-              "x-parser-schema-id": "<anonymous-schema-21>"
+              "x-parser-schema-id": "<anonymous-schema-47>"
             },
             "associate_id": {
               "type": "string",
               "description": "Occupant checked into the completing station at publish time; omitted when none (e.g. a robot station).",
-              "x-parser-schema-id": "<anonymous-schema-22>"
+              "x-parser-schema-id": "<anonymous-schema-48>"
             },
             "duration_seconds": {
               "type": "integer",
               "description": "Seconds between claim and completion; omitted when the claim time is unknown.",
               "format": "int64",
-              "x-parser-schema-id": "<anonymous-schema-23>"
+              "x-parser-schema-id": "<anonymous-schema-49>"
             },
             "task_type": {
               "type": "string",
@@ -137,15 +137,16 @@
                 "REBIN",
                 "DISPATCH",
                 "ARRIVAL",
-                "RELOCATE"
+                "RELOCATE",
+                "REPLENISH"
               ],
               "description": "The completed task's own type; omitted only when the task can no longer be found.",
-              "x-parser-schema-id": "<anonymous-schema-24>"
+              "x-parser-schema-id": "<anonymous-schema-50>"
             },
             "order_ref": {
               "type": "string",
               "description": "The order the completed task belongs to; the key inventory-storage uses to confirm picks. Optional and additive (the event stays v1) and omitted when the task has no order reference. Distinct from work_unit_id, which for order work is the per-line work unit id.",
-              "x-parser-schema-id": "<anonymous-schema-25>"
+              "x-parser-schema-id": "<anonymous-schema-51>"
             },
             "line_no": {
               "type": "integer",
@@ -153,46 +154,53 @@
               "minimum": 1,
               "maximum": 2147483647,
               "description": "The 1-based order line the completed task's work was released for (copied from WorkReleased.line_no, ADR-0041); with order_ref it lets inventory-storage confirm the pick of exactly that line's reservation. Optional and additive (the event stays v1) and omitted when unknown (transfer work, a release without line_no, or an older task). Never derived from the work_unit_id.",
-              "x-parser-schema-id": "<anonymous-schema-26>"
+              "x-parser-schema-id": "<anonymous-schema-52>"
             },
             "sku": {
               "type": "string",
               "minLength": 1,
-              "description": "RELOCATE only (ADR-0047; additive, the event stays v1). The SKU the executed slot-plan move relocated, from WorkReleased.data.relocation.sku. Omitted on every other task type.",
-              "x-parser-schema-id": "<anonymous-schema-27>"
+              "description": "RELOCATE and REPLENISH only (ADR-0047, ADR-0050; additive, the event stays v1). The SKU the executed move relocated, from WorkReleased.data.relocation.sku / WorkReleased.data.replenishment.sku. Omitted on every other task type.",
+              "x-parser-schema-id": "<anonymous-schema-53>"
             },
             "from_bin": {
               "type": "string",
               "minLength": 1,
-              "description": "RELOCATE only. The bin the stock left - the planned from_bin, or for an Assign move the bin the operator scanned at completion.",
-              "x-parser-schema-id": "<anonymous-schema-28>"
+              "description": "RELOCATE and REPLENISH only. The bin the stock left - the planned from_bin, or for a RELOCATE Assign move the bin the operator scanned at completion.",
+              "x-parser-schema-id": "<anonymous-schema-54>"
             },
             "to_bin": {
               "type": "string",
               "minLength": 1,
-              "description": "RELOCATE only. The bin the stock went to - the planned to_bin, or for a Vacate move the reserve bin the operator scanned at completion. Always different from from_bin.",
-              "x-parser-schema-id": "<anonymous-schema-29>"
+              "description": "RELOCATE and REPLENISH only. The bin the stock went to - the planned to_bin, or for a RELOCATE Vacate move the reserve bin the operator scanned at completion. Always different from from_bin.",
+              "x-parser-schema-id": "<anonymous-schema-55>"
             },
             "quantity": {
               "type": "integer",
               "format": "int32",
               "minimum": 1,
-              "description": "RELOCATE only. The units the operator counted and confirmed at completion (v1 moves the whole on-hand quantity of the SKU at from_bin).",
-              "x-parser-schema-id": "<anonymous-schema-30>"
+              "description": "RELOCATE and REPLENISH only. The units the operator counted and confirmed at completion (RELOCATE v1 moves the whole on-hand quantity of the SKU at from_bin; for REPLENISH it is the confirmed count, which may differ from the planned quantity).",
+              "x-parser-schema-id": "<anonymous-schema-56>"
             },
             "relocation_ref": {
               "type": "string",
               "minLength": 3,
               "maxLength": 200,
               "description": "RELOCATE only. The move reference `<plan_id>:<move_seq>` copied from WorkReleased.data.relocation; inventory-storage records it as the StockRelocated source_ref, and slotting-optimization matches it back to the plan's move.",
-              "x-parser-schema-id": "<anonymous-schema-31>"
+              "x-parser-schema-id": "<anonymous-schema-57>"
+            },
+            "request_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "REPLENISH only (ADR-0050; additive, the event stays v1; mirrors relocation_ref). The replenishment request id copied from WorkReleased.data.replenishment.request_id; inventory-storage records it as the StockRelocated source_ref (reason REPLENISHMENT) and pick-face-replenishment closes the request by it. Omitted on every other task type.",
+              "x-parser-schema-id": "<anonymous-schema-58>"
             }
           },
-          "x-parser-schema-id": "<anonymous-schema-18>"
+          "x-parser-schema-id": "<anonymous-schema-44>"
         }
       },
-      "x-parser-schema-id": "<anonymous-schema-14>"
+      "x-parser-schema-id": "<anonymous-schema-40>"
     }
   ],
-  "x-parser-schema-id": "<anonymous-schema-4>"
+  "x-parser-schema-id": "<anonymous-schema-39>"
 }
