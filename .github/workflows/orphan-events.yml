@@ -1,0 +1,42 @@
+name: orphan-events
+
+# Minimal workflow of its own so the paths filter cannot silence the lint/build
+# jobs in ci.yml: the sensor runs exactly when a PR touches the specs (including
+# the specs/no-consumer-reasons.yaml allowlist), the sensor itself, or the
+# topic-ownership map its derivation imports.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [develop]
+    paths:
+      - 'specs/**'
+      - 'scripts/check-orphan-events.mjs'
+      - 'catalog.contexts.mjs'
+      - '.github/workflows/orphan-events.yml'
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'specs/**'
+      - 'scripts/check-orphan-events.mjs'
+      - 'catalog.contexts.mjs'
+      - '.github/workflows/orphan-events.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  orphan-events:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # Fails (exit 1) when an integration event type has no consumer in any
+      # fleet spec and no written reason; warnings (e.g. a stale allowlist
+      # entry) do not fail the job.
+      - run: npm run check:events
