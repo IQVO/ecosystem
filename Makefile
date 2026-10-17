@@ -12,6 +12,11 @@ check: lint build
 chart-lint:
 	helm lint charts/ecosystem
 image:
-	docker build -t ghcr.io/iqvo/ecosystem:dev .
+	@if [ -f license.jwt ]; then \
+		docker build --secret id=eventcatalog_license,src=license.jwt -t ghcr.io/iqvo/ecosystem:dev .; \
+	else \
+		echo "note: no license.jwt, building unlicensed (trial notice)"; \
+		docker build -t ghcr.io/iqvo/ecosystem:dev .; \
+	fi
 run: image
 	docker run --rm -p 3001:8080 ghcr.io/iqvo/ecosystem:dev

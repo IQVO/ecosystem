@@ -21,7 +21,12 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY . .
 # Astro in Docker needs more than the default heap (same fix as the scaffold).
 ENV NODE_OPTIONS=--max_old_space_size=2048
-RUN npm run build && printf 'ok' > dist/healthz
+# license.jwt enters ONLY as a BuildKit secret (required=false: an unlicensed
+# build still succeeds, it just carries the trial notice). EventCatalog reads
+# the EC_LICENSE path at build time; the file never lands in any image layer.
+RUN --mount=type=secret,id=eventcatalog_license,required=false \
+    EC_LICENSE=/run/secrets/eventcatalog_license \
+    npm run build && printf 'ok' > dist/healthz
 
 # --- runtime stage ---
 # 1.31-alpine digest shared with warehouse-console so both UI images track the
