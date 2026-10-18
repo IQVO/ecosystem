@@ -1,0 +1,25 @@
+---
+id: warehouse.warehouse-planning.analytics
+name: warehouse.warehouse-planning.analytics
+version: 0.5.0
+address: warehouse.warehouse-planning.analytics
+protocols:
+  - kafka
+---
+## Overview
+  This service's analytics topic (`AnalyticsTopic` in
+`internal/adapters/outbound/kafka/analytics_encoder.go`; ADR 0005). Written by
+the SAME outbox relay, from rows inserted in the same transaction as the
+integration rows; key = capacity plan id. Consumed ONLY by this service's
+`planning-projector` under a fixed consumer group read from env
+`ANALYTICS_CONSUMER_GROUP` (at-least-once; the offset is committed after the
+projection and the dedupe mark committed together in the analytical database).
+The projector dedupes on `id`, ignores unknown types, skips (with a rate-limited
+WARN) anything that is not CloudEvents 1.0, and dead-letters a known type with an
+unusable payload to `warehouse.warehouse-planning.analytics.dlq` (raw bytes plus
+`x-dlq-*` headers). Not an integration contract: other contexts consume the
+integration topic.
+
+  
+
+  <ChannelInformation />

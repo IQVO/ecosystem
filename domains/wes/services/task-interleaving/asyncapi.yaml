@@ -53,11 +53,13 @@ info:
 
     **Consumed (ADR 0003).** `TaskAvailable`, `TaskClaimed` and `TaskCompleted`
 
-    from fulfillment-execution (`TaskAvailable` and `TaskClaimed` are **pending
+    from fulfillment-execution (`TaskAvailable` and `TaskClaimed` have been
+    published on
 
-    producer change P2**: they do not exist on its integration topic yet, this
+    its integration topic since its ADR 0049; `TaskAvailable` is announced only
 
-    context ships first and accepts them), and `ZoneRegistered`,
+    for the task types that carry bins, RELOCATE and REPLENISH, ADR 0050), and
+    `ZoneRegistered`,
 
     `LocationSlotRegistered`, `LocationSlotDecommissioned` and
 
@@ -1037,9 +1039,12 @@ channels:
       description: >
         `TaskAvailable` upserts a task into the local open-task pool and
 
-        `TaskClaimed` removes it (pending producer change P2: neither is
+        `TaskClaimed` removes it (both are published on the integration topic
+        since
 
-        published on the integration topic yet). `TaskCompleted` (verified on
+        fulfillment-execution's ADR 0049; `TaskAvailable` only for RELOCATE and
+
+        REPLENISH tasks, ADR 0050). `TaskCompleted` (verified on
 
         fulfillment-execution's `origin/develop`) records the completion at the
 
@@ -1057,18 +1062,22 @@ channels:
       message:
         oneOf:
           - name: TaskAvailable
-            title: >-
-              TaskAvailable (consumed, fulfillment-execution, pending producer
-              change P2)
+            title: TaskAvailable (consumed, fulfillment-execution)
             summary: A task entered or re-entered the open-task pool.
             description: >
-              PENDING PRODUCER CHANGE P2: not yet published by
-              fulfillment-execution, this
+              Published by fulfillment-execution since its ADR 0049 (only for
+              tasks that
 
-              contract is pinned here so the consumer ships first and the
-              producer
+              carry bins: RELOCATE and REPLENISH, ADR 0050; a PICK, PACK, SLAM
+              or REBIN
 
-              matches it. `type` =
+              task has no location there and is not announced, so the per-type
+              location
+
+              rules below describe what this consumer accepts, not what is sent
+              today).
+
+              This contract was pinned here consumer-first. `type` =
               `com.warehouse.wes.fulfillment-execution.task.TaskAvailable`,
 
               source `/warehouse/fulfillment-execution`, dataschema
@@ -1244,18 +1253,17 @@ channels:
                     available_at: '2026-10-17T11:58:00Z'
             messageId: TaskAvailable
           - name: TaskClaimed
-            title: >-
-              TaskClaimed (consumed, fulfillment-execution, pending producer
-              change P2)
+            title: TaskClaimed (consumed, fulfillment-execution)
             summary: A station claimed a task; it left the pool.
             description: >
-              PENDING PRODUCER CHANGE P2: today a `TaskClaimed` occurrence
-              exists only on
+              Published by fulfillment-execution on its integration topic since
+              its ADR 0049
 
-              fulfillment-execution's analytics topic (`{task_id, task_type,
-              station_id}`);
+              (with `claimed_at`, for every task type); it was previously only
+              an
 
-              P2 adds it to the integration topic with `claimed_at`. `type` =
+              analytics occurrence (`{task_id, task_type, station_id}`). `type`
+              =
 
               `com.warehouse.wes.fulfillment-execution.task.TaskClaimed`,
               dataschema
@@ -2886,17 +2894,22 @@ components:
       messageId: InterleavingPolicyDeclared
     TaskAvailable:
       name: TaskAvailable
-      title: >-
-        TaskAvailable (consumed, fulfillment-execution, pending producer change
-        P2)
+      title: TaskAvailable (consumed, fulfillment-execution)
       summary: A task entered or re-entered the open-task pool.
       description: >
-        PENDING PRODUCER CHANGE P2: not yet published by fulfillment-execution,
-        this
+        Published by fulfillment-execution since its ADR 0049 (only for tasks
+        that
 
-        contract is pinned here so the consumer ships first and the producer
+        carry bins: RELOCATE and REPLENISH, ADR 0050; a PICK, PACK, SLAM or
+        REBIN
 
-        matches it. `type` =
+        task has no location there and is not announced, so the per-type
+        location
+
+        rules below describe what this consumer accepts, not what is sent
+        today).
+
+        This contract was pinned here consumer-first. `type` =
         `com.warehouse.wes.fulfillment-execution.task.TaskAvailable`,
 
         source `/warehouse/fulfillment-execution`, dataschema
@@ -3067,18 +3080,15 @@ components:
       messageId: TaskAvailable
     TaskClaimed:
       name: TaskClaimed
-      title: >-
-        TaskClaimed (consumed, fulfillment-execution, pending producer change
-        P2)
+      title: TaskClaimed (consumed, fulfillment-execution)
       summary: A station claimed a task; it left the pool.
       description: >
-        PENDING PRODUCER CHANGE P2: today a `TaskClaimed` occurrence exists only
-        on
+        Published by fulfillment-execution on its integration topic since its
+        ADR 0049
 
-        fulfillment-execution's analytics topic (`{task_id, task_type,
-        station_id}`);
+        (with `claimed_at`, for every task type); it was previously only an
 
-        P2 adds it to the integration topic with `claimed_at`. `type` =
+        analytics occurrence (`{task_id, task_type, station_id}`). `type` =
 
         `com.warehouse.wes.fulfillment-execution.task.TaskClaimed`, dataschema
 

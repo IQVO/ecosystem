@@ -35,7 +35,13 @@ const pascal = (k) => k.charAt(0).toUpperCase() + k.slice(1);
 const isV2 = (doc) => String(doc.asyncapi).startsWith('2.');
 
 const docs = {};
-for (const ctx of fs.readdirSync(SRC)) {
+// specs/ also carries non-contract files (e.g. the no-consumer allowlist yaml);
+// only context directories with a synced asyncapi.yaml are generator input.
+const specDirs = fs
+  .readdirSync(SRC, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && fs.existsSync(path.join(SRC, e.name, 'asyncapi.yaml')))
+  .map((e) => e.name);
+for (const ctx of specDirs) {
   docs[ctx] = load(fs.readFileSync(path.join(SRC, ctx, 'asyncapi.yaml'), 'utf8'));
 }
 
@@ -142,7 +148,7 @@ function normalise(ctx, doc) {
 }
 
 fs.rmSync(OUT, { recursive: true, force: true });
-for (const ctx of fs.readdirSync(SRC)) {
+for (const ctx of specDirs) {
   fs.mkdirSync(path.join(OUT, ctx), { recursive: true });
   for (const file of fs.readdirSync(path.join(SRC, ctx))) {
     if (file === 'asyncapi.yaml') continue;

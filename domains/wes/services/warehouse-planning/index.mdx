@@ -1,7 +1,7 @@
 ---
 id: warehouse-planning
 name: Warehouse Planning (events)
-version: 0.5.0
+version: 0.6.0
 summary: >-
   Process and process-path capacity, normalisation across native units, and
   forward-looking capacity shortage detection.
@@ -20,48 +20,58 @@ badges:
     backgroundColor: blue
 sends:
   - id: CapacityPlanCreated
-    version: 0.5.0
+    version: 0.6.0
     to:
       - id: warehouse.warehouse-planning.events
-        version: 0.5.0
+        version: 0.6.0
   - id: CapacityPlanPublished
     version: 1.0.0
     to:
       - id: warehouse.warehouse-planning.events
-        version: 0.5.0
+        version: 0.6.0
   - id: CapacityShortageDetected
-    version: 0.5.0
+    version: 0.6.0
     to:
       - id: warehouse.warehouse-planning.events
-        version: 0.5.0
+        version: 0.6.0
   - id: BottleneckDetected
-    version: 0.5.0
+    version: 0.6.0
     to:
       - id: warehouse.warehouse-planning.events
-        version: 0.5.0
+        version: 0.6.0
+  - id: ProcessCapacityRegistered
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.events
+        version: 0.6.0
+  - id: ProcessCapacityChanged
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.events
+        version: 0.6.0
   - id: CapacityPlanCreatedAnalytics
-    version: 0.5.0
+    version: 0.6.0
     to:
       - id: warehouse.warehouse-planning.analytics
-        version: 0.5.0
+        version: 0.6.0
   - id: CapacityPlanPublishedAnalytics
-    version: 0.5.0
+    version: 0.6.0
     to:
       - id: warehouse.warehouse-planning.analytics
-        version: 0.5.0
+        version: 0.6.0
   - id: CapacityShortageDetectedAnalytics
-    version: 0.5.0
+    version: 0.6.0
     to:
       - id: warehouse.warehouse-planning.analytics
-        version: 0.5.0
+        version: 0.6.0
   - id: BottleneckDetectedAnalytics
-    version: 0.5.0
+    version: 0.6.0
     to:
       - id: warehouse.warehouse-planning.analytics
-        version: 0.5.0
+        version: 0.6.0
 receives:
   - id: ShiftPlanCommitted
-    version: 0.5.0
+    version: 1.0.0
     from:
       - id: warehouse.workforce.events
         version: 1.0.0
@@ -126,7 +136,13 @@ a retry republishes the same `id` -- consumers dedupe on it). Per plan:
 `CapacityPlanCreated` on creation; on publication
 `CapacityPlanPublished`, plus `CapacityShortageDetected` and
 `BottleneckDetected` only when the plan has a shortage.
-`ProcessCapacityRegistered`/`ProcessCapacityChanged` are NOT published yet.
+The `ProcessCapacity` aggregate publishes on the same topic and the same
+outbox: `ProcessCapacityRegistered` when its first (native) constraint
+brings it into being, `ProcessCapacityChanged` when a registration moves
+the effective rate (the minimum rate value, the binding constraint, or
+both); a registration the effective rate does not notice raises nothing.
+ProcessCapacity events are integration-stream only: the analytics fanout
+carries plan facts only (ADR 0005).
 
 **Consumed (Phase 3).** `ShiftPlanCommitted` (workforce-management) and
 `LocationSlotRegistered`/`LocationSlotDecommissioned` (facility-layout) keep
