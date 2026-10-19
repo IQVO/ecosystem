@@ -69,11 +69,6 @@ sends:
     to:
       - id: warehouse.inventory.events
         version: 1.0.0
-  - id: ProductClassified
-    version: 1.0.0
-    to:
-      - id: warehouse.inventory.events
-        version: 1.0.0
   - id: StockReceived
     version: 1.0.0
     to:
@@ -177,7 +172,7 @@ Domain-event catalog for the **inventory-storage** bounded context, the WMS-tier
 
 **Aggregates and entity groupings.** Three aggregates raise every event documented here. The **StockUnit** aggregate (entity segment `stock`) raises `StockReceived`, `ItemStowed`, `LocationRecorded` and `ItemUnlocated`. The **Reservation** aggregate (entity segment `reservation`) raises `StockReserved`, `ReservationExpired`, `ReservationRevoked` and `StockPicked` — `StockPicked` is grouped with the reservation because it is emitted by ConfirmPick when a reservation is consumed, and reservation id is the only identity it carries. The **Bin/Location** aggregate (entity segment `bin`) raises `CycleCountCompleted` and `DiscrepancyDetected`.
 
-**What reaches Kafka.** This document is the complete domain-event catalog for the bounded context. Two topics carry a subset of it: `warehouse.inventory.events` (the integration contract — `StockReserved`, `ReservationRevoked`, the transfer replies, the transfer receipt/stow events, `BinStockLevelChanged` (the per-bin absolute level feed, ADR 0040), and the legacy `ProductClassified`, from `internal/adapters/outbound/kafka/publisher.go`) and `warehouse.inventory.analytics` (the analytics data product — every message below except `LocationRecorded` and `ProductClassified`, from `internal/adapters/outbound/kafka/analytics_publisher.go`). Each message says which topics it reaches. `LocationRecorded` is in-process only (no consumer; decided 2026-10-06). Since ADR 0034 product-master owns product classification: `ProductClassified` is no longer raised by any write path and is emitted only by the one-shot `republish-product-classifications` backfill command (product-master ADR 0003 stage B), on the integration topic.
+**What reaches Kafka.** This document is the complete domain-event catalog for the bounded context. Two topics carry a subset of it: `warehouse.inventory.events` (the integration contract — `StockReserved`, `ReservationRevoked`, the transfer replies, the transfer receipt/stow events, `BinStockLevelChanged` (the per-bin absolute level feed, ADR 0040), from `internal/adapters/outbound/kafka/publisher.go`) and `warehouse.inventory.analytics` (the analytics data product — every message below except `LocationRecorded`, from `internal/adapters/outbound/kafka/analytics_publisher.go`). Each message says which topics it reaches. `LocationRecorded` is in-process only (no consumer; decided 2026-10-06). Since ADR 0034 product-master owns product classification; the legacy `ProductClassified` was retired from this service's contract at product-master ADR 0003 stage E (K21).
 
 **Consumed.** This service also consumes product-master's `warehouse.product-master.events` (channel below, ADR 0034) into a local copy of every SKU's classification that StowStock reads. Applying it raises no event here. It also consumes fulfillment-execution's `TaskCompleted` from `warehouse.fulfillment.events` (channel below, ADR 0035) to confirm a completed order's reservations as picked once the order's LAST PICK task completes (one PICK task per order line, counted per order); that raises this service's own `StockPicked` (analytics topic) per reservation. And it consumes inbound-receiving's `ReceiptLineReceived` from `warehouse.inbound-receiving.events` (channel below, ADR 0037): a line with `condition=Good` is booked as a staged receipt through the existing ReceiveStock use case (the same `StockReceived` as `POST /stock/receive`, analytics topic; quantity staged, stow stays the RF action); `Damaged` is not booked in v1.
 

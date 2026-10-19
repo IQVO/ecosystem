@@ -49,17 +49,15 @@ info:
     `warehouse.inventory.events` (the integration contract — `StockReserved`,
     `ReservationRevoked`, the transfer replies, the transfer receipt/stow
     events, `BinStockLevelChanged` (the per-bin absolute level feed, ADR 0040),
-    and the legacy `ProductClassified`, from
-    `internal/adapters/outbound/kafka/publisher.go`) and
+    from `internal/adapters/outbound/kafka/publisher.go`) and
     `warehouse.inventory.analytics` (the analytics data product — every message
-    below except `LocationRecorded` and `ProductClassified`, from
+    below except `LocationRecorded`, from
     `internal/adapters/outbound/kafka/analytics_publisher.go`). Each message
     says which topics it reaches. `LocationRecorded` is in-process only (no
-    consumer; decided 2026-10-06). Since ADR 0034 product-master owns product
-    classification: `ProductClassified` is no longer raised by any write path
-    and is emitted only by the one-shot `republish-product-classifications`
-    backfill command (product-master ADR 0003 stage B), on the integration
-    topic.
+    consumer; decided 2026-10-06). Product-master owns product classification
+    (ADR 0034); the legacy `ProductClassified` and the one-shot
+    `republish-product-classifications` backfill that re-emitted it were removed
+    at product-master ADR 0003 stage E (2026-10-17).
 
 
     **Consumed.** This service also consumes product-master's
@@ -115,9 +113,8 @@ tags:
   - name: product
     description: >
       Events about SKU-level handling master data (hazmat, fragile, temperature,
-      ...). Owned by product-master since ADR 0034; this service only re-emits
-      its legacy `ProductClassified` from the one-shot backfill command and
-      consumes product-master's own events.
+      ...). Owned by product-master since ADR 0034; this service consumes
+      product-master's own events.
   - name: product-master
     description: >
       Events consumed from the product-master bounded context (wms subdomain),
@@ -149,13 +146,12 @@ channels:
       constant in `internal/adapters/outbound/kafka/publisher.go`). Reaching it:
       `StockReserved` and `ReservationRevoked` (keyed by reservation id), the
       transfer replies and receipt/stow events (keyed by transfer line id),
-      `StockRelocated` (keyed by relocation id, ADR 0039),
-      `BinStockLevelChanged` (keyed by `<bin>:<sku>`, ADR 0040), and the legacy
-      `ProductClassified` (keyed by SKU), which since ADR 0034 only the one-shot
-      `republish-product-classifications` backfill emits (product-master's
-      legacy importer consumes it). The primary downstream consumer is
-      wes-work-planning, which dispatches on their full `type` strings and
-      projects them into its `UsableInventoryObserved` read model, keyed by SKU.
+      `StockRelocated` (keyed by relocation id, ADR 0039) and
+      `BinStockLevelChanged` (keyed by `<bin>:<sku>`, ADR 0040). The legacy
+      `ProductClassified` was retired at product-master ADR 0003 stage E
+      (2026-10-17). The primary downstream consumer is wes-work-planning, which
+      dispatches on their full `type` strings and projects them into its
+      `UsableInventoryObserved` read model, keyed by SKU.
     x-eventcatalog-channel-version: 1.0.0
     publish:
       operationId: consumeInventoryStorageEvents
@@ -2037,243 +2033,6 @@ channels:
                     reason: PICK
                     occurred_at: '2026-08-21T22:00:00Z'
             messageId: BinStockLevelChanged
-          - name: ProductClassified
-            title: Product Classified (legacy, backfill only)
-            summary: >-
-              A SKU's handling classification, re-emitted by the one-shot
-              backfill.
-            description: >
-              LEGACY (ADR 0034). product-master owns product classification; no
-              write path in this service raises this event any more. It is
-              emitted only by the one-shot `republish-product-classifications`
-              command (product-master ADR 0003 stage B): one message per
-              `product_classifications` row, enqueued through the transactional
-              outbox and published by the running pod's relay, on
-              `warehouse.inventory.events` only (dataschema
-              `urn:warehouse:inventory-storage:events:ProductClassified:v1`).
-              product-master's legacy importer turns it into product-master
-              data. The wire contract is unchanged from ADR 0031. Retired at
-              product-master ADR 0003 stage E.
-
-
-              CloudEvents `subject` and the Kafka key are the SKU. `data` is
-              `{sku, handling_tags, temperature_class?, dot_hazard_class?}`. It
-              is a **full-state replacement**: overwrite your local row; an
-              absent optional field means "none". `handling_tags` is in the
-              stable enum order. No PII. Re-running the backfill re-emits the
-              same states, which is harmless.
-            contentType: application/cloudevents+json
-            tags:
-              - name: product
-                description: Legacy SKU master-data event (backfill only).
-            payload:
-              description: >
-                CloudEvents envelope for the legacy ProductClassified event.
-                Since ADR 0034 only the integration-topic (`events`) variant is
-                emitted, by the backfill command; the `analytics` dataschema is
-                still accepted by the encoder's frozen contract but no longer
-                produced.
-              allOf:
-                - type: object
-                  description: >
-                    The CloudEvents 1.0 context attributes shared by every
-                    message this bounded context emits, in structured-mode JSON.
-                    Each concrete event schema composes this with `allOf` and
-                    pins `type` to a single value.
-                  required:
-                    - specversion
-                    - id
-                    - source
-                    - type
-                    - subject
-                    - time
-                    - datacontenttype
-                    - dataschema
-                    - data
-                  properties:
-                    specversion:
-                      type: string
-                      description: CloudEvents specification version. Always "1.0".
-                      enum:
-                        - '1.0'
-                      x-parser-schema-id: <anonymous-schema-1>
-                    id:
-                      type: string
-                      format: uuid
-                      description: >
-                        Unique identifier for this event occurrence, a UUID v4.
-                        Together with `source` it uniquely identifies the event,
-                        which is what consumers deduplicate on.
-                      x-parser-schema-id: <anonymous-schema-2>
-                    source:
-                      type: string
-                      description: >
-                        The context that emitted the event. Always
-                        `/warehouse/inventory-storage` for this service.
-                      enum:
-                        - /warehouse/inventory-storage
-                      x-parser-schema-id: <anonymous-schema-3>
-                    type:
-                      type: string
-                      description: >
-                        Reverse-DNS event type, of the form
-                        `com.warehouse.wms.inventory-storage.<entity>.<EventName>`.
-                        Pinned to a single value by each concrete event schema.
-                      x-parser-schema-id: <anonymous-schema-4>
-                    subject:
-                      type: string
-                      description: >
-                        The id of the aggregate instance this event is about — a
-                        reservation id, a StockUnit id, a bin id, or a SKU,
-                        depending on the event. Never empty.
-                      x-parser-schema-id: <anonymous-schema-5>
-                    time:
-                      type: string
-                      format: date-time
-                      description: >
-                        RFC 3339 timestamp of when the event occurred in the
-                        domain, taken from the injected Clock port, not from
-                        wall-clock time at publish.
-                      x-parser-schema-id: <anonymous-schema-6>
-                    datacontenttype:
-                      type: string
-                      description: >-
-                        Media type of the `data` member. Always
-                        application/json.
-                      enum:
-                        - application/json
-                      x-parser-schema-id: <anonymous-schema-7>
-                    dataschema:
-                      type: string
-                      format: uri
-                      description: >
-                        Absolute URI naming the payload shape and version:
-                        `urn:warehouse:inventory-storage:<events|analytics>:<EventName>:v<N>`.
-                        Pinned per message by each concrete event schema (the
-                        `events` variant for StockReserved/ReservationRevoked,
-                        `analytics` for the rest; StockReserved and
-                        ReservationRevoked also appear on the analytics topic
-                        with the `analytics` variant).
-                      pattern: >-
-                        ^urn:warehouse:inventory-storage:(events|analytics):[A-Za-z]+:v[0-9]+$
-                      x-parser-schema-id: <anonymous-schema-8>
-                    data:
-                      type: object
-                      description: The event payload. Shape is fixed by `dataschema`.
-                      x-parser-schema-id: <anonymous-schema-9>
-                  x-parser-schema-id: CloudEventBase
-                - type: object
-                  required:
-                    - type
-                    - data
-                  properties:
-                    type:
-                      type: string
-                      description: Fixed event type for ProductClassified.
-                      const: >-
-                        com.warehouse.wms.inventory-storage.product.ProductClassified
-                      x-parser-schema-id: <anonymous-schema-112>
-                    dataschema:
-                      type: string
-                      description: >-
-                        urn:warehouse:inventory-storage:events:ProductClassified:v1
-                        on the integration topic,
-                        ...:analytics:ProductClassified:v1 on the analytics
-                        topic.
-                      pattern: >-
-                        ^urn:warehouse:inventory-storage:(events|analytics):ProductClassified:v1$
-                      x-parser-schema-id: <anonymous-schema-113>
-                    data:
-                      type: object
-                      description: >
-                        Full-state replacement of the SKU's classification.
-                        Optional fields are omitted when unset.
-                      required:
-                        - sku
-                        - handling_tags
-                      properties:
-                        sku:
-                          type: string
-                          description: >-
-                            The classified SKU (also the CloudEvents subject and
-                            Kafka key).
-                          x-parser-schema-id: <anonymous-schema-115>
-                        handling_tags:
-                          type: array
-                          minItems: 1
-                          description: >-
-                            Non-empty, duplicate-free set of handling tags, in
-                            the aggregate's stable enum order.
-                          items:
-                            type: string
-                            enum:
-                              - Hazmat
-                              - Fragile
-                              - TemperatureSensitive
-                              - Oversized
-                              - HighValue
-                            x-parser-schema-id: <anonymous-schema-117>
-                          x-parser-schema-id: <anonymous-schema-116>
-                        temperature_class:
-                          type: string
-                          enum:
-                            - Ambient
-                            - Chilled
-                            - Frozen
-                          description: >-
-                            Present if and only if handling_tags includes
-                            TemperatureSensitive.
-                          x-parser-schema-id: <anonymous-schema-118>
-                        dot_hazard_class:
-                          type: integer
-                          minimum: 1
-                          maximum: 9
-                          description: >-
-                            Top-level US DOT hazard class; present only for a
-                            Hazmat classification with one recorded (ADR 0010).
-                          x-parser-schema-id: <anonymous-schema-119>
-                      x-parser-schema-id: <anonymous-schema-114>
-                  x-parser-schema-id: <anonymous-schema-111>
-              x-parser-schema-id: ProductClassifiedEvent
-            examples:
-              - name: hazmatFrozenSku
-                summary: >-
-                  SKU-9 classified as Hazmat + TemperatureSensitive (Frozen),
-                  DOT class 3.
-                payload:
-                  specversion: '1.0'
-                  id: 7e2f5d18-0a9c-4b34-9d61-4c8a3e7b1f05
-                  source: /warehouse/inventory-storage
-                  type: >-
-                    com.warehouse.wms.inventory-storage.product.ProductClassified
-                  subject: SKU-9
-                  time: '2026-10-06T12:00:00Z'
-                  datacontenttype: application/json
-                  dataschema: urn:warehouse:inventory-storage:events:ProductClassified:v1
-                  data:
-                    sku: SKU-9
-                    handling_tags:
-                      - Hazmat
-                      - TemperatureSensitive
-                    temperature_class: Frozen
-                    dot_hazard_class: 3
-              - name: fragileSku
-                summary: SKU-1 classified as Fragile only (no optional fields).
-                payload:
-                  specversion: '1.0'
-                  id: 9a4c1e66-3d57-4f20-b8e9-2a6d0c5f7b13
-                  source: /warehouse/inventory-storage
-                  type: >-
-                    com.warehouse.wms.inventory-storage.product.ProductClassified
-                  subject: SKU-1
-                  time: '2026-10-06T12:01:00Z'
-                  datacontenttype: application/json
-                  dataschema: urn:warehouse:inventory-storage:events:ProductClassified:v1
-                  data:
-                    sku: SKU-1
-                    handling_tags:
-                      - Fragile
-            messageId: ProductClassified
   warehouse.inventory.analytics:
     description: >
       The internal analytics topic feeding this service's Inventory Flow &
@@ -2285,10 +2044,9 @@ channels:
       reservation-lifecycle events). Consumed only by this service's own
       projector (`cmd/inventory-projector`), which dispatches on the full
       `type`, dedupes on `id`, and skips (WARN) anything that is not a valid
-      CloudEvent. `ProductClassified` no longer reaches this topic (ADR 0034:
-      the write path stopped raising it and the backfill writes the integration
-      topic only); the projector would acknowledge it without touching the read
-      model.
+      CloudEvent. The legacy `ProductClassified` never reaches this topic and
+      was retired at product-master ADR 0003 stage E (2026-10-17); the projector
+      would acknowledge it without touching the read model.
     x-eventcatalog-channel-version: 1.0.0
     publish:
       operationId: consumeInventoryStorageAnalytics
@@ -2418,14 +2176,14 @@ channels:
                       type: string
                       description: Fixed event type for StockReceived.
                       const: com.warehouse.wms.inventory-storage.stock.StockReceived
-                      x-parser-schema-id: <anonymous-schema-121>
+                      x-parser-schema-id: <anonymous-schema-112>
                     dataschema:
                       type: string
                       description: >-
                         urn:warehouse:inventory-storage:analytics:StockReceived:v1
                       pattern: >-
                         ^urn:warehouse:inventory-storage:analytics:StockReceived:v1$
-                      x-parser-schema-id: <anonymous-schema-122>
+                      x-parser-schema-id: <anonymous-schema-113>
                     data:
                       type: object
                       description: Business payload for StockReceived.
@@ -2438,16 +2196,16 @@ channels:
                           description: >-
                             The stock keeping unit the goods were received
                             against.
-                          x-parser-schema-id: <anonymous-schema-124>
+                          x-parser-schema-id: <anonymous-schema-115>
                         quantity:
                           type: integer
                           minimum: 1
                           description: >
                             Quantity received and staged. Always positive; the
                             domain rejects a non-positive receipt.
-                          x-parser-schema-id: <anonymous-schema-125>
-                      x-parser-schema-id: <anonymous-schema-123>
-                  x-parser-schema-id: <anonymous-schema-120>
+                          x-parser-schema-id: <anonymous-schema-116>
+                      x-parser-schema-id: <anonymous-schema-114>
+                  x-parser-schema-id: <anonymous-schema-111>
               x-parser-schema-id: StockReceivedEvent
             examples:
               - name: receivedFiftyUnits
@@ -2583,13 +2341,13 @@ channels:
                       type: string
                       description: Fixed event type for ItemStowed.
                       const: com.warehouse.wms.inventory-storage.stock.ItemStowed
-                      x-parser-schema-id: <anonymous-schema-127>
+                      x-parser-schema-id: <anonymous-schema-118>
                     dataschema:
                       type: string
                       description: urn:warehouse:inventory-storage:analytics:ItemStowed:v1
                       pattern: >-
                         ^urn:warehouse:inventory-storage:analytics:ItemStowed:v1$
-                      x-parser-schema-id: <anonymous-schema-128>
+                      x-parser-schema-id: <anonymous-schema-119>
                     data:
                       type: object
                       description: Business payload for ItemStowed.
@@ -2603,21 +2361,21 @@ channels:
                           description: >-
                             The stock keeping unit that was stowed (the item
                             scan).
-                          x-parser-schema-id: <anonymous-schema-130>
+                          x-parser-schema-id: <anonymous-schema-121>
                         bin_id:
                           type: string
                           description: >
                             The bin the quantity was placed into (the location
                             scan). Chaotic storage: any SKU may occupy any free
                             bin.
-                          x-parser-schema-id: <anonymous-schema-131>
+                          x-parser-schema-id: <anonymous-schema-122>
                         quantity:
                           type: integer
                           minimum: 1
                           description: Quantity placed into the bin. Always positive.
-                          x-parser-schema-id: <anonymous-schema-132>
-                      x-parser-schema-id: <anonymous-schema-129>
-                  x-parser-schema-id: <anonymous-schema-126>
+                          x-parser-schema-id: <anonymous-schema-123>
+                      x-parser-schema-id: <anonymous-schema-120>
+                  x-parser-schema-id: <anonymous-schema-117>
               x-parser-schema-id: ItemStowedEvent
             examples:
               - name: stowedIntoBinA12
@@ -2754,14 +2512,14 @@ channels:
                       type: string
                       description: Fixed event type for ItemUnlocated.
                       const: com.warehouse.wms.inventory-storage.stock.ItemUnlocated
-                      x-parser-schema-id: <anonymous-schema-134>
+                      x-parser-schema-id: <anonymous-schema-125>
                     dataschema:
                       type: string
                       description: >-
                         urn:warehouse:inventory-storage:analytics:ItemUnlocated:v1
                       pattern: >-
                         ^urn:warehouse:inventory-storage:analytics:ItemUnlocated:v1$
-                      x-parser-schema-id: <anonymous-schema-135>
+                      x-parser-schema-id: <anonymous-schema-126>
                     data:
                       type: object
                       description: Business payload for ItemUnlocated.
@@ -2776,24 +2534,24 @@ channels:
                           description: >-
                             Identifier of the StockUnit that was flagged
                             Unlocated.
-                          x-parser-schema-id: <anonymous-schema-137>
+                          x-parser-schema-id: <anonymous-schema-128>
                         sku:
                           type: string
                           description: The stock keeping unit that could not be found.
-                          x-parser-schema-id: <anonymous-schema-138>
+                          x-parser-schema-id: <anonymous-schema-129>
                         bin_id:
                           type: string
                           description: The bin the stock was believed to be in.
-                          x-parser-schema-id: <anonymous-schema-139>
+                          x-parser-schema-id: <anonymous-schema-130>
                         quantity:
                           type: integer
                           minimum: 1
                           description: >
                             Quantity that could not be accounted for, now
                             removed from usable inventory.
-                          x-parser-schema-id: <anonymous-schema-140>
-                      x-parser-schema-id: <anonymous-schema-136>
-                  x-parser-schema-id: <anonymous-schema-133>
+                          x-parser-schema-id: <anonymous-schema-131>
+                      x-parser-schema-id: <anonymous-schema-127>
+                  x-parser-schema-id: <anonymous-schema-124>
               x-parser-schema-id: ItemUnlocatedEvent
             examples:
               - name: shortCountUnlocatedStock
@@ -3148,13 +2906,13 @@ channels:
                       description: Fixed event type for StockPicked.
                       const: >-
                         com.warehouse.wms.inventory-storage.reservation.StockPicked
-                      x-parser-schema-id: <anonymous-schema-142>
+                      x-parser-schema-id: <anonymous-schema-133>
                     dataschema:
                       type: string
                       description: urn:warehouse:inventory-storage:analytics:StockPicked:v1
                       pattern: >-
                         ^urn:warehouse:inventory-storage:analytics:StockPicked:v1$
-                      x-parser-schema-id: <anonymous-schema-143>
+                      x-parser-schema-id: <anonymous-schema-134>
                     data:
                       type: object
                       description: Business payload for StockPicked.
@@ -3168,20 +2926,20 @@ channels:
                           description: >
                             Identifier of the reservation that was consumed by
                             this pick. A reservation can be consumed only once.
-                          x-parser-schema-id: <anonymous-schema-145>
+                          x-parser-schema-id: <anonymous-schema-136>
                         sku:
                           type: string
                           description: The stock keeping unit that was picked.
-                          x-parser-schema-id: <anonymous-schema-146>
+                          x-parser-schema-id: <anonymous-schema-137>
                         quantity:
                           type: integer
                           minimum: 1
                           description: >
                             Quantity physically removed from its bin and
                             permanently deducted from on-hand.
-                          x-parser-schema-id: <anonymous-schema-147>
-                      x-parser-schema-id: <anonymous-schema-144>
-                  x-parser-schema-id: <anonymous-schema-141>
+                          x-parser-schema-id: <anonymous-schema-138>
+                      x-parser-schema-id: <anonymous-schema-135>
+                  x-parser-schema-id: <anonymous-schema-132>
               x-parser-schema-id: StockPickedEvent
             examples:
               - name: pickConfirmed
@@ -3322,14 +3080,14 @@ channels:
                       description: Fixed event type for ReservationExpired.
                       const: >-
                         com.warehouse.wms.inventory-storage.reservation.ReservationExpired
-                      x-parser-schema-id: <anonymous-schema-149>
+                      x-parser-schema-id: <anonymous-schema-140>
                     dataschema:
                       type: string
                       description: >-
                         urn:warehouse:inventory-storage:analytics:ReservationExpired:v1
                       pattern: >-
                         ^urn:warehouse:inventory-storage:analytics:ReservationExpired:v1$
-                      x-parser-schema-id: <anonymous-schema-150>
+                      x-parser-schema-id: <anonymous-schema-141>
                     data:
                       type: object
                       description: Business payload for ReservationExpired.
@@ -3342,7 +3100,7 @@ channels:
                           description: >
                             Identifier of the reservation whose timeout elapsed.
                             Its quantity returns to usable inventory.
-                          x-parser-schema-id: <anonymous-schema-152>
+                          x-parser-schema-id: <anonymous-schema-143>
                         sku:
                           type: string
                           description: >
@@ -3350,9 +3108,9 @@ channels:
                             through ports.ReservationRepo. Empty if the
                             reservation could not be found (best-effort
                             enrichment).
-                          x-parser-schema-id: <anonymous-schema-153>
-                      x-parser-schema-id: <anonymous-schema-151>
-                  x-parser-schema-id: <anonymous-schema-148>
+                          x-parser-schema-id: <anonymous-schema-144>
+                      x-parser-schema-id: <anonymous-schema-142>
+                  x-parser-schema-id: <anonymous-schema-139>
               x-parser-schema-id: ReservationExpiredEvent
             examples:
               - name: reservationTimedOut
@@ -3709,14 +3467,14 @@ channels:
                       description: Fixed event type for CycleCountCompleted.
                       const: >-
                         com.warehouse.wms.inventory-storage.bin.CycleCountCompleted
-                      x-parser-schema-id: <anonymous-schema-155>
+                      x-parser-schema-id: <anonymous-schema-146>
                     dataschema:
                       type: string
                       description: >-
                         urn:warehouse:inventory-storage:analytics:CycleCountCompleted:v1
                       pattern: >-
                         ^urn:warehouse:inventory-storage:analytics:CycleCountCompleted:v1$
-                      x-parser-schema-id: <anonymous-schema-156>
+                      x-parser-schema-id: <anonymous-schema-147>
                     data:
                       type: object
                       description: Business payload for CycleCountCompleted.
@@ -3729,26 +3487,26 @@ channels:
                         bin_id:
                           type: string
                           description: The bin whose contents were verified.
-                          x-parser-schema-id: <anonymous-schema-158>
+                          x-parser-schema-id: <anonymous-schema-149>
                         counted:
                           type: integer
                           minimum: 0
                           description: Quantity physically counted in the bin.
-                          x-parser-schema-id: <anonymous-schema-159>
+                          x-parser-schema-id: <anonymous-schema-150>
                         system:
                           type: integer
                           minimum: 0
                           description: Quantity the system believed was in the bin.
-                          x-parser-schema-id: <anonymous-schema-160>
+                          x-parser-schema-id: <anonymous-schema-151>
                         discrepancy:
                           type: boolean
                           description: >
                             Whether counted and system quantities differed. When
                             true, a DiscrepancyDetected event accompanies this
                             one.
-                          x-parser-schema-id: <anonymous-schema-161>
-                      x-parser-schema-id: <anonymous-schema-157>
-                  x-parser-schema-id: <anonymous-schema-154>
+                          x-parser-schema-id: <anonymous-schema-152>
+                      x-parser-schema-id: <anonymous-schema-148>
+                  x-parser-schema-id: <anonymous-schema-145>
               x-parser-schema-id: CycleCountCompletedEvent
             examples:
               - name: countMatchedSystem
@@ -3887,14 +3645,14 @@ channels:
                       description: Fixed event type for DiscrepancyDetected.
                       const: >-
                         com.warehouse.wms.inventory-storage.bin.DiscrepancyDetected
-                      x-parser-schema-id: <anonymous-schema-163>
+                      x-parser-schema-id: <anonymous-schema-154>
                     dataschema:
                       type: string
                       description: >-
                         urn:warehouse:inventory-storage:analytics:DiscrepancyDetected:v1
                       pattern: >-
                         ^urn:warehouse:inventory-storage:analytics:DiscrepancyDetected:v1$
-                      x-parser-schema-id: <anonymous-schema-164>
+                      x-parser-schema-id: <anonymous-schema-155>
                     data:
                       type: object
                       description: Business payload for DiscrepancyDetected.
@@ -3906,19 +3664,19 @@ channels:
                         bin_id:
                           type: string
                           description: The bin whose count did not match system records.
-                          x-parser-schema-id: <anonymous-schema-166>
+                          x-parser-schema-id: <anonymous-schema-157>
                         counted:
                           type: integer
                           minimum: 0
                           description: Quantity physically counted in the bin.
-                          x-parser-schema-id: <anonymous-schema-167>
+                          x-parser-schema-id: <anonymous-schema-158>
                         system:
                           type: integer
                           minimum: 0
                           description: Quantity the system believed was in the bin.
-                          x-parser-schema-id: <anonymous-schema-168>
-                      x-parser-schema-id: <anonymous-schema-165>
-                  x-parser-schema-id: <anonymous-schema-162>
+                          x-parser-schema-id: <anonymous-schema-159>
+                      x-parser-schema-id: <anonymous-schema-156>
+                  x-parser-schema-id: <anonymous-schema-153>
               x-parser-schema-id: DiscrepancyDetectedEvent
             examples:
               - name: binCountShort
@@ -4002,37 +3760,37 @@ channels:
               type: string
               enum:
                 - '1.0'
-              x-parser-schema-id: <anonymous-schema-169>
+              x-parser-schema-id: <anonymous-schema-160>
             id:
               type: string
               description: CloudEvents id; the dedupe key (claimed in processed_events).
-              x-parser-schema-id: <anonymous-schema-170>
+              x-parser-schema-id: <anonymous-schema-161>
             source:
               type: string
               enum:
                 - /warehouse/product-master
-              x-parser-schema-id: <anonymous-schema-171>
+              x-parser-schema-id: <anonymous-schema-162>
             type:
               type: string
               const: com.warehouse.wms.product-master.product.ProductClassified
-              x-parser-schema-id: <anonymous-schema-172>
+              x-parser-schema-id: <anonymous-schema-163>
             subject:
               type: string
               description: The SKU (also the Kafka key).
-              x-parser-schema-id: <anonymous-schema-173>
+              x-parser-schema-id: <anonymous-schema-164>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-174>
+              x-parser-schema-id: <anonymous-schema-165>
             datacontenttype:
               type: string
               enum:
                 - application/json
-              x-parser-schema-id: <anonymous-schema-175>
+              x-parser-schema-id: <anonymous-schema-166>
             dataschema:
               type: string
               description: urn:warehouse:product-master:events:ProductClassified:v1
-              x-parser-schema-id: <anonymous-schema-176>
+              x-parser-schema-id: <anonymous-schema-167>
             data:
               type: object
               required:
@@ -4043,7 +3801,7 @@ channels:
               properties:
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-178>
+                  x-parser-schema-id: <anonymous-schema-169>
                 handling_tags:
                   type: array
                   minItems: 1
@@ -4058,8 +3816,8 @@ channels:
                       - TemperatureSensitive
                       - Oversized
                       - HighValue
-                    x-parser-schema-id: <anonymous-schema-180>
-                  x-parser-schema-id: <anonymous-schema-179>
+                    x-parser-schema-id: <anonymous-schema-171>
+                  x-parser-schema-id: <anonymous-schema-170>
                 temperature_class:
                   type: string
                   enum:
@@ -4069,13 +3827,13 @@ channels:
                   description: >-
                     Present if and only if handling_tags includes
                     TemperatureSensitive.
-                  x-parser-schema-id: <anonymous-schema-181>
+                  x-parser-schema-id: <anonymous-schema-172>
                 dot_hazard_class:
                   type: integer
                   minimum: 1
                   maximum: 9
                   description: Present only for a Hazmat classification with one recorded.
-                  x-parser-schema-id: <anonymous-schema-182>
+                  x-parser-schema-id: <anonymous-schema-173>
                 classification_source:
                   type: string
                   enum:
@@ -4084,7 +3842,7 @@ channels:
                   description: >-
                     Stored verbatim as
                     product_classifications.classification_source.
-                  x-parser-schema-id: <anonymous-schema-183>
+                  x-parser-schema-id: <anonymous-schema-174>
                 version:
                   type: integer
                   format: int64
@@ -4092,8 +3850,8 @@ channels:
                   description: >-
                     product-master's Product.version; applied only when greater
                     than the stored version.
-                  x-parser-schema-id: <anonymous-schema-184>
-              x-parser-schema-id: <anonymous-schema-177>
+                  x-parser-schema-id: <anonymous-schema-175>
+              x-parser-schema-id: <anonymous-schema-168>
           x-parser-schema-id: ProductMasterProductClassifiedEvent
         examples:
           - name: hazmatFrozenSku
@@ -4269,7 +4027,7 @@ channels:
               type: string
               enum:
                 - '1.0'
-              x-parser-schema-id: <anonymous-schema-185>
+              x-parser-schema-id: <anonymous-schema-176>
             id:
               type: string
               description: >-
@@ -4277,33 +4035,33 @@ channels:
                 under consumer `task-completed-confirm-pick`,
                 `task-completed-relocate` for RELOCATE tasks, or
                 `task-completed-replenish` for REPLENISH tasks).
-              x-parser-schema-id: <anonymous-schema-186>
+              x-parser-schema-id: <anonymous-schema-177>
             source:
               type: string
               enum:
                 - /warehouse/fulfillment-execution
-              x-parser-schema-id: <anonymous-schema-187>
+              x-parser-schema-id: <anonymous-schema-178>
             type:
               type: string
               const: com.warehouse.wes.fulfillment-execution.task.TaskCompleted
-              x-parser-schema-id: <anonymous-schema-188>
+              x-parser-schema-id: <anonymous-schema-179>
             subject:
               type: string
               description: The task id (also the Kafka key).
-              x-parser-schema-id: <anonymous-schema-189>
+              x-parser-schema-id: <anonymous-schema-180>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-190>
+              x-parser-schema-id: <anonymous-schema-181>
             datacontenttype:
               type: string
               enum:
                 - application/json
-              x-parser-schema-id: <anonymous-schema-191>
+              x-parser-schema-id: <anonymous-schema-182>
             dataschema:
               type: string
               description: urn:warehouse:fulfillment-execution:events:TaskCompleted:v1
-              x-parser-schema-id: <anonymous-schema-192>
+              x-parser-schema-id: <anonymous-schema-183>
             data:
               type: object
               required:
@@ -4311,7 +4069,7 @@ channels:
               properties:
                 task_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-194>
+                  x-parser-schema-id: <anonymous-schema-185>
                 task_type:
                   type: string
                   enum:
@@ -4326,7 +4084,7 @@ channels:
                   description: >-
                     PICK, RELOCATE and REPLENISH are acted on; omitted by the
                     producer when the task could not be found.
-                  x-parser-schema-id: <anonymous-schema-195>
+                  x-parser-schema-id: <anonymous-schema-186>
                 order_ref:
                   type: string
                   description: >
@@ -4336,7 +4094,7 @@ channels:
                     per order line) carries the same value. Additive and
                     optional (ADR 0035): omitted when empty, in which case
                     nothing is counted or confirmed.
-                  x-parser-schema-id: <anonymous-schema-196>
+                  x-parser-schema-id: <anonymous-schema-187>
                 line_no:
                   type: integer
                   minimum: 1
@@ -4350,7 +4108,7 @@ channels:
                     the ADR 0035 last-pick counting applies. A value outside
                     1..2147483647 (the 32-bit line_no column) or a non-integer
                     is a malformed payload (dead-lettered).
-                  x-parser-schema-id: <anonymous-schema-197>
+                  x-parser-schema-id: <anonymous-schema-188>
                 sku:
                   type: string
                   description: >
@@ -4358,20 +4116,20 @@ channels:
                     the SKU moved. Required on a RELOCATE or REPLENISH
                     completion (missing or invalid = dead-lettered); absent on
                     every other task type.
-                  x-parser-schema-id: <anonymous-schema-198>
+                  x-parser-schema-id: <anonymous-schema-189>
                 from_bin:
                   type: string
                   description: >
                     RELOCATE and REPLENISH only (additive): the source bin's
                     location code; its site is the move's site.
-                  x-parser-schema-id: <anonymous-schema-199>
+                  x-parser-schema-id: <anonymous-schema-190>
                 to_bin:
                   type: string
                   description: >
                     RELOCATE and REPLENISH only (additive): the destination
                     bin's location code; must be a different bin of the same
                     site.
-                  x-parser-schema-id: <anonymous-schema-200>
+                  x-parser-schema-id: <anonymous-schema-191>
                 quantity:
                   type: integer
                   minimum: 1
@@ -4379,7 +4137,7 @@ channels:
                     RELOCATE and REPLENISH only (additive): the units moved.
                     Missing, zero or negative on a RELOCATE or REPLENISH
                     completion = dead-lettered.
-                  x-parser-schema-id: <anonymous-schema-201>
+                  x-parser-schema-id: <anonymous-schema-192>
                 relocation_ref:
                   type: string
                   maxLength: 200
@@ -4387,7 +4145,7 @@ channels:
                     RELOCATE only (additive, ADR 0039, optional): the slot-plan
                     move the task executes; stored as the relocation's
                     source_ref (the task id is used when absent).
-                  x-parser-schema-id: <anonymous-schema-202>
+                  x-parser-schema-id: <anonymous-schema-193>
                 request_ref:
                   type: string
                   maxLength: 200
@@ -4397,8 +4155,8 @@ channels:
                     source_ref (reason REPLENISHMENT) and echoed in
                     StockRelocated. Missing or blank = dead-lettered; there is
                     no task-id fallback.
-                  x-parser-schema-id: <anonymous-schema-203>
-              x-parser-schema-id: <anonymous-schema-193>
+                  x-parser-schema-id: <anonymous-schema-194>
+              x-parser-schema-id: <anonymous-schema-184>
           x-parser-schema-id: FulfillmentTaskCompletedEvent
         examples:
           - name: pickTaskCompletedForLine
@@ -4567,39 +4325,39 @@ channels:
               type: string
               enum:
                 - '1.0'
-              x-parser-schema-id: <anonymous-schema-204>
+              x-parser-schema-id: <anonymous-schema-195>
             id:
               type: string
               description: >-
                 CloudEvents id; the dedupe key (claimed in processed_events
                 under consumer `inbound-receipt-line`).
-              x-parser-schema-id: <anonymous-schema-205>
+              x-parser-schema-id: <anonymous-schema-196>
             source:
               type: string
               enum:
                 - /warehouse/inbound-receiving
-              x-parser-schema-id: <anonymous-schema-206>
+              x-parser-schema-id: <anonymous-schema-197>
             type:
               type: string
               const: com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived
-              x-parser-schema-id: <anonymous-schema-207>
+              x-parser-schema-id: <anonymous-schema-198>
             subject:
               type: string
               description: The receipt id (the Kafka key is the ASN number).
-              x-parser-schema-id: <anonymous-schema-208>
+              x-parser-schema-id: <anonymous-schema-199>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-209>
+              x-parser-schema-id: <anonymous-schema-200>
             datacontenttype:
               type: string
               enum:
                 - application/json
-              x-parser-schema-id: <anonymous-schema-210>
+              x-parser-schema-id: <anonymous-schema-201>
             dataschema:
               type: string
               description: urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1
-              x-parser-schema-id: <anonymous-schema-211>
+              x-parser-schema-id: <anonymous-schema-202>
             data:
               type: object
               required:
@@ -4613,27 +4371,27 @@ channels:
               properties:
                 receipt_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-213>
+                  x-parser-schema-id: <anonymous-schema-204>
                 asn_number:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-214>
+                  x-parser-schema-id: <anonymous-schema-205>
                 line_no:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-215>
+                  x-parser-schema-id: <anonymous-schema-206>
                 sku:
                   type: string
                   description: >-
                     Must be non-empty; an empty SKU is logged and committed
                     past.
-                  x-parser-schema-id: <anonymous-schema-216>
+                  x-parser-schema-id: <anonymous-schema-207>
                 quantity:
                   type: integer
                   minimum: 1
                   description: >-
                     Units received on this occurrence. A value <= 0 is logged
                     and committed past.
-                  x-parser-schema-id: <anonymous-schema-217>
+                  x-parser-schema-id: <anonymous-schema-208>
                 condition:
                   type: string
                   enum:
@@ -4642,12 +4400,12 @@ channels:
                   description: >-
                     Only Good is booked as stock (ADR 0037); Damaged is counted
                     and ignored; any other value is logged and committed past.
-                  x-parser-schema-id: <anonymous-schema-218>
+                  x-parser-schema-id: <anonymous-schema-209>
                 received_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-219>
-              x-parser-schema-id: <anonymous-schema-212>
+                  x-parser-schema-id: <anonymous-schema-210>
+              x-parser-schema-id: <anonymous-schema-203>
           x-parser-schema-id: InboundReceivingReceiptLineReceivedEvent
         examples:
           - name: goodLine
@@ -4756,41 +4514,41 @@ channels:
               type: string
               enum:
                 - '1.0'
-              x-parser-schema-id: <anonymous-schema-220>
+              x-parser-schema-id: <anonymous-schema-211>
             id:
               type: string
               description: CloudEvents id; the dedupe key (claimed in processed_events).
-              x-parser-schema-id: <anonymous-schema-221>
+              x-parser-schema-id: <anonymous-schema-212>
             source:
               type: string
               enum:
                 - /warehouse/network-inventory-planning
-              x-parser-schema-id: <anonymous-schema-222>
+              x-parser-schema-id: <anonymous-schema-213>
             type:
               type: string
               const: >-
                 com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
-              x-parser-schema-id: <anonymous-schema-223>
+              x-parser-schema-id: <anonymous-schema-214>
             subject:
               type: string
               description: >-
                 The transfer line id (also the Kafka key and the
                 reply-correlation key).
-              x-parser-schema-id: <anonymous-schema-224>
+              x-parser-schema-id: <anonymous-schema-215>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-225>
+              x-parser-schema-id: <anonymous-schema-216>
             datacontenttype:
               type: string
               enum:
                 - application/json
-              x-parser-schema-id: <anonymous-schema-226>
+              x-parser-schema-id: <anonymous-schema-217>
             dataschema:
               type: string
               description: >-
                 urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
-              x-parser-schema-id: <anonymous-schema-227>
+              x-parser-schema-id: <anonymous-schema-218>
             data:
               type: object
               description: Exactly five fields — the whole consumed contract.
@@ -4803,24 +4561,24 @@ channels:
               properties:
                 transfer_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-229>
+                  x-parser-schema-id: <anonymous-schema-220>
                 transfer_line_id:
                   type: string
                   description: >-
                     <transfer_id>:1 in v1's single-line saga; also the
                     allocation-ledger and reply-correlation key.
-                  x-parser-schema-id: <anonymous-schema-230>
+                  x-parser-schema-id: <anonymous-schema-221>
                 origin_site_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-231>
+                  x-parser-schema-id: <anonymous-schema-222>
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-232>
+                  x-parser-schema-id: <anonymous-schema-223>
                 quantity:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-233>
-              x-parser-schema-id: <anonymous-schema-228>
+                  x-parser-schema-id: <anonymous-schema-224>
+              x-parser-schema-id: <anonymous-schema-219>
           x-parser-schema-id: NetworkInventoryPlanningTransferAllocationRequestedEvent
         examples:
           - name: singleLineAllocation
@@ -4961,12 +4719,12 @@ components:
                 type: string
                 description: Fixed event type for StockReceived.
                 const: com.warehouse.wms.inventory-storage.stock.StockReceived
-                x-parser-schema-id: <anonymous-schema-121>
+                x-parser-schema-id: <anonymous-schema-112>
               dataschema:
                 type: string
                 description: urn:warehouse:inventory-storage:analytics:StockReceived:v1
                 pattern: ^urn:warehouse:inventory-storage:analytics:StockReceived:v1$
-                x-parser-schema-id: <anonymous-schema-122>
+                x-parser-schema-id: <anonymous-schema-113>
               data:
                 type: object
                 description: Business payload for StockReceived.
@@ -4977,16 +4735,16 @@ components:
                   sku:
                     type: string
                     description: The stock keeping unit the goods were received against.
-                    x-parser-schema-id: <anonymous-schema-124>
+                    x-parser-schema-id: <anonymous-schema-115>
                   quantity:
                     type: integer
                     minimum: 1
                     description: >
                       Quantity received and staged. Always positive; the domain
                       rejects a non-positive receipt.
-                    x-parser-schema-id: <anonymous-schema-125>
-                x-parser-schema-id: <anonymous-schema-123>
-            x-parser-schema-id: <anonymous-schema-120>
+                    x-parser-schema-id: <anonymous-schema-116>
+                x-parser-schema-id: <anonymous-schema-114>
+            x-parser-schema-id: <anonymous-schema-111>
         x-parser-schema-id: StockReceivedEvent
       examples:
         - name: receivedFiftyUnits
@@ -5119,12 +4877,12 @@ components:
                 type: string
                 description: Fixed event type for ItemStowed.
                 const: com.warehouse.wms.inventory-storage.stock.ItemStowed
-                x-parser-schema-id: <anonymous-schema-127>
+                x-parser-schema-id: <anonymous-schema-118>
               dataschema:
                 type: string
                 description: urn:warehouse:inventory-storage:analytics:ItemStowed:v1
                 pattern: ^urn:warehouse:inventory-storage:analytics:ItemStowed:v1$
-                x-parser-schema-id: <anonymous-schema-128>
+                x-parser-schema-id: <anonymous-schema-119>
               data:
                 type: object
                 description: Business payload for ItemStowed.
@@ -5136,20 +4894,20 @@ components:
                   sku:
                     type: string
                     description: The stock keeping unit that was stowed (the item scan).
-                    x-parser-schema-id: <anonymous-schema-130>
+                    x-parser-schema-id: <anonymous-schema-121>
                   bin_id:
                     type: string
                     description: >
                       The bin the quantity was placed into (the location scan).
                       Chaotic storage: any SKU may occupy any free bin.
-                    x-parser-schema-id: <anonymous-schema-131>
+                    x-parser-schema-id: <anonymous-schema-122>
                   quantity:
                     type: integer
                     minimum: 1
                     description: Quantity placed into the bin. Always positive.
-                    x-parser-schema-id: <anonymous-schema-132>
-                x-parser-schema-id: <anonymous-schema-129>
-            x-parser-schema-id: <anonymous-schema-126>
+                    x-parser-schema-id: <anonymous-schema-123>
+                x-parser-schema-id: <anonymous-schema-120>
+            x-parser-schema-id: <anonymous-schema-117>
         x-parser-schema-id: ItemStowedEvent
       examples:
         - name: stowedIntoBinA12
@@ -5282,14 +5040,14 @@ components:
                 type: string
                 description: Fixed event type for LocationRecorded.
                 const: com.warehouse.wms.inventory-storage.stock.LocationRecorded
-                x-parser-schema-id: <anonymous-schema-235>
+                x-parser-schema-id: <anonymous-schema-226>
               dataschema:
                 type: string
                 description: >-
                   Reserved for if LocationRecorded is ever published; it is
                   in-process only today.
                 pattern: ^urn:warehouse:inventory-storage:events:LocationRecorded:v1$
-                x-parser-schema-id: <anonymous-schema-236>
+                x-parser-schema-id: <anonymous-schema-227>
               data:
                 type: object
                 description: Business payload for LocationRecorded.
@@ -5300,13 +5058,13 @@ components:
                   stock_unit_id:
                     type: string
                     description: Identifier of the StockUnit whose location is now known.
-                    x-parser-schema-id: <anonymous-schema-238>
+                    x-parser-schema-id: <anonymous-schema-229>
                   bin_id:
                     type: string
                     description: The bin that authoritatively holds that StockUnit.
-                    x-parser-schema-id: <anonymous-schema-239>
-                x-parser-schema-id: <anonymous-schema-237>
-            x-parser-schema-id: <anonymous-schema-234>
+                    x-parser-schema-id: <anonymous-schema-230>
+                x-parser-schema-id: <anonymous-schema-228>
+            x-parser-schema-id: <anonymous-schema-225>
         x-parser-schema-id: LocationRecordedEvent
       examples:
         - name: locationRecordedForStockUnit
@@ -5324,232 +5082,6 @@ components:
               stock_unit_id: su-7781
               bin_id: A-12-3
       messageId: LocationRecorded
-    ProductClassified:
-      name: ProductClassified
-      title: Product Classified (legacy, backfill only)
-      summary: A SKU's handling classification, re-emitted by the one-shot backfill.
-      description: >
-        LEGACY (ADR 0034). product-master owns product classification; no write
-        path in this service raises this event any more. It is emitted only by
-        the one-shot `republish-product-classifications` command (product-master
-        ADR 0003 stage B): one message per `product_classifications` row,
-        enqueued through the transactional outbox and published by the running
-        pod's relay, on `warehouse.inventory.events` only (dataschema
-        `urn:warehouse:inventory-storage:events:ProductClassified:v1`).
-        product-master's legacy importer turns it into product-master data. The
-        wire contract is unchanged from ADR 0031. Retired at product-master ADR
-        0003 stage E.
-
-
-        CloudEvents `subject` and the Kafka key are the SKU. `data` is `{sku,
-        handling_tags, temperature_class?, dot_hazard_class?}`. It is a
-        **full-state replacement**: overwrite your local row; an absent optional
-        field means "none". `handling_tags` is in the stable enum order. No PII.
-        Re-running the backfill re-emits the same states, which is harmless.
-      contentType: application/cloudevents+json
-      tags:
-        - name: product
-          description: Legacy SKU master-data event (backfill only).
-      payload:
-        description: >
-          CloudEvents envelope for the legacy ProductClassified event. Since ADR
-          0034 only the integration-topic (`events`) variant is emitted, by the
-          backfill command; the `analytics` dataschema is still accepted by the
-          encoder's frozen contract but no longer produced.
-        allOf:
-          - type: object
-            description: >
-              The CloudEvents 1.0 context attributes shared by every message
-              this bounded context emits, in structured-mode JSON. Each concrete
-              event schema composes this with `allOf` and pins `type` to a
-              single value.
-            required:
-              - specversion
-              - id
-              - source
-              - type
-              - subject
-              - time
-              - datacontenttype
-              - dataschema
-              - data
-            properties:
-              specversion:
-                type: string
-                description: CloudEvents specification version. Always "1.0".
-                enum:
-                  - '1.0'
-                x-parser-schema-id: <anonymous-schema-1>
-              id:
-                type: string
-                format: uuid
-                description: >
-                  Unique identifier for this event occurrence, a UUID v4.
-                  Together with `source` it uniquely identifies the event, which
-                  is what consumers deduplicate on.
-                x-parser-schema-id: <anonymous-schema-2>
-              source:
-                type: string
-                description: >
-                  The context that emitted the event. Always
-                  `/warehouse/inventory-storage` for this service.
-                enum:
-                  - /warehouse/inventory-storage
-                x-parser-schema-id: <anonymous-schema-3>
-              type:
-                type: string
-                description: >
-                  Reverse-DNS event type, of the form
-                  `com.warehouse.wms.inventory-storage.<entity>.<EventName>`.
-                  Pinned to a single value by each concrete event schema.
-                x-parser-schema-id: <anonymous-schema-4>
-              subject:
-                type: string
-                description: >
-                  The id of the aggregate instance this event is about — a
-                  reservation id, a StockUnit id, a bin id, or a SKU, depending
-                  on the event. Never empty.
-                x-parser-schema-id: <anonymous-schema-5>
-              time:
-                type: string
-                format: date-time
-                description: >
-                  RFC 3339 timestamp of when the event occurred in the domain,
-                  taken from the injected Clock port, not from wall-clock time
-                  at publish.
-                x-parser-schema-id: <anonymous-schema-6>
-              datacontenttype:
-                type: string
-                description: Media type of the `data` member. Always application/json.
-                enum:
-                  - application/json
-                x-parser-schema-id: <anonymous-schema-7>
-              dataschema:
-                type: string
-                format: uri
-                description: >
-                  Absolute URI naming the payload shape and version:
-                  `urn:warehouse:inventory-storage:<events|analytics>:<EventName>:v<N>`.
-                  Pinned per message by each concrete event schema (the `events`
-                  variant for StockReserved/ReservationRevoked, `analytics` for
-                  the rest; StockReserved and ReservationRevoked also appear on
-                  the analytics topic with the `analytics` variant).
-                pattern: >-
-                  ^urn:warehouse:inventory-storage:(events|analytics):[A-Za-z]+:v[0-9]+$
-                x-parser-schema-id: <anonymous-schema-8>
-              data:
-                type: object
-                description: The event payload. Shape is fixed by `dataschema`.
-                x-parser-schema-id: <anonymous-schema-9>
-            x-parser-schema-id: CloudEventBase
-          - type: object
-            required:
-              - type
-              - data
-            properties:
-              type:
-                type: string
-                description: Fixed event type for ProductClassified.
-                const: com.warehouse.wms.inventory-storage.product.ProductClassified
-                x-parser-schema-id: <anonymous-schema-112>
-              dataschema:
-                type: string
-                description: >-
-                  urn:warehouse:inventory-storage:events:ProductClassified:v1 on
-                  the integration topic, ...:analytics:ProductClassified:v1 on
-                  the analytics topic.
-                pattern: >-
-                  ^urn:warehouse:inventory-storage:(events|analytics):ProductClassified:v1$
-                x-parser-schema-id: <anonymous-schema-113>
-              data:
-                type: object
-                description: >
-                  Full-state replacement of the SKU's classification. Optional
-                  fields are omitted when unset.
-                required:
-                  - sku
-                  - handling_tags
-                properties:
-                  sku:
-                    type: string
-                    description: >-
-                      The classified SKU (also the CloudEvents subject and Kafka
-                      key).
-                    x-parser-schema-id: <anonymous-schema-115>
-                  handling_tags:
-                    type: array
-                    minItems: 1
-                    description: >-
-                      Non-empty, duplicate-free set of handling tags, in the
-                      aggregate's stable enum order.
-                    items:
-                      type: string
-                      enum:
-                        - Hazmat
-                        - Fragile
-                        - TemperatureSensitive
-                        - Oversized
-                        - HighValue
-                      x-parser-schema-id: <anonymous-schema-117>
-                    x-parser-schema-id: <anonymous-schema-116>
-                  temperature_class:
-                    type: string
-                    enum:
-                      - Ambient
-                      - Chilled
-                      - Frozen
-                    description: >-
-                      Present if and only if handling_tags includes
-                      TemperatureSensitive.
-                    x-parser-schema-id: <anonymous-schema-118>
-                  dot_hazard_class:
-                    type: integer
-                    minimum: 1
-                    maximum: 9
-                    description: >-
-                      Top-level US DOT hazard class; present only for a Hazmat
-                      classification with one recorded (ADR 0010).
-                    x-parser-schema-id: <anonymous-schema-119>
-                x-parser-schema-id: <anonymous-schema-114>
-            x-parser-schema-id: <anonymous-schema-111>
-        x-parser-schema-id: ProductClassifiedEvent
-      examples:
-        - name: hazmatFrozenSku
-          summary: >-
-            SKU-9 classified as Hazmat + TemperatureSensitive (Frozen), DOT
-            class 3.
-          payload:
-            specversion: '1.0'
-            id: 7e2f5d18-0a9c-4b34-9d61-4c8a3e7b1f05
-            source: /warehouse/inventory-storage
-            type: com.warehouse.wms.inventory-storage.product.ProductClassified
-            subject: SKU-9
-            time: '2026-10-06T12:00:00Z'
-            datacontenttype: application/json
-            dataschema: urn:warehouse:inventory-storage:events:ProductClassified:v1
-            data:
-              sku: SKU-9
-              handling_tags:
-                - Hazmat
-                - TemperatureSensitive
-              temperature_class: Frozen
-              dot_hazard_class: 3
-        - name: fragileSku
-          summary: SKU-1 classified as Fragile only (no optional fields).
-          payload:
-            specversion: '1.0'
-            id: 9a4c1e66-3d57-4f20-b8e9-2a6d0c5f7b13
-            source: /warehouse/inventory-storage
-            type: com.warehouse.wms.inventory-storage.product.ProductClassified
-            subject: SKU-1
-            time: '2026-10-06T12:01:00Z'
-            datacontenttype: application/json
-            dataschema: urn:warehouse:inventory-storage:events:ProductClassified:v1
-            data:
-              sku: SKU-1
-              handling_tags:
-                - Fragile
-      messageId: ProductClassified
     ProductMasterProductClassified:
       name: ProductMasterProductClassified
       title: Product Classified (from product-master, consumed)
@@ -5590,37 +5122,37 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-169>
+            x-parser-schema-id: <anonymous-schema-160>
           id:
             type: string
             description: CloudEvents id; the dedupe key (claimed in processed_events).
-            x-parser-schema-id: <anonymous-schema-170>
+            x-parser-schema-id: <anonymous-schema-161>
           source:
             type: string
             enum:
               - /warehouse/product-master
-            x-parser-schema-id: <anonymous-schema-171>
+            x-parser-schema-id: <anonymous-schema-162>
           type:
             type: string
             const: com.warehouse.wms.product-master.product.ProductClassified
-            x-parser-schema-id: <anonymous-schema-172>
+            x-parser-schema-id: <anonymous-schema-163>
           subject:
             type: string
             description: The SKU (also the Kafka key).
-            x-parser-schema-id: <anonymous-schema-173>
+            x-parser-schema-id: <anonymous-schema-164>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-174>
+            x-parser-schema-id: <anonymous-schema-165>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-175>
+            x-parser-schema-id: <anonymous-schema-166>
           dataschema:
             type: string
             description: urn:warehouse:product-master:events:ProductClassified:v1
-            x-parser-schema-id: <anonymous-schema-176>
+            x-parser-schema-id: <anonymous-schema-167>
           data:
             type: object
             required:
@@ -5631,7 +5163,7 @@ components:
             properties:
               sku:
                 type: string
-                x-parser-schema-id: <anonymous-schema-178>
+                x-parser-schema-id: <anonymous-schema-169>
               handling_tags:
                 type: array
                 minItems: 1
@@ -5646,8 +5178,8 @@ components:
                     - TemperatureSensitive
                     - Oversized
                     - HighValue
-                  x-parser-schema-id: <anonymous-schema-180>
-                x-parser-schema-id: <anonymous-schema-179>
+                  x-parser-schema-id: <anonymous-schema-171>
+                x-parser-schema-id: <anonymous-schema-170>
               temperature_class:
                 type: string
                 enum:
@@ -5657,13 +5189,13 @@ components:
                 description: >-
                   Present if and only if handling_tags includes
                   TemperatureSensitive.
-                x-parser-schema-id: <anonymous-schema-181>
+                x-parser-schema-id: <anonymous-schema-172>
               dot_hazard_class:
                 type: integer
                 minimum: 1
                 maximum: 9
                 description: Present only for a Hazmat classification with one recorded.
-                x-parser-schema-id: <anonymous-schema-182>
+                x-parser-schema-id: <anonymous-schema-173>
               classification_source:
                 type: string
                 enum:
@@ -5672,7 +5204,7 @@ components:
                 description: >-
                   Stored verbatim as
                   product_classifications.classification_source.
-                x-parser-schema-id: <anonymous-schema-183>
+                x-parser-schema-id: <anonymous-schema-174>
               version:
                 type: integer
                 format: int64
@@ -5680,8 +5212,8 @@ components:
                 description: >-
                   product-master's Product.version; applied only when greater
                   than the stored version.
-                x-parser-schema-id: <anonymous-schema-184>
-            x-parser-schema-id: <anonymous-schema-177>
+                x-parser-schema-id: <anonymous-schema-175>
+            x-parser-schema-id: <anonymous-schema-168>
         x-parser-schema-id: ProductMasterProductClassifiedEvent
       examples:
         - name: hazmatFrozenSku
@@ -5762,7 +5294,7 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-185>
+            x-parser-schema-id: <anonymous-schema-176>
           id:
             type: string
             description: >-
@@ -5770,33 +5302,33 @@ components:
               consumer `task-completed-confirm-pick`, `task-completed-relocate`
               for RELOCATE tasks, or `task-completed-replenish` for REPLENISH
               tasks).
-            x-parser-schema-id: <anonymous-schema-186>
+            x-parser-schema-id: <anonymous-schema-177>
           source:
             type: string
             enum:
               - /warehouse/fulfillment-execution
-            x-parser-schema-id: <anonymous-schema-187>
+            x-parser-schema-id: <anonymous-schema-178>
           type:
             type: string
             const: com.warehouse.wes.fulfillment-execution.task.TaskCompleted
-            x-parser-schema-id: <anonymous-schema-188>
+            x-parser-schema-id: <anonymous-schema-179>
           subject:
             type: string
             description: The task id (also the Kafka key).
-            x-parser-schema-id: <anonymous-schema-189>
+            x-parser-schema-id: <anonymous-schema-180>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-190>
+            x-parser-schema-id: <anonymous-schema-181>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-191>
+            x-parser-schema-id: <anonymous-schema-182>
           dataschema:
             type: string
             description: urn:warehouse:fulfillment-execution:events:TaskCompleted:v1
-            x-parser-schema-id: <anonymous-schema-192>
+            x-parser-schema-id: <anonymous-schema-183>
           data:
             type: object
             required:
@@ -5804,7 +5336,7 @@ components:
             properties:
               task_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-194>
+                x-parser-schema-id: <anonymous-schema-185>
               task_type:
                 type: string
                 enum:
@@ -5819,7 +5351,7 @@ components:
                 description: >-
                   PICK, RELOCATE and REPLENISH are acted on; omitted by the
                   producer when the task could not be found.
-                x-parser-schema-id: <anonymous-schema-195>
+                x-parser-schema-id: <anonymous-schema-186>
               order_ref:
                 type: string
                 description: >
@@ -5829,7 +5361,7 @@ components:
                   line) carries the same value. Additive and optional (ADR
                   0035): omitted when empty, in which case nothing is counted or
                   confirmed.
-                x-parser-schema-id: <anonymous-schema-196>
+                x-parser-schema-id: <anonymous-schema-187>
               line_no:
                 type: integer
                 minimum: 1
@@ -5843,7 +5375,7 @@ components:
                   last-pick counting applies. A value outside 1..2147483647 (the
                   32-bit line_no column) or a non-integer is a malformed payload
                   (dead-lettered).
-                x-parser-schema-id: <anonymous-schema-197>
+                x-parser-schema-id: <anonymous-schema-188>
               sku:
                 type: string
                 description: >
@@ -5851,19 +5383,19 @@ components:
                   the SKU moved. Required on a RELOCATE or REPLENISH completion
                   (missing or invalid = dead-lettered); absent on every other
                   task type.
-                x-parser-schema-id: <anonymous-schema-198>
+                x-parser-schema-id: <anonymous-schema-189>
               from_bin:
                 type: string
                 description: >
                   RELOCATE and REPLENISH only (additive): the source bin's
                   location code; its site is the move's site.
-                x-parser-schema-id: <anonymous-schema-199>
+                x-parser-schema-id: <anonymous-schema-190>
               to_bin:
                 type: string
                 description: >
                   RELOCATE and REPLENISH only (additive): the destination bin's
                   location code; must be a different bin of the same site.
-                x-parser-schema-id: <anonymous-schema-200>
+                x-parser-schema-id: <anonymous-schema-191>
               quantity:
                 type: integer
                 minimum: 1
@@ -5871,7 +5403,7 @@ components:
                   RELOCATE and REPLENISH only (additive): the units moved.
                   Missing, zero or negative on a RELOCATE or REPLENISH
                   completion = dead-lettered.
-                x-parser-schema-id: <anonymous-schema-201>
+                x-parser-schema-id: <anonymous-schema-192>
               relocation_ref:
                 type: string
                 maxLength: 200
@@ -5879,7 +5411,7 @@ components:
                   RELOCATE only (additive, ADR 0039, optional): the slot-plan
                   move the task executes; stored as the relocation's source_ref
                   (the task id is used when absent).
-                x-parser-schema-id: <anonymous-schema-202>
+                x-parser-schema-id: <anonymous-schema-193>
               request_ref:
                 type: string
                 maxLength: 200
@@ -5889,8 +5421,8 @@ components:
                   source_ref (reason REPLENISHMENT) and echoed in
                   StockRelocated. Missing or blank = dead-lettered; there is no
                   task-id fallback.
-                x-parser-schema-id: <anonymous-schema-203>
-            x-parser-schema-id: <anonymous-schema-193>
+                x-parser-schema-id: <anonymous-schema-194>
+            x-parser-schema-id: <anonymous-schema-184>
         x-parser-schema-id: FulfillmentTaskCompletedEvent
       examples:
         - name: pickTaskCompletedForLine
@@ -6029,39 +5561,39 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-204>
+            x-parser-schema-id: <anonymous-schema-195>
           id:
             type: string
             description: >-
               CloudEvents id; the dedupe key (claimed in processed_events under
               consumer `inbound-receipt-line`).
-            x-parser-schema-id: <anonymous-schema-205>
+            x-parser-schema-id: <anonymous-schema-196>
           source:
             type: string
             enum:
               - /warehouse/inbound-receiving
-            x-parser-schema-id: <anonymous-schema-206>
+            x-parser-schema-id: <anonymous-schema-197>
           type:
             type: string
             const: com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived
-            x-parser-schema-id: <anonymous-schema-207>
+            x-parser-schema-id: <anonymous-schema-198>
           subject:
             type: string
             description: The receipt id (the Kafka key is the ASN number).
-            x-parser-schema-id: <anonymous-schema-208>
+            x-parser-schema-id: <anonymous-schema-199>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-209>
+            x-parser-schema-id: <anonymous-schema-200>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-210>
+            x-parser-schema-id: <anonymous-schema-201>
           dataschema:
             type: string
             description: urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1
-            x-parser-schema-id: <anonymous-schema-211>
+            x-parser-schema-id: <anonymous-schema-202>
           data:
             type: object
             required:
@@ -6075,25 +5607,25 @@ components:
             properties:
               receipt_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-213>
+                x-parser-schema-id: <anonymous-schema-204>
               asn_number:
                 type: string
-                x-parser-schema-id: <anonymous-schema-214>
+                x-parser-schema-id: <anonymous-schema-205>
               line_no:
                 type: integer
                 minimum: 1
-                x-parser-schema-id: <anonymous-schema-215>
+                x-parser-schema-id: <anonymous-schema-206>
               sku:
                 type: string
                 description: Must be non-empty; an empty SKU is logged and committed past.
-                x-parser-schema-id: <anonymous-schema-216>
+                x-parser-schema-id: <anonymous-schema-207>
               quantity:
                 type: integer
                 minimum: 1
                 description: >-
                   Units received on this occurrence. A value <= 0 is logged and
                   committed past.
-                x-parser-schema-id: <anonymous-schema-217>
+                x-parser-schema-id: <anonymous-schema-208>
               condition:
                 type: string
                 enum:
@@ -6102,12 +5634,12 @@ components:
                 description: >-
                   Only Good is booked as stock (ADR 0037); Damaged is counted
                   and ignored; any other value is logged and committed past.
-                x-parser-schema-id: <anonymous-schema-218>
+                x-parser-schema-id: <anonymous-schema-209>
               received_at:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-219>
-            x-parser-schema-id: <anonymous-schema-212>
+                x-parser-schema-id: <anonymous-schema-210>
+            x-parser-schema-id: <anonymous-schema-203>
         x-parser-schema-id: InboundReceivingReceiptLineReceivedEvent
       examples:
         - name: goodLine
@@ -6191,41 +5723,41 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-220>
+            x-parser-schema-id: <anonymous-schema-211>
           id:
             type: string
             description: CloudEvents id; the dedupe key (claimed in processed_events).
-            x-parser-schema-id: <anonymous-schema-221>
+            x-parser-schema-id: <anonymous-schema-212>
           source:
             type: string
             enum:
               - /warehouse/network-inventory-planning
-            x-parser-schema-id: <anonymous-schema-222>
+            x-parser-schema-id: <anonymous-schema-213>
           type:
             type: string
             const: >-
               com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
-            x-parser-schema-id: <anonymous-schema-223>
+            x-parser-schema-id: <anonymous-schema-214>
           subject:
             type: string
             description: >-
               The transfer line id (also the Kafka key and the reply-correlation
               key).
-            x-parser-schema-id: <anonymous-schema-224>
+            x-parser-schema-id: <anonymous-schema-215>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-225>
+            x-parser-schema-id: <anonymous-schema-216>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-226>
+            x-parser-schema-id: <anonymous-schema-217>
           dataschema:
             type: string
             description: >-
               urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
-            x-parser-schema-id: <anonymous-schema-227>
+            x-parser-schema-id: <anonymous-schema-218>
           data:
             type: object
             description: Exactly five fields — the whole consumed contract.
@@ -6238,24 +5770,24 @@ components:
             properties:
               transfer_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-229>
+                x-parser-schema-id: <anonymous-schema-220>
               transfer_line_id:
                 type: string
                 description: >-
                   <transfer_id>:1 in v1's single-line saga; also the
                   allocation-ledger and reply-correlation key.
-                x-parser-schema-id: <anonymous-schema-230>
+                x-parser-schema-id: <anonymous-schema-221>
               origin_site_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-231>
+                x-parser-schema-id: <anonymous-schema-222>
               sku:
                 type: string
-                x-parser-schema-id: <anonymous-schema-232>
+                x-parser-schema-id: <anonymous-schema-223>
               quantity:
                 type: integer
                 minimum: 1
-                x-parser-schema-id: <anonymous-schema-233>
-            x-parser-schema-id: <anonymous-schema-228>
+                x-parser-schema-id: <anonymous-schema-224>
+            x-parser-schema-id: <anonymous-schema-219>
         x-parser-schema-id: NetworkInventoryPlanningTransferAllocationRequestedEvent
       examples:
         - name: singleLineAllocation
@@ -8001,14 +7533,14 @@ components:
                 description: Fixed event type for ReservationExpired.
                 const: >-
                   com.warehouse.wms.inventory-storage.reservation.ReservationExpired
-                x-parser-schema-id: <anonymous-schema-149>
+                x-parser-schema-id: <anonymous-schema-140>
               dataschema:
                 type: string
                 description: >-
                   urn:warehouse:inventory-storage:analytics:ReservationExpired:v1
                 pattern: >-
                   ^urn:warehouse:inventory-storage:analytics:ReservationExpired:v1$
-                x-parser-schema-id: <anonymous-schema-150>
+                x-parser-schema-id: <anonymous-schema-141>
               data:
                 type: object
                 description: Business payload for ReservationExpired.
@@ -8021,16 +7553,16 @@ components:
                     description: >
                       Identifier of the reservation whose timeout elapsed. Its
                       quantity returns to usable inventory.
-                    x-parser-schema-id: <anonymous-schema-152>
+                    x-parser-schema-id: <anonymous-schema-143>
                   sku:
                     type: string
                     description: >
                       The reservation's SKU, enriched by the publisher through
                       ports.ReservationRepo. Empty if the reservation could not
                       be found (best-effort enrichment).
-                    x-parser-schema-id: <anonymous-schema-153>
-                x-parser-schema-id: <anonymous-schema-151>
-            x-parser-schema-id: <anonymous-schema-148>
+                    x-parser-schema-id: <anonymous-schema-144>
+                x-parser-schema-id: <anonymous-schema-142>
+            x-parser-schema-id: <anonymous-schema-139>
         x-parser-schema-id: ReservationExpiredEvent
       examples:
         - name: reservationTimedOut
@@ -8373,12 +7905,12 @@ components:
                 type: string
                 description: Fixed event type for StockPicked.
                 const: com.warehouse.wms.inventory-storage.reservation.StockPicked
-                x-parser-schema-id: <anonymous-schema-142>
+                x-parser-schema-id: <anonymous-schema-133>
               dataschema:
                 type: string
                 description: urn:warehouse:inventory-storage:analytics:StockPicked:v1
                 pattern: ^urn:warehouse:inventory-storage:analytics:StockPicked:v1$
-                x-parser-schema-id: <anonymous-schema-143>
+                x-parser-schema-id: <anonymous-schema-134>
               data:
                 type: object
                 description: Business payload for StockPicked.
@@ -8392,20 +7924,20 @@ components:
                     description: >
                       Identifier of the reservation that was consumed by this
                       pick. A reservation can be consumed only once.
-                    x-parser-schema-id: <anonymous-schema-145>
+                    x-parser-schema-id: <anonymous-schema-136>
                   sku:
                     type: string
                     description: The stock keeping unit that was picked.
-                    x-parser-schema-id: <anonymous-schema-146>
+                    x-parser-schema-id: <anonymous-schema-137>
                   quantity:
                     type: integer
                     minimum: 1
                     description: >
                       Quantity physically removed from its bin and permanently
                       deducted from on-hand.
-                    x-parser-schema-id: <anonymous-schema-147>
-                x-parser-schema-id: <anonymous-schema-144>
-            x-parser-schema-id: <anonymous-schema-141>
+                    x-parser-schema-id: <anonymous-schema-138>
+                x-parser-schema-id: <anonymous-schema-135>
+            x-parser-schema-id: <anonymous-schema-132>
         x-parser-schema-id: StockPickedEvent
       examples:
         - name: pickConfirmed
@@ -8540,12 +8072,12 @@ components:
                 type: string
                 description: Fixed event type for ItemUnlocated.
                 const: com.warehouse.wms.inventory-storage.stock.ItemUnlocated
-                x-parser-schema-id: <anonymous-schema-134>
+                x-parser-schema-id: <anonymous-schema-125>
               dataschema:
                 type: string
                 description: urn:warehouse:inventory-storage:analytics:ItemUnlocated:v1
                 pattern: ^urn:warehouse:inventory-storage:analytics:ItemUnlocated:v1$
-                x-parser-schema-id: <anonymous-schema-135>
+                x-parser-schema-id: <anonymous-schema-126>
               data:
                 type: object
                 description: Business payload for ItemUnlocated.
@@ -8558,24 +8090,24 @@ components:
                   stock_unit_id:
                     type: string
                     description: Identifier of the StockUnit that was flagged Unlocated.
-                    x-parser-schema-id: <anonymous-schema-137>
+                    x-parser-schema-id: <anonymous-schema-128>
                   sku:
                     type: string
                     description: The stock keeping unit that could not be found.
-                    x-parser-schema-id: <anonymous-schema-138>
+                    x-parser-schema-id: <anonymous-schema-129>
                   bin_id:
                     type: string
                     description: The bin the stock was believed to be in.
-                    x-parser-schema-id: <anonymous-schema-139>
+                    x-parser-schema-id: <anonymous-schema-130>
                   quantity:
                     type: integer
                     minimum: 1
                     description: >
                       Quantity that could not be accounted for, now removed from
                       usable inventory.
-                    x-parser-schema-id: <anonymous-schema-140>
-                x-parser-schema-id: <anonymous-schema-136>
-            x-parser-schema-id: <anonymous-schema-133>
+                    x-parser-schema-id: <anonymous-schema-131>
+                x-parser-schema-id: <anonymous-schema-127>
+            x-parser-schema-id: <anonymous-schema-124>
         x-parser-schema-id: ItemUnlocatedEvent
       examples:
         - name: shortCountUnlocatedStock
@@ -8710,14 +8242,14 @@ components:
                 type: string
                 description: Fixed event type for CycleCountCompleted.
                 const: com.warehouse.wms.inventory-storage.bin.CycleCountCompleted
-                x-parser-schema-id: <anonymous-schema-155>
+                x-parser-schema-id: <anonymous-schema-146>
               dataschema:
                 type: string
                 description: >-
                   urn:warehouse:inventory-storage:analytics:CycleCountCompleted:v1
                 pattern: >-
                   ^urn:warehouse:inventory-storage:analytics:CycleCountCompleted:v1$
-                x-parser-schema-id: <anonymous-schema-156>
+                x-parser-schema-id: <anonymous-schema-147>
               data:
                 type: object
                 description: Business payload for CycleCountCompleted.
@@ -8730,25 +8262,25 @@ components:
                   bin_id:
                     type: string
                     description: The bin whose contents were verified.
-                    x-parser-schema-id: <anonymous-schema-158>
+                    x-parser-schema-id: <anonymous-schema-149>
                   counted:
                     type: integer
                     minimum: 0
                     description: Quantity physically counted in the bin.
-                    x-parser-schema-id: <anonymous-schema-159>
+                    x-parser-schema-id: <anonymous-schema-150>
                   system:
                     type: integer
                     minimum: 0
                     description: Quantity the system believed was in the bin.
-                    x-parser-schema-id: <anonymous-schema-160>
+                    x-parser-schema-id: <anonymous-schema-151>
                   discrepancy:
                     type: boolean
                     description: >
                       Whether counted and system quantities differed. When true,
                       a DiscrepancyDetected event accompanies this one.
-                    x-parser-schema-id: <anonymous-schema-161>
-                x-parser-schema-id: <anonymous-schema-157>
-            x-parser-schema-id: <anonymous-schema-154>
+                    x-parser-schema-id: <anonymous-schema-152>
+                x-parser-schema-id: <anonymous-schema-148>
+            x-parser-schema-id: <anonymous-schema-145>
         x-parser-schema-id: CycleCountCompletedEvent
       examples:
         - name: countMatchedSystem
@@ -8882,14 +8414,14 @@ components:
                 type: string
                 description: Fixed event type for DiscrepancyDetected.
                 const: com.warehouse.wms.inventory-storage.bin.DiscrepancyDetected
-                x-parser-schema-id: <anonymous-schema-163>
+                x-parser-schema-id: <anonymous-schema-154>
               dataschema:
                 type: string
                 description: >-
                   urn:warehouse:inventory-storage:analytics:DiscrepancyDetected:v1
                 pattern: >-
                   ^urn:warehouse:inventory-storage:analytics:DiscrepancyDetected:v1$
-                x-parser-schema-id: <anonymous-schema-164>
+                x-parser-schema-id: <anonymous-schema-155>
               data:
                 type: object
                 description: Business payload for DiscrepancyDetected.
@@ -8901,19 +8433,19 @@ components:
                   bin_id:
                     type: string
                     description: The bin whose count did not match system records.
-                    x-parser-schema-id: <anonymous-schema-166>
+                    x-parser-schema-id: <anonymous-schema-157>
                   counted:
                     type: integer
                     minimum: 0
                     description: Quantity physically counted in the bin.
-                    x-parser-schema-id: <anonymous-schema-167>
+                    x-parser-schema-id: <anonymous-schema-158>
                   system:
                     type: integer
                     minimum: 0
                     description: Quantity the system believed was in the bin.
-                    x-parser-schema-id: <anonymous-schema-168>
-                x-parser-schema-id: <anonymous-schema-165>
-            x-parser-schema-id: <anonymous-schema-162>
+                    x-parser-schema-id: <anonymous-schema-159>
+                x-parser-schema-id: <anonymous-schema-156>
+            x-parser-schema-id: <anonymous-schema-153>
         x-parser-schema-id: DiscrepancyDetectedEvent
       examples:
         - name: binCountShort
@@ -9533,12 +9065,12 @@ components:
               type: string
               description: Fixed event type for StockReceived.
               const: com.warehouse.wms.inventory-storage.stock.StockReceived
-              x-parser-schema-id: <anonymous-schema-121>
+              x-parser-schema-id: <anonymous-schema-112>
             dataschema:
               type: string
               description: urn:warehouse:inventory-storage:analytics:StockReceived:v1
               pattern: ^urn:warehouse:inventory-storage:analytics:StockReceived:v1$
-              x-parser-schema-id: <anonymous-schema-122>
+              x-parser-schema-id: <anonymous-schema-113>
             data:
               type: object
               description: Business payload for StockReceived.
@@ -9549,16 +9081,16 @@ components:
                 sku:
                   type: string
                   description: The stock keeping unit the goods were received against.
-                  x-parser-schema-id: <anonymous-schema-124>
+                  x-parser-schema-id: <anonymous-schema-115>
                 quantity:
                   type: integer
                   minimum: 1
                   description: >
                     Quantity received and staged. Always positive; the domain
                     rejects a non-positive receipt.
-                  x-parser-schema-id: <anonymous-schema-125>
-              x-parser-schema-id: <anonymous-schema-123>
-          x-parser-schema-id: <anonymous-schema-120>
+                  x-parser-schema-id: <anonymous-schema-116>
+              x-parser-schema-id: <anonymous-schema-114>
+          x-parser-schema-id: <anonymous-schema-111>
       x-parser-schema-id: StockReceivedEvent
     ItemStowedEvent:
       description: CloudEvents envelope for an ItemStowed domain event.
@@ -9656,12 +9188,12 @@ components:
               type: string
               description: Fixed event type for ItemStowed.
               const: com.warehouse.wms.inventory-storage.stock.ItemStowed
-              x-parser-schema-id: <anonymous-schema-127>
+              x-parser-schema-id: <anonymous-schema-118>
             dataschema:
               type: string
               description: urn:warehouse:inventory-storage:analytics:ItemStowed:v1
               pattern: ^urn:warehouse:inventory-storage:analytics:ItemStowed:v1$
-              x-parser-schema-id: <anonymous-schema-128>
+              x-parser-schema-id: <anonymous-schema-119>
             data:
               type: object
               description: Business payload for ItemStowed.
@@ -9673,20 +9205,20 @@ components:
                 sku:
                   type: string
                   description: The stock keeping unit that was stowed (the item scan).
-                  x-parser-schema-id: <anonymous-schema-130>
+                  x-parser-schema-id: <anonymous-schema-121>
                 bin_id:
                   type: string
                   description: >
                     The bin the quantity was placed into (the location scan).
                     Chaotic storage: any SKU may occupy any free bin.
-                  x-parser-schema-id: <anonymous-schema-131>
+                  x-parser-schema-id: <anonymous-schema-122>
                 quantity:
                   type: integer
                   minimum: 1
                   description: Quantity placed into the bin. Always positive.
-                  x-parser-schema-id: <anonymous-schema-132>
-              x-parser-schema-id: <anonymous-schema-129>
-          x-parser-schema-id: <anonymous-schema-126>
+                  x-parser-schema-id: <anonymous-schema-123>
+              x-parser-schema-id: <anonymous-schema-120>
+          x-parser-schema-id: <anonymous-schema-117>
       x-parser-schema-id: ItemStowedEvent
     LocationRecordedEvent:
       description: CloudEvents envelope for a LocationRecorded domain event.
@@ -9784,14 +9316,14 @@ components:
               type: string
               description: Fixed event type for LocationRecorded.
               const: com.warehouse.wms.inventory-storage.stock.LocationRecorded
-              x-parser-schema-id: <anonymous-schema-235>
+              x-parser-schema-id: <anonymous-schema-226>
             dataschema:
               type: string
               description: >-
                 Reserved for if LocationRecorded is ever published; it is
                 in-process only today.
               pattern: ^urn:warehouse:inventory-storage:events:LocationRecorded:v1$
-              x-parser-schema-id: <anonymous-schema-236>
+              x-parser-schema-id: <anonymous-schema-227>
             data:
               type: object
               description: Business payload for LocationRecorded.
@@ -9802,176 +9334,14 @@ components:
                 stock_unit_id:
                   type: string
                   description: Identifier of the StockUnit whose location is now known.
-                  x-parser-schema-id: <anonymous-schema-238>
+                  x-parser-schema-id: <anonymous-schema-229>
                 bin_id:
                   type: string
                   description: The bin that authoritatively holds that StockUnit.
-                  x-parser-schema-id: <anonymous-schema-239>
-              x-parser-schema-id: <anonymous-schema-237>
-          x-parser-schema-id: <anonymous-schema-234>
+                  x-parser-schema-id: <anonymous-schema-230>
+              x-parser-schema-id: <anonymous-schema-228>
+          x-parser-schema-id: <anonymous-schema-225>
       x-parser-schema-id: LocationRecordedEvent
-    ProductClassifiedEvent:
-      description: >
-        CloudEvents envelope for the legacy ProductClassified event. Since ADR
-        0034 only the integration-topic (`events`) variant is emitted, by the
-        backfill command; the `analytics` dataschema is still accepted by the
-        encoder's frozen contract but no longer produced.
-      allOf:
-        - type: object
-          description: >
-            The CloudEvents 1.0 context attributes shared by every message this
-            bounded context emits, in structured-mode JSON. Each concrete event
-            schema composes this with `allOf` and pins `type` to a single value.
-          required:
-            - specversion
-            - id
-            - source
-            - type
-            - subject
-            - time
-            - datacontenttype
-            - dataschema
-            - data
-          properties:
-            specversion:
-              type: string
-              description: CloudEvents specification version. Always "1.0".
-              enum:
-                - '1.0'
-              x-parser-schema-id: <anonymous-schema-1>
-            id:
-              type: string
-              format: uuid
-              description: >
-                Unique identifier for this event occurrence, a UUID v4. Together
-                with `source` it uniquely identifies the event, which is what
-                consumers deduplicate on.
-              x-parser-schema-id: <anonymous-schema-2>
-            source:
-              type: string
-              description: >
-                The context that emitted the event. Always
-                `/warehouse/inventory-storage` for this service.
-              enum:
-                - /warehouse/inventory-storage
-              x-parser-schema-id: <anonymous-schema-3>
-            type:
-              type: string
-              description: >
-                Reverse-DNS event type, of the form
-                `com.warehouse.wms.inventory-storage.<entity>.<EventName>`.
-                Pinned to a single value by each concrete event schema.
-              x-parser-schema-id: <anonymous-schema-4>
-            subject:
-              type: string
-              description: >
-                The id of the aggregate instance this event is about — a
-                reservation id, a StockUnit id, a bin id, or a SKU, depending on
-                the event. Never empty.
-              x-parser-schema-id: <anonymous-schema-5>
-            time:
-              type: string
-              format: date-time
-              description: >
-                RFC 3339 timestamp of when the event occurred in the domain,
-                taken from the injected Clock port, not from wall-clock time at
-                publish.
-              x-parser-schema-id: <anonymous-schema-6>
-            datacontenttype:
-              type: string
-              description: Media type of the `data` member. Always application/json.
-              enum:
-                - application/json
-              x-parser-schema-id: <anonymous-schema-7>
-            dataschema:
-              type: string
-              format: uri
-              description: >
-                Absolute URI naming the payload shape and version:
-                `urn:warehouse:inventory-storage:<events|analytics>:<EventName>:v<N>`.
-                Pinned per message by each concrete event schema (the `events`
-                variant for StockReserved/ReservationRevoked, `analytics` for
-                the rest; StockReserved and ReservationRevoked also appear on
-                the analytics topic with the `analytics` variant).
-              pattern: >-
-                ^urn:warehouse:inventory-storage:(events|analytics):[A-Za-z]+:v[0-9]+$
-              x-parser-schema-id: <anonymous-schema-8>
-            data:
-              type: object
-              description: The event payload. Shape is fixed by `dataschema`.
-              x-parser-schema-id: <anonymous-schema-9>
-          x-parser-schema-id: CloudEventBase
-        - type: object
-          required:
-            - type
-            - data
-          properties:
-            type:
-              type: string
-              description: Fixed event type for ProductClassified.
-              const: com.warehouse.wms.inventory-storage.product.ProductClassified
-              x-parser-schema-id: <anonymous-schema-112>
-            dataschema:
-              type: string
-              description: >-
-                urn:warehouse:inventory-storage:events:ProductClassified:v1 on
-                the integration topic, ...:analytics:ProductClassified:v1 on the
-                analytics topic.
-              pattern: >-
-                ^urn:warehouse:inventory-storage:(events|analytics):ProductClassified:v1$
-              x-parser-schema-id: <anonymous-schema-113>
-            data:
-              type: object
-              description: >
-                Full-state replacement of the SKU's classification. Optional
-                fields are omitted when unset.
-              required:
-                - sku
-                - handling_tags
-              properties:
-                sku:
-                  type: string
-                  description: >-
-                    The classified SKU (also the CloudEvents subject and Kafka
-                    key).
-                  x-parser-schema-id: <anonymous-schema-115>
-                handling_tags:
-                  type: array
-                  minItems: 1
-                  description: >-
-                    Non-empty, duplicate-free set of handling tags, in the
-                    aggregate's stable enum order.
-                  items:
-                    type: string
-                    enum:
-                      - Hazmat
-                      - Fragile
-                      - TemperatureSensitive
-                      - Oversized
-                      - HighValue
-                    x-parser-schema-id: <anonymous-schema-117>
-                  x-parser-schema-id: <anonymous-schema-116>
-                temperature_class:
-                  type: string
-                  enum:
-                    - Ambient
-                    - Chilled
-                    - Frozen
-                  description: >-
-                    Present if and only if handling_tags includes
-                    TemperatureSensitive.
-                  x-parser-schema-id: <anonymous-schema-118>
-                dot_hazard_class:
-                  type: integer
-                  minimum: 1
-                  maximum: 9
-                  description: >-
-                    Top-level US DOT hazard class; present only for a Hazmat
-                    classification with one recorded (ADR 0010).
-                  x-parser-schema-id: <anonymous-schema-119>
-              x-parser-schema-id: <anonymous-schema-114>
-          x-parser-schema-id: <anonymous-schema-111>
-      x-parser-schema-id: ProductClassifiedEvent
     ProductMasterProductClassifiedEvent:
       type: object
       description: >
@@ -9992,37 +9362,37 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-169>
+          x-parser-schema-id: <anonymous-schema-160>
         id:
           type: string
           description: CloudEvents id; the dedupe key (claimed in processed_events).
-          x-parser-schema-id: <anonymous-schema-170>
+          x-parser-schema-id: <anonymous-schema-161>
         source:
           type: string
           enum:
             - /warehouse/product-master
-          x-parser-schema-id: <anonymous-schema-171>
+          x-parser-schema-id: <anonymous-schema-162>
         type:
           type: string
           const: com.warehouse.wms.product-master.product.ProductClassified
-          x-parser-schema-id: <anonymous-schema-172>
+          x-parser-schema-id: <anonymous-schema-163>
         subject:
           type: string
           description: The SKU (also the Kafka key).
-          x-parser-schema-id: <anonymous-schema-173>
+          x-parser-schema-id: <anonymous-schema-164>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-174>
+          x-parser-schema-id: <anonymous-schema-165>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-175>
+          x-parser-schema-id: <anonymous-schema-166>
         dataschema:
           type: string
           description: urn:warehouse:product-master:events:ProductClassified:v1
-          x-parser-schema-id: <anonymous-schema-176>
+          x-parser-schema-id: <anonymous-schema-167>
         data:
           type: object
           required:
@@ -10033,7 +9403,7 @@ components:
           properties:
             sku:
               type: string
-              x-parser-schema-id: <anonymous-schema-178>
+              x-parser-schema-id: <anonymous-schema-169>
             handling_tags:
               type: array
               minItems: 1
@@ -10048,8 +9418,8 @@ components:
                   - TemperatureSensitive
                   - Oversized
                   - HighValue
-                x-parser-schema-id: <anonymous-schema-180>
-              x-parser-schema-id: <anonymous-schema-179>
+                x-parser-schema-id: <anonymous-schema-171>
+              x-parser-schema-id: <anonymous-schema-170>
             temperature_class:
               type: string
               enum:
@@ -10059,13 +9429,13 @@ components:
               description: >-
                 Present if and only if handling_tags includes
                 TemperatureSensitive.
-              x-parser-schema-id: <anonymous-schema-181>
+              x-parser-schema-id: <anonymous-schema-172>
             dot_hazard_class:
               type: integer
               minimum: 1
               maximum: 9
               description: Present only for a Hazmat classification with one recorded.
-              x-parser-schema-id: <anonymous-schema-182>
+              x-parser-schema-id: <anonymous-schema-173>
             classification_source:
               type: string
               enum:
@@ -10074,7 +9444,7 @@ components:
               description: >-
                 Stored verbatim as
                 product_classifications.classification_source.
-              x-parser-schema-id: <anonymous-schema-183>
+              x-parser-schema-id: <anonymous-schema-174>
             version:
               type: integer
               format: int64
@@ -10082,8 +9452,8 @@ components:
               description: >-
                 product-master's Product.version; applied only when greater than
                 the stored version.
-              x-parser-schema-id: <anonymous-schema-184>
-          x-parser-schema-id: <anonymous-schema-177>
+              x-parser-schema-id: <anonymous-schema-175>
+          x-parser-schema-id: <anonymous-schema-168>
       x-parser-schema-id: ProductMasterProductClassifiedEvent
     FulfillmentTaskCompletedEvent:
       type: object
@@ -10106,7 +9476,7 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-185>
+          x-parser-schema-id: <anonymous-schema-176>
         id:
           type: string
           description: >-
@@ -10114,33 +9484,33 @@ components:
             consumer `task-completed-confirm-pick`, `task-completed-relocate`
             for RELOCATE tasks, or `task-completed-replenish` for REPLENISH
             tasks).
-          x-parser-schema-id: <anonymous-schema-186>
+          x-parser-schema-id: <anonymous-schema-177>
         source:
           type: string
           enum:
             - /warehouse/fulfillment-execution
-          x-parser-schema-id: <anonymous-schema-187>
+          x-parser-schema-id: <anonymous-schema-178>
         type:
           type: string
           const: com.warehouse.wes.fulfillment-execution.task.TaskCompleted
-          x-parser-schema-id: <anonymous-schema-188>
+          x-parser-schema-id: <anonymous-schema-179>
         subject:
           type: string
           description: The task id (also the Kafka key).
-          x-parser-schema-id: <anonymous-schema-189>
+          x-parser-schema-id: <anonymous-schema-180>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-190>
+          x-parser-schema-id: <anonymous-schema-181>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-191>
+          x-parser-schema-id: <anonymous-schema-182>
         dataschema:
           type: string
           description: urn:warehouse:fulfillment-execution:events:TaskCompleted:v1
-          x-parser-schema-id: <anonymous-schema-192>
+          x-parser-schema-id: <anonymous-schema-183>
         data:
           type: object
           required:
@@ -10148,7 +9518,7 @@ components:
           properties:
             task_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-194>
+              x-parser-schema-id: <anonymous-schema-185>
             task_type:
               type: string
               enum:
@@ -10163,7 +9533,7 @@ components:
               description: >-
                 PICK, RELOCATE and REPLENISH are acted on; omitted by the
                 producer when the task could not be found.
-              x-parser-schema-id: <anonymous-schema-195>
+              x-parser-schema-id: <anonymous-schema-186>
             order_ref:
               type: string
               description: >
@@ -10173,7 +9543,7 @@ components:
                 carries the same value. Additive and optional (ADR 0035):
                 omitted when empty, in which case nothing is counted or
                 confirmed.
-              x-parser-schema-id: <anonymous-schema-196>
+              x-parser-schema-id: <anonymous-schema-187>
             line_no:
               type: integer
               minimum: 1
@@ -10186,7 +9556,7 @@ components:
                 nothing is counted; when absent the ADR 0035 last-pick counting
                 applies. A value outside 1..2147483647 (the 32-bit line_no
                 column) or a non-integer is a malformed payload (dead-lettered).
-              x-parser-schema-id: <anonymous-schema-197>
+              x-parser-schema-id: <anonymous-schema-188>
             sku:
               type: string
               description: >
@@ -10194,19 +9564,19 @@ components:
                 SKU moved. Required on a RELOCATE or REPLENISH completion
                 (missing or invalid = dead-lettered); absent on every other task
                 type.
-              x-parser-schema-id: <anonymous-schema-198>
+              x-parser-schema-id: <anonymous-schema-189>
             from_bin:
               type: string
               description: >
                 RELOCATE and REPLENISH only (additive): the source bin's
                 location code; its site is the move's site.
-              x-parser-schema-id: <anonymous-schema-199>
+              x-parser-schema-id: <anonymous-schema-190>
             to_bin:
               type: string
               description: >
                 RELOCATE and REPLENISH only (additive): the destination bin's
                 location code; must be a different bin of the same site.
-              x-parser-schema-id: <anonymous-schema-200>
+              x-parser-schema-id: <anonymous-schema-191>
             quantity:
               type: integer
               minimum: 1
@@ -10214,7 +9584,7 @@ components:
                 RELOCATE and REPLENISH only (additive): the units moved.
                 Missing, zero or negative on a RELOCATE or REPLENISH completion
                 = dead-lettered.
-              x-parser-schema-id: <anonymous-schema-201>
+              x-parser-schema-id: <anonymous-schema-192>
             relocation_ref:
               type: string
               maxLength: 200
@@ -10222,7 +9592,7 @@ components:
                 RELOCATE only (additive, ADR 0039, optional): the slot-plan move
                 the task executes; stored as the relocation's source_ref (the
                 task id is used when absent).
-              x-parser-schema-id: <anonymous-schema-202>
+              x-parser-schema-id: <anonymous-schema-193>
             request_ref:
               type: string
               maxLength: 200
@@ -10231,8 +9601,8 @@ components:
                 replenishment request id; stored as the relocation's source_ref
                 (reason REPLENISHMENT) and echoed in StockRelocated. Missing or
                 blank = dead-lettered; there is no task-id fallback.
-              x-parser-schema-id: <anonymous-schema-203>
-          x-parser-schema-id: <anonymous-schema-193>
+              x-parser-schema-id: <anonymous-schema-194>
+          x-parser-schema-id: <anonymous-schema-184>
       x-parser-schema-id: FulfillmentTaskCompletedEvent
     InboundReceivingReceiptLineReceivedEvent:
       type: object
@@ -10254,39 +9624,39 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-204>
+          x-parser-schema-id: <anonymous-schema-195>
         id:
           type: string
           description: >-
             CloudEvents id; the dedupe key (claimed in processed_events under
             consumer `inbound-receipt-line`).
-          x-parser-schema-id: <anonymous-schema-205>
+          x-parser-schema-id: <anonymous-schema-196>
         source:
           type: string
           enum:
             - /warehouse/inbound-receiving
-          x-parser-schema-id: <anonymous-schema-206>
+          x-parser-schema-id: <anonymous-schema-197>
         type:
           type: string
           const: com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived
-          x-parser-schema-id: <anonymous-schema-207>
+          x-parser-schema-id: <anonymous-schema-198>
         subject:
           type: string
           description: The receipt id (the Kafka key is the ASN number).
-          x-parser-schema-id: <anonymous-schema-208>
+          x-parser-schema-id: <anonymous-schema-199>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-209>
+          x-parser-schema-id: <anonymous-schema-200>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-210>
+          x-parser-schema-id: <anonymous-schema-201>
         dataschema:
           type: string
           description: urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1
-          x-parser-schema-id: <anonymous-schema-211>
+          x-parser-schema-id: <anonymous-schema-202>
         data:
           type: object
           required:
@@ -10300,25 +9670,25 @@ components:
           properties:
             receipt_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-213>
+              x-parser-schema-id: <anonymous-schema-204>
             asn_number:
               type: string
-              x-parser-schema-id: <anonymous-schema-214>
+              x-parser-schema-id: <anonymous-schema-205>
             line_no:
               type: integer
               minimum: 1
-              x-parser-schema-id: <anonymous-schema-215>
+              x-parser-schema-id: <anonymous-schema-206>
             sku:
               type: string
               description: Must be non-empty; an empty SKU is logged and committed past.
-              x-parser-schema-id: <anonymous-schema-216>
+              x-parser-schema-id: <anonymous-schema-207>
             quantity:
               type: integer
               minimum: 1
               description: >-
                 Units received on this occurrence. A value <= 0 is logged and
                 committed past.
-              x-parser-schema-id: <anonymous-schema-217>
+              x-parser-schema-id: <anonymous-schema-208>
             condition:
               type: string
               enum:
@@ -10327,12 +9697,12 @@ components:
               description: >-
                 Only Good is booked as stock (ADR 0037); Damaged is counted and
                 ignored; any other value is logged and committed past.
-              x-parser-schema-id: <anonymous-schema-218>
+              x-parser-schema-id: <anonymous-schema-209>
             received_at:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-219>
-          x-parser-schema-id: <anonymous-schema-212>
+              x-parser-schema-id: <anonymous-schema-210>
+          x-parser-schema-id: <anonymous-schema-203>
       x-parser-schema-id: InboundReceivingReceiptLineReceivedEvent
     NetworkInventoryPlanningTransferAllocationRequestedEvent:
       type: object
@@ -10354,41 +9724,41 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-220>
+          x-parser-schema-id: <anonymous-schema-211>
         id:
           type: string
           description: CloudEvents id; the dedupe key (claimed in processed_events).
-          x-parser-schema-id: <anonymous-schema-221>
+          x-parser-schema-id: <anonymous-schema-212>
         source:
           type: string
           enum:
             - /warehouse/network-inventory-planning
-          x-parser-schema-id: <anonymous-schema-222>
+          x-parser-schema-id: <anonymous-schema-213>
         type:
           type: string
           const: >-
             com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
-          x-parser-schema-id: <anonymous-schema-223>
+          x-parser-schema-id: <anonymous-schema-214>
         subject:
           type: string
           description: >-
             The transfer line id (also the Kafka key and the reply-correlation
             key).
-          x-parser-schema-id: <anonymous-schema-224>
+          x-parser-schema-id: <anonymous-schema-215>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-225>
+          x-parser-schema-id: <anonymous-schema-216>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-226>
+          x-parser-schema-id: <anonymous-schema-217>
         dataschema:
           type: string
           description: >-
             urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
-          x-parser-schema-id: <anonymous-schema-227>
+          x-parser-schema-id: <anonymous-schema-218>
         data:
           type: object
           description: Exactly five fields — the whole consumed contract.
@@ -10401,24 +9771,24 @@ components:
           properties:
             transfer_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-229>
+              x-parser-schema-id: <anonymous-schema-220>
             transfer_line_id:
               type: string
               description: >-
                 <transfer_id>:1 in v1's single-line saga; also the
                 allocation-ledger and reply-correlation key.
-              x-parser-schema-id: <anonymous-schema-230>
+              x-parser-schema-id: <anonymous-schema-221>
             origin_site_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-231>
+              x-parser-schema-id: <anonymous-schema-222>
             sku:
               type: string
-              x-parser-schema-id: <anonymous-schema-232>
+              x-parser-schema-id: <anonymous-schema-223>
             quantity:
               type: integer
               minimum: 1
-              x-parser-schema-id: <anonymous-schema-233>
-          x-parser-schema-id: <anonymous-schema-228>
+              x-parser-schema-id: <anonymous-schema-224>
+          x-parser-schema-id: <anonymous-schema-219>
       x-parser-schema-id: NetworkInventoryPlanningTransferAllocationRequestedEvent
     StockReservedEvent:
       description: >
@@ -10685,13 +10055,13 @@ components:
               description: Fixed event type for ReservationExpired.
               const: >-
                 com.warehouse.wms.inventory-storage.reservation.ReservationExpired
-              x-parser-schema-id: <anonymous-schema-149>
+              x-parser-schema-id: <anonymous-schema-140>
             dataschema:
               type: string
               description: urn:warehouse:inventory-storage:analytics:ReservationExpired:v1
               pattern: >-
                 ^urn:warehouse:inventory-storage:analytics:ReservationExpired:v1$
-              x-parser-schema-id: <anonymous-schema-150>
+              x-parser-schema-id: <anonymous-schema-141>
             data:
               type: object
               description: Business payload for ReservationExpired.
@@ -10704,16 +10074,16 @@ components:
                   description: >
                     Identifier of the reservation whose timeout elapsed. Its
                     quantity returns to usable inventory.
-                  x-parser-schema-id: <anonymous-schema-152>
+                  x-parser-schema-id: <anonymous-schema-143>
                 sku:
                   type: string
                   description: >
                     The reservation's SKU, enriched by the publisher through
                     ports.ReservationRepo. Empty if the reservation could not be
                     found (best-effort enrichment).
-                  x-parser-schema-id: <anonymous-schema-153>
-              x-parser-schema-id: <anonymous-schema-151>
-          x-parser-schema-id: <anonymous-schema-148>
+                  x-parser-schema-id: <anonymous-schema-144>
+              x-parser-schema-id: <anonymous-schema-142>
+          x-parser-schema-id: <anonymous-schema-139>
       x-parser-schema-id: ReservationExpiredEvent
     ReservationRevokedEvent:
       description: >
@@ -10974,12 +10344,12 @@ components:
               type: string
               description: Fixed event type for StockPicked.
               const: com.warehouse.wms.inventory-storage.reservation.StockPicked
-              x-parser-schema-id: <anonymous-schema-142>
+              x-parser-schema-id: <anonymous-schema-133>
             dataschema:
               type: string
               description: urn:warehouse:inventory-storage:analytics:StockPicked:v1
               pattern: ^urn:warehouse:inventory-storage:analytics:StockPicked:v1$
-              x-parser-schema-id: <anonymous-schema-143>
+              x-parser-schema-id: <anonymous-schema-134>
             data:
               type: object
               description: Business payload for StockPicked.
@@ -10993,20 +10363,20 @@ components:
                   description: >
                     Identifier of the reservation that was consumed by this
                     pick. A reservation can be consumed only once.
-                  x-parser-schema-id: <anonymous-schema-145>
+                  x-parser-schema-id: <anonymous-schema-136>
                 sku:
                   type: string
                   description: The stock keeping unit that was picked.
-                  x-parser-schema-id: <anonymous-schema-146>
+                  x-parser-schema-id: <anonymous-schema-137>
                 quantity:
                   type: integer
                   minimum: 1
                   description: >
                     Quantity physically removed from its bin and permanently
                     deducted from on-hand.
-                  x-parser-schema-id: <anonymous-schema-147>
-              x-parser-schema-id: <anonymous-schema-144>
-          x-parser-schema-id: <anonymous-schema-141>
+                  x-parser-schema-id: <anonymous-schema-138>
+              x-parser-schema-id: <anonymous-schema-135>
+          x-parser-schema-id: <anonymous-schema-132>
       x-parser-schema-id: StockPickedEvent
     ItemUnlocatedEvent:
       description: CloudEvents envelope for an ItemUnlocated domain event.
@@ -11104,12 +10474,12 @@ components:
               type: string
               description: Fixed event type for ItemUnlocated.
               const: com.warehouse.wms.inventory-storage.stock.ItemUnlocated
-              x-parser-schema-id: <anonymous-schema-134>
+              x-parser-schema-id: <anonymous-schema-125>
             dataschema:
               type: string
               description: urn:warehouse:inventory-storage:analytics:ItemUnlocated:v1
               pattern: ^urn:warehouse:inventory-storage:analytics:ItemUnlocated:v1$
-              x-parser-schema-id: <anonymous-schema-135>
+              x-parser-schema-id: <anonymous-schema-126>
             data:
               type: object
               description: Business payload for ItemUnlocated.
@@ -11122,24 +10492,24 @@ components:
                 stock_unit_id:
                   type: string
                   description: Identifier of the StockUnit that was flagged Unlocated.
-                  x-parser-schema-id: <anonymous-schema-137>
+                  x-parser-schema-id: <anonymous-schema-128>
                 sku:
                   type: string
                   description: The stock keeping unit that could not be found.
-                  x-parser-schema-id: <anonymous-schema-138>
+                  x-parser-schema-id: <anonymous-schema-129>
                 bin_id:
                   type: string
                   description: The bin the stock was believed to be in.
-                  x-parser-schema-id: <anonymous-schema-139>
+                  x-parser-schema-id: <anonymous-schema-130>
                 quantity:
                   type: integer
                   minimum: 1
                   description: >
                     Quantity that could not be accounted for, now removed from
                     usable inventory.
-                  x-parser-schema-id: <anonymous-schema-140>
-              x-parser-schema-id: <anonymous-schema-136>
-          x-parser-schema-id: <anonymous-schema-133>
+                  x-parser-schema-id: <anonymous-schema-131>
+              x-parser-schema-id: <anonymous-schema-127>
+          x-parser-schema-id: <anonymous-schema-124>
       x-parser-schema-id: ItemUnlocatedEvent
     CycleCountCompletedEvent:
       description: CloudEvents envelope for a CycleCountCompleted domain event.
@@ -11237,13 +10607,13 @@ components:
               type: string
               description: Fixed event type for CycleCountCompleted.
               const: com.warehouse.wms.inventory-storage.bin.CycleCountCompleted
-              x-parser-schema-id: <anonymous-schema-155>
+              x-parser-schema-id: <anonymous-schema-146>
             dataschema:
               type: string
               description: urn:warehouse:inventory-storage:analytics:CycleCountCompleted:v1
               pattern: >-
                 ^urn:warehouse:inventory-storage:analytics:CycleCountCompleted:v1$
-              x-parser-schema-id: <anonymous-schema-156>
+              x-parser-schema-id: <anonymous-schema-147>
             data:
               type: object
               description: Business payload for CycleCountCompleted.
@@ -11256,25 +10626,25 @@ components:
                 bin_id:
                   type: string
                   description: The bin whose contents were verified.
-                  x-parser-schema-id: <anonymous-schema-158>
+                  x-parser-schema-id: <anonymous-schema-149>
                 counted:
                   type: integer
                   minimum: 0
                   description: Quantity physically counted in the bin.
-                  x-parser-schema-id: <anonymous-schema-159>
+                  x-parser-schema-id: <anonymous-schema-150>
                 system:
                   type: integer
                   minimum: 0
                   description: Quantity the system believed was in the bin.
-                  x-parser-schema-id: <anonymous-schema-160>
+                  x-parser-schema-id: <anonymous-schema-151>
                 discrepancy:
                   type: boolean
                   description: >
                     Whether counted and system quantities differed. When true, a
                     DiscrepancyDetected event accompanies this one.
-                  x-parser-schema-id: <anonymous-schema-161>
-              x-parser-schema-id: <anonymous-schema-157>
-          x-parser-schema-id: <anonymous-schema-154>
+                  x-parser-schema-id: <anonymous-schema-152>
+              x-parser-schema-id: <anonymous-schema-148>
+          x-parser-schema-id: <anonymous-schema-145>
       x-parser-schema-id: CycleCountCompletedEvent
     DiscrepancyDetectedEvent:
       description: CloudEvents envelope for a DiscrepancyDetected domain event.
@@ -11372,13 +10742,13 @@ components:
               type: string
               description: Fixed event type for DiscrepancyDetected.
               const: com.warehouse.wms.inventory-storage.bin.DiscrepancyDetected
-              x-parser-schema-id: <anonymous-schema-163>
+              x-parser-schema-id: <anonymous-schema-154>
             dataschema:
               type: string
               description: urn:warehouse:inventory-storage:analytics:DiscrepancyDetected:v1
               pattern: >-
                 ^urn:warehouse:inventory-storage:analytics:DiscrepancyDetected:v1$
-              x-parser-schema-id: <anonymous-schema-164>
+              x-parser-schema-id: <anonymous-schema-155>
             data:
               type: object
               description: Business payload for DiscrepancyDetected.
@@ -11390,19 +10760,19 @@ components:
                 bin_id:
                   type: string
                   description: The bin whose count did not match system records.
-                  x-parser-schema-id: <anonymous-schema-166>
+                  x-parser-schema-id: <anonymous-schema-157>
                 counted:
                   type: integer
                   minimum: 0
                   description: Quantity physically counted in the bin.
-                  x-parser-schema-id: <anonymous-schema-167>
+                  x-parser-schema-id: <anonymous-schema-158>
                 system:
                   type: integer
                   minimum: 0
                   description: Quantity the system believed was in the bin.
-                  x-parser-schema-id: <anonymous-schema-168>
-              x-parser-schema-id: <anonymous-schema-165>
-          x-parser-schema-id: <anonymous-schema-162>
+                  x-parser-schema-id: <anonymous-schema-159>
+              x-parser-schema-id: <anonymous-schema-156>
+          x-parser-schema-id: <anonymous-schema-153>
       x-parser-schema-id: DiscrepancyDetectedEvent
     TransferStockAllocatedEvent:
       description: CloudEvents envelope for a TransferStockAllocated domain event.
