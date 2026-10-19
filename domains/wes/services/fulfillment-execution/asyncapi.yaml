@@ -4725,6 +4725,275 @@ channels:
                 classification_source: native
                 version: 3
         messageId: ProductClassified
+  warehouse.task-interleaving.events:
+    description: >
+      This service's integration topic. Written by the outbox relay; key =
+      station
+
+      id; every message carries the CloudEvents content-type header (plus the
+
+      optional W3C `traceparent` of the writing request). Only
+
+      `InterleavingHintIssued` is published here: the hint table of
+
+      fulfillment-execution is its consumer. Dispatch on the full `type`, ignore
+
+      unknown types, dedupe on `id`.
+    x-eventcatalog-channel-version: 1.0.0
+    subscribe:
+      operationId: receiveInterleavingHintIssued
+      summary: Receive InterleavingHintIssued from task-interleaving.
+      description: >-
+        task-interleaving publishes an advisory hint (never an assignment) of
+        which open tasks a station could work next. The CloudEvents `id` claim
+        and the per-station superseding upsert of `interleaving_hints` commit in
+        one transaction; the offset is committed afterwards. One ACTIVE hint per
+        station — a newer hint supersedes the previous one. claimNext uses the
+        station's active, unexpired hint only as a tie-break inside one priority
+        band (never across a CPT boundary) and fails open when no hint applies.
+        A message that is not a valid CloudEvent, or whose payload breaks the
+        contract, is logged at WARN and skipped.
+      tags:
+        - name: consumed
+      message:
+        name: InterleavingHintIssued
+        title: InterleavingHintIssued
+        summary: >-
+          task-interleaving recommended which open tasks a station could work
+          next (consumed).
+        description: >-
+          Published by task-interleaving on `warehouse.task-interleaving.events`
+          (its AsyncAPI is the source of truth); consumed here into the local
+          hint copy (ADR-0051). Kafka key and `subject` = the station id.
+          `candidates` is non-empty and ranked from 1 by `detour_m` ascending
+          then `task_id`. The hint is advisory and valid until `expires_at`; one
+          ACTIVE hint per station, a newer hint supersedes; dedupe on the
+          CloudEvents `id`.
+        contentType: application/cloudevents+json
+        tags:
+          - name: consumed
+        headers:
+          type: object
+          description: Kafka message headers carried by every message.
+          required:
+            - content-type
+          properties:
+            content-type:
+              type: string
+              const: application/cloudevents+json; charset=UTF-8
+              description: CloudEvents structured-mode media type.
+              x-parser-schema-id: <anonymous-schema-1>
+            traceparent:
+              type: string
+              description: W3C traceparent of the publishing span.
+              x-parser-schema-id: <anonymous-schema-2>
+            tracestate:
+              type: string
+              description: W3C tracestate, present only when a vendor added entries.
+              x-parser-schema-id: <anonymous-schema-3>
+          x-parser-schema-id: KafkaHeaders
+        payload:
+          allOf:
+            - type: object
+              description: >-
+                CloudEvents 1.0 context attributes; every attribute is required
+                in this fleet.
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  description: CloudEvents spec version.
+                  x-parser-schema-id: <anonymous-schema-5>
+                id:
+                  type: string
+                  format: uuid
+                  description: >-
+                    UUID v4, minted once per occurrence and stable across outbox
+                    redelivery.
+                  x-parser-schema-id: <anonymous-schema-6>
+                source:
+                  type: string
+                  format: uri-reference
+                  description: Producing service, `/warehouse/<repo>`.
+                  x-parser-schema-id: <anonymous-schema-7>
+                type:
+                  type: string
+                  description: >-
+                    `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                  x-parser-schema-id: <anonymous-schema-8>
+                subject:
+                  type: string
+                  minLength: 1
+                  description: Aggregate instance id; equal to the Kafka message key.
+                  x-parser-schema-id: <anonymous-schema-9>
+                time:
+                  type: string
+                  format: date-time
+                  description: Domain occurred-at, UTC, RFC 3339.
+                  x-parser-schema-id: <anonymous-schema-10>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  description: Content type of `data`.
+                  x-parser-schema-id: <anonymous-schema-11>
+                dataschema:
+                  type: string
+                  format: uri
+                  description: '`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.'
+                  x-parser-schema-id: <anonymous-schema-12>
+                data:
+                  type: object
+                  description: Event payload (snake_case keys).
+                  x-parser-schema-id: <anonymous-schema-13>
+              x-parser-schema-id: CloudEvent
+            - type: object
+              required:
+                - type
+                - source
+                - dataschema
+                - data
+              properties:
+                type:
+                  type: string
+                  const: >-
+                    com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued
+                  x-parser-schema-id: <anonymous-schema-269>
+                source:
+                  type: string
+                  const: /warehouse/task-interleaving
+                  x-parser-schema-id: <anonymous-schema-270>
+                dataschema:
+                  type: string
+                  const: >-
+                    urn:warehouse:task-interleaving:events:InterleavingHintIssued:v1
+                  x-parser-schema-id: <anonymous-schema-271>
+                data:
+                  type: object
+                  required:
+                    - hint_id
+                    - station_id
+                    - site_id
+                    - expires_at
+                    - candidates
+                  properties:
+                    hint_id:
+                      type: string
+                      description: The hint id.
+                      x-parser-schema-id: <anonymous-schema-273>
+                    station_id:
+                      type: string
+                      description: >-
+                        The station the hint is for (also the Kafka key and the
+                        CloudEvents `subject`).
+                      x-parser-schema-id: <anonymous-schema-274>
+                    site_id:
+                      type: string
+                      description: The site the station belongs to.
+                      x-parser-schema-id: <anonymous-schema-275>
+                    after_task_id:
+                      type: string
+                      description: >-
+                        The task whose completion triggered the hint. Not used
+                        here.
+                      x-parser-schema-id: <anonymous-schema-276>
+                    origin_location:
+                      type: string
+                      description: >-
+                        Where the operator finished `after_task_id`. Not used
+                        here.
+                      x-parser-schema-id: <anonymous-schema-277>
+                    expires_at:
+                      type: string
+                      format: date-time
+                      description: >-
+                        The hint is ignored at and after this instant
+                        (fail-open).
+                      x-parser-schema-id: <anonymous-schema-278>
+                    policy_version:
+                      type: integer
+                      description: >-
+                        The interleaving policy version the hint was issued
+                        under. Not used here.
+                      x-parser-schema-id: <anonymous-schema-279>
+                    candidates:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: object
+                        required:
+                          - rank
+                          - task_id
+                        properties:
+                          rank:
+                            type: integer
+                            minimum: 1
+                            description: 1 = the producer's preferred candidate.
+                            x-parser-schema-id: <anonymous-schema-282>
+                          task_id:
+                            type: string
+                            description: A task of this context's open pool.
+                            x-parser-schema-id: <anonymous-schema-283>
+                          task_type:
+                            type: string
+                            description: Not used here (claimNext scans one type per call).
+                            x-parser-schema-id: <anonymous-schema-284>
+                          location:
+                            type: string
+                            description: Not used here.
+                            x-parser-schema-id: <anonymous-schema-285>
+                          detour_m:
+                            type: number
+                            description: Not used here.
+                            x-parser-schema-id: <anonymous-schema-286>
+                        x-parser-schema-id: <anonymous-schema-281>
+                      x-parser-schema-id: <anonymous-schema-280>
+                  x-parser-schema-id: <anonymous-schema-272>
+              x-parser-schema-id: <anonymous-schema-268>
+          x-parser-schema-id: <anonymous-schema-267>
+        examples:
+          - name: twoCandidates
+            headers:
+              content-type: application/cloudevents+json; charset=UTF-8
+            payload:
+              specversion: '1.0'
+              id: 6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f
+              source: /warehouse/task-interleaving
+              type: >-
+                com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued
+              subject: STN-07
+              time: '2026-10-17T12:00:00Z'
+              datacontenttype: application/json
+              dataschema: urn:warehouse:task-interleaving:events:InterleavingHintIssued:v1
+              data:
+                hint_id: hint-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                station_id: STN-07
+                site_id: SITE-1
+                after_task_id: task-8a1f
+                origin_location: WH1-FWD-A01-01-01-A
+                expires_at: '2026-10-17T12:01:30Z'
+                policy_version: 2
+                candidates:
+                  - rank: 1
+                    task_id: task-9c2e
+                    task_type: PICK
+                    location: WH1-FWD-A01-02-01-A
+                    detour_m: 4.5
+                  - rank: 2
+                    task_id: task-9d10
+                    task_type: REPLENISH
+                    location: WH1-FWD-A02-01-01-A
+                    detour_m: 12
+        messageId: InterleavingHintIssued
 components:
   messages:
     TaskCompleted:
@@ -9221,6 +9490,242 @@ components:
               classification_source: native
               version: 3
       messageId: ProductClassified
+    InterleavingHintIssued:
+      name: InterleavingHintIssued
+      title: InterleavingHintIssued
+      summary: >-
+        task-interleaving recommended which open tasks a station could work next
+        (consumed).
+      description: >-
+        Published by task-interleaving on `warehouse.task-interleaving.events`
+        (its AsyncAPI is the source of truth); consumed here into the local hint
+        copy (ADR-0051). Kafka key and `subject` = the station id. `candidates`
+        is non-empty and ranked from 1 by `detour_m` ascending then `task_id`.
+        The hint is advisory and valid until `expires_at`; one ACTIVE hint per
+        station, a newer hint supersedes; dedupe on the CloudEvents `id`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      headers:
+        type: object
+        description: Kafka message headers carried by every message.
+        required:
+          - content-type
+        properties:
+          content-type:
+            type: string
+            const: application/cloudevents+json; charset=UTF-8
+            description: CloudEvents structured-mode media type.
+            x-parser-schema-id: <anonymous-schema-1>
+          traceparent:
+            type: string
+            description: W3C traceparent of the publishing span.
+            x-parser-schema-id: <anonymous-schema-2>
+          tracestate:
+            type: string
+            description: W3C tracestate, present only when a vendor added entries.
+            x-parser-schema-id: <anonymous-schema-3>
+        x-parser-schema-id: KafkaHeaders
+      payload:
+        allOf:
+          - type: object
+            description: >-
+              CloudEvents 1.0 context attributes; every attribute is required in
+              this fleet.
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                description: CloudEvents spec version.
+                x-parser-schema-id: <anonymous-schema-5>
+              id:
+                type: string
+                format: uuid
+                description: >-
+                  UUID v4, minted once per occurrence and stable across outbox
+                  redelivery.
+                x-parser-schema-id: <anonymous-schema-6>
+              source:
+                type: string
+                format: uri-reference
+                description: Producing service, `/warehouse/<repo>`.
+                x-parser-schema-id: <anonymous-schema-7>
+              type:
+                type: string
+                description: >-
+                  `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                x-parser-schema-id: <anonymous-schema-8>
+              subject:
+                type: string
+                minLength: 1
+                description: Aggregate instance id; equal to the Kafka message key.
+                x-parser-schema-id: <anonymous-schema-9>
+              time:
+                type: string
+                format: date-time
+                description: Domain occurred-at, UTC, RFC 3339.
+                x-parser-schema-id: <anonymous-schema-10>
+              datacontenttype:
+                type: string
+                const: application/json
+                description: Content type of `data`.
+                x-parser-schema-id: <anonymous-schema-11>
+              dataschema:
+                type: string
+                format: uri
+                description: '`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.'
+                x-parser-schema-id: <anonymous-schema-12>
+              data:
+                type: object
+                description: Event payload (snake_case keys).
+                x-parser-schema-id: <anonymous-schema-13>
+            x-parser-schema-id: CloudEvent
+          - type: object
+            required:
+              - type
+              - source
+              - dataschema
+              - data
+            properties:
+              type:
+                type: string
+                const: >-
+                  com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued
+                x-parser-schema-id: <anonymous-schema-269>
+              source:
+                type: string
+                const: /warehouse/task-interleaving
+                x-parser-schema-id: <anonymous-schema-270>
+              dataschema:
+                type: string
+                const: >-
+                  urn:warehouse:task-interleaving:events:InterleavingHintIssued:v1
+                x-parser-schema-id: <anonymous-schema-271>
+              data:
+                type: object
+                required:
+                  - hint_id
+                  - station_id
+                  - site_id
+                  - expires_at
+                  - candidates
+                properties:
+                  hint_id:
+                    type: string
+                    description: The hint id.
+                    x-parser-schema-id: <anonymous-schema-273>
+                  station_id:
+                    type: string
+                    description: >-
+                      The station the hint is for (also the Kafka key and the
+                      CloudEvents `subject`).
+                    x-parser-schema-id: <anonymous-schema-274>
+                  site_id:
+                    type: string
+                    description: The site the station belongs to.
+                    x-parser-schema-id: <anonymous-schema-275>
+                  after_task_id:
+                    type: string
+                    description: >-
+                      The task whose completion triggered the hint. Not used
+                      here.
+                    x-parser-schema-id: <anonymous-schema-276>
+                  origin_location:
+                    type: string
+                    description: >-
+                      Where the operator finished `after_task_id`. Not used
+                      here.
+                    x-parser-schema-id: <anonymous-schema-277>
+                  expires_at:
+                    type: string
+                    format: date-time
+                    description: The hint is ignored at and after this instant (fail-open).
+                    x-parser-schema-id: <anonymous-schema-278>
+                  policy_version:
+                    type: integer
+                    description: >-
+                      The interleaving policy version the hint was issued under.
+                      Not used here.
+                    x-parser-schema-id: <anonymous-schema-279>
+                  candidates:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: object
+                      required:
+                        - rank
+                        - task_id
+                      properties:
+                        rank:
+                          type: integer
+                          minimum: 1
+                          description: 1 = the producer's preferred candidate.
+                          x-parser-schema-id: <anonymous-schema-282>
+                        task_id:
+                          type: string
+                          description: A task of this context's open pool.
+                          x-parser-schema-id: <anonymous-schema-283>
+                        task_type:
+                          type: string
+                          description: Not used here (claimNext scans one type per call).
+                          x-parser-schema-id: <anonymous-schema-284>
+                        location:
+                          type: string
+                          description: Not used here.
+                          x-parser-schema-id: <anonymous-schema-285>
+                        detour_m:
+                          type: number
+                          description: Not used here.
+                          x-parser-schema-id: <anonymous-schema-286>
+                      x-parser-schema-id: <anonymous-schema-281>
+                    x-parser-schema-id: <anonymous-schema-280>
+                x-parser-schema-id: <anonymous-schema-272>
+            x-parser-schema-id: <anonymous-schema-268>
+        x-parser-schema-id: <anonymous-schema-267>
+      examples:
+        - name: twoCandidates
+          headers:
+            content-type: application/cloudevents+json; charset=UTF-8
+          payload:
+            specversion: '1.0'
+            id: 6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f
+            source: /warehouse/task-interleaving
+            type: >-
+              com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued
+            subject: STN-07
+            time: '2026-10-17T12:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:task-interleaving:events:InterleavingHintIssued:v1
+            data:
+              hint_id: hint-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              station_id: STN-07
+              site_id: SITE-1
+              after_task_id: task-8a1f
+              origin_location: WH1-FWD-A01-01-01-A
+              expires_at: '2026-10-17T12:01:30Z'
+              policy_version: 2
+              candidates:
+                - rank: 1
+                  task_id: task-9c2e
+                  task_type: PICK
+                  location: WH1-FWD-A01-02-01-A
+                  detour_m: 4.5
+                - rank: 2
+                  task_id: task-9d10
+                  task_type: REPLENISH
+                  location: WH1-FWD-A02-01-01-A
+                  detour_m: 12
+      messageId: InterleavingHintIssued
   schemas:
     TransferFactData:
       type: object
