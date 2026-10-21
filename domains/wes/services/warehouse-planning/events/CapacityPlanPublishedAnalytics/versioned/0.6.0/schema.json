@@ -1,0 +1,210 @@
+{
+  "description": "CloudEvents 1.0 envelope of CapacityPlanPublished on the analytics topic.",
+  "allOf": [
+    {
+      "type": "object",
+      "description": "CloudEvents 1.0 structured-mode envelope. Every attribute below is required; the context's own payload sits under data.\n",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "x-parser-schema-id": "<anonymous-schema-1>"
+        },
+        "id": {
+          "type": "string",
+          "description": "UUID v4, minted once per domain event and persisted with the outbox row, so a redelivery repeats it. Dedupe on it.",
+          "x-parser-schema-id": "<anonymous-schema-2>"
+        },
+        "source": {
+          "type": "string",
+          "example": "/warehouse/warehouse-planning",
+          "x-parser-schema-id": "<anonymous-schema-3>"
+        },
+        "type": {
+          "type": "string",
+          "description": "Full reverse-DNS type; dispatch on the whole string.",
+          "x-parser-schema-id": "<anonymous-schema-4>"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Aggregate instance id (never empty).",
+          "x-parser-schema-id": "<anonymous-schema-5>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Domain occurred-at, UTC.",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "dataschema": {
+          "type": "string",
+          "description": "urn:warehouse:<repo>:events:<EventName>:v<N>.",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "data": {
+          "type": "object",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        }
+      },
+      "x-parser-schema-id": "CloudEventEnvelope"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished",
+          "x-parser-schema-id": "<anonymous-schema-96>"
+        },
+        "dataschema": {
+          "const": "urn:warehouse:warehouse-planning:analytics:CapacityPlanPublished:v1",
+          "x-parser-schema-id": "<anonymous-schema-97>"
+        },
+        "data": {
+          "description": "Payload of CapacityPlanPublished on the analytics topic -- the integration payload plus binding_constraint.",
+          "allOf": [
+            {
+              "type": "object",
+              "description": "Payload of CapacityPlanPublished. site_id is ADDITIVE on the v1 payload — present for plans created after migration 0008, omitted for older plans — and a consumer must treat its absence as unknown (never derive it from warehouse_id or location).",
+              "required": [
+                "plan_id",
+                "warehouse_id",
+                "location",
+                "path_id",
+                "window_start",
+                "window_end",
+                "assigned_demand",
+                "path_capacity",
+                "capacity_over_window",
+                "shortage",
+                "bottleneck_step",
+                "published_at"
+              ],
+              "properties": {
+                "plan_id": {
+                  "type": "string",
+                  "description": "The CapacityPlan id (UUID); equals the CloudEvents subject.",
+                  "example": "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10",
+                  "x-parser-schema-id": "<anonymous-schema-24>"
+                },
+                "warehouse_id": {
+                  "type": "string",
+                  "description": "Warehouse the plan is for.",
+                  "example": "WH-1",
+                  "x-parser-schema-id": "<anonymous-schema-25>"
+                },
+                "site_id": {
+                  "type": "string",
+                  "description": "Additive, optional. Canonical site the plan is scoped to (a facility-layout Site site_code, the same identifier its SiteCapabilityChanged event publishes). Omitted for plans stored before migration 0008.",
+                  "example": "SIM1",
+                  "x-parser-schema-id": "<anonymous-schema-26>"
+                },
+                "location": {
+                  "type": "string",
+                  "description": "ProcessCapacity location the plan evaluates.",
+                  "example": "PATH-ZONE-A",
+                  "x-parser-schema-id": "<anonymous-schema-27>"
+                },
+                "path_id": {
+                  "type": "string",
+                  "description": "ProcessPath evaluated.",
+                  "example": "pick-rebin-pack",
+                  "x-parser-schema-id": "<anonymous-schema-28>"
+                },
+                "window_start": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Planning window start (RFC 3339, UTC).",
+                  "example": "2026-10-05T08:00:00Z",
+                  "x-parser-schema-id": "<anonymous-schema-29>"
+                },
+                "window_end": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Planning window end, exclusive (RFC 3339, UTC).",
+                  "example": "2026-10-05T16:00:00Z",
+                  "x-parser-schema-id": "<anonymous-schema-30>"
+                },
+                "assigned_demand": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "Orders assigned to the window.",
+                  "example": 12000,
+                  "x-parser-schema-id": "<anonymous-schema-31>"
+                },
+                "path_capacity": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "Normalized path capacity, ORDER per HOUR.",
+                  "example": 1000,
+                  "x-parser-schema-id": "<anonymous-schema-32>"
+                },
+                "capacity_over_window": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "path_capacity x window hours, in orders.",
+                  "example": 8000,
+                  "x-parser-schema-id": "<anonymous-schema-33>"
+                },
+                "shortage": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "max(0, assigned_demand - capacity_over_window), in orders. Never negative.",
+                  "example": 4000,
+                  "x-parser-schema-id": "<anonymous-schema-34>"
+                },
+                "bottleneck_step": {
+                  "type": "string",
+                  "description": "The ProcessPath step limiting end-to-end flow.",
+                  "example": "REBIN",
+                  "x-parser-schema-id": "<anonymous-schema-35>"
+                },
+                "published_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "When the plan was published (RFC 3339, UTC).",
+                  "example": "2026-10-04T21:45:10Z",
+                  "x-parser-schema-id": "<anonymous-schema-36>"
+                }
+              },
+              "x-parser-schema-id": "CapacityPlanPublishedData"
+            },
+            {
+              "type": "object",
+              "required": [
+                "binding_constraint"
+              ],
+              "properties": {
+                "binding_constraint": {
+                  "type": "string",
+                  "description": "Additive, analytics-only. The constraint type binding the bottleneck step (LABOR, STATION, ...); empty for a plan created before it was recorded.\n",
+                  "example": "STATION",
+                  "x-parser-schema-id": "<anonymous-schema-99>"
+                }
+              },
+              "x-parser-schema-id": "<anonymous-schema-98>"
+            }
+          ],
+          "x-parser-schema-id": "CapacityPlanPublishedAnalyticsData"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-95>"
+    }
+  ],
+  "x-parser-schema-id": "CapacityPlanPublishedAnalyticsEvent"
+}

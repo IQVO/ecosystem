@@ -41,13 +41,13 @@ paths:
       description: |
         Puts a new unit of Pick, Pack, or SLAM work into the pending pool. The task is not assigned to any station at creation time — PULL dispatch (`POST /stations/{stationId}/claim-next`) is the only way a task becomes claimed, consistent with this service's rule that work is never pushed to a named station in advance. `cpt` (Critical Pull Time) drives dispatch priority: `claimNext` always selects the earliest-CPT pending task a station is equipped for.
 
-        **Idempotent per `Idempotency-Key` (ADR-0028).** Send a caller-chosen `Idempotency-Key` header on every call. The first request with a given key creates the task; a retry with the same key and the same body replays the stored response verbatim (same status, headers and task id — including a cached 4xx) instead of creating a duplicate. Reusing a key with a different body is rejected with `422 idempotency-key-reused`; omitting the header is `400 idempotency-key-required`. (Key enforcement requires the Postgres-backed deployment; the in-memory development configuration skips it.) Without a repeated key every call creates a new task with a fresh, server-generated id.
+        **Idempotent per `Idempotency-Key` (ADR-0028).** Send a caller-chosen `Idempotency-Key` header on every call. The first request with a given key creates the task; a retry with the same key and the same body replays the stored response verbatim (same status, headers and task id — including a cached 4xx) instead of creating a duplicate. Reusing a key with a different body is rejected with `422 idempotency-key-reused`; omitting the header is `400 idempotency-key-required`. Postgres is the only runtime, so the check is on in every deployment. Without a repeated key every call creates a new task with a fresh, server-generated id.
       parameters:
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: |
-            Caller-supplied unique key (e.g. a UUID) identifying this creation attempt. **Clients must always send a non-empty key**: a Postgres-backed deployment rejects a missing key with `400 idempotency-key-required` (the in-memory development configuration ignores the header, which is why the schema marks it optional). Retries of the same logical request must reuse it; a genuinely different request must use a new one.
+            Caller-supplied unique key (e.g. a UUID) identifying this creation attempt. **Clients must always send a non-empty key**: a missing key is rejected with `400 idempotency-key-required` (Postgres is the only runtime, so the check is on in every deployment). Retries of the same logical request must reuse it; a genuinely different request must use a new one.
           schema:
             type: string
             example: 6f1c2a3e-9b1d-4c1a-8f0e-2d5b7c9a1e44
@@ -990,7 +990,7 @@ paths:
         - System
       summary: Readiness check
       description: |
-        Returns `200 {"status":"ready"}` while the service is ready to accept new traffic, and `503 {"status":"not_ready"}` once graceful shutdown has begun (ADR-0029) — the readiness gate is flipped as the FIRST step of shutdown, before the HTTP server stops accepting connections, so a Kubernetes readinessProbe pointed here has a window to stop routing new traffic before the listener closes. With `PATH_CATALOGUE_SOURCE=kafka` it also returns `503` from boot until the process-path catalogue replay has caught up: the listener starts before the replay so `/healthz` answers at once (ADR-0044). Distinct from `/healthz` (liveness, never flipped by shutdown).
+        Returns `200 {"status":"ready"}` while the service is ready to accept new traffic. Ready means: the service is not draining AND Postgres answers a ping AND a Kafka broker answers a metadata request (reachability only; topics are never required, the service's writers auto-create them). The dependency verdict is cached for a few seconds. Returns `503 {"status":"not_ready"}` once graceful shutdown has begun (ADR-0029) — the readiness gate is flipped as the FIRST step of shutdown, before the HTTP server stops accepting connections, so a Kubernetes readinessProbe pointed here has a window to stop routing new traffic before the listener closes — and a `503` problem+json of type `dependency-unavailable` (the detail names the failing dependencies) while Postgres or Kafka is not reachable. With `PATH_CATALOGUE_SOURCE=kafka` it also returns `503` from boot until the process-path catalogue replay has caught up: the listener starts before the replay so `/healthz` answers at once (ADR-0044). Distinct from `/healthz` (liveness, never flipped by shutdown).
       responses:
         '200':
           description: The service is ready to accept new traffic.
@@ -1008,7 +1008,7 @@ paths:
               example:
                 status: ready
         '503':
-          description: The service has begun graceful shutdown and is no longer accepting new traffic.
+          description: The service is draining, warming up, or Postgres or Kafka is not reachable, and must not receive new traffic.
           content:
             application/json:
               schema:
@@ -1022,6 +1022,9 @@ paths:
                       - not_ready
               example:
                 status: not_ready
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   schemas:
     Problem:

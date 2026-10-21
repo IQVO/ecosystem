@@ -1,0 +1,198 @@
+---
+id: warehouse-planning
+name: Warehouse Planning (events)
+version: 0.6.0
+summary: >-
+  Process and process-path capacity, normalisation across native units, and
+  forward-looking capacity shortage detection.
+badges:
+  - content: warehouse-planning
+    textColor: blue
+    backgroundColor: blue
+  - content: capacity-plan
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+  - content: analytics
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: CapacityPlanCreated
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.events
+        version: 0.6.0
+  - id: CapacityPlanPublished
+    version: 1.0.0
+    to:
+      - id: warehouse.warehouse-planning.events
+        version: 0.6.0
+  - id: CapacityShortageDetected
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.events
+        version: 0.6.0
+  - id: BottleneckDetected
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.events
+        version: 0.6.0
+  - id: ProcessCapacityRegistered
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.events
+        version: 0.6.0
+  - id: ProcessCapacityChanged
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.events
+        version: 0.6.0
+  - id: CapacityPlanCreatedAnalytics
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.analytics
+        version: 0.6.0
+  - id: CapacityPlanPublishedAnalytics
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.analytics
+        version: 0.6.0
+  - id: CapacityShortageDetectedAnalytics
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.analytics
+        version: 0.6.0
+  - id: BottleneckDetectedAnalytics
+    version: 0.6.0
+    to:
+      - id: warehouse.warehouse-planning.analytics
+        version: 0.6.0
+receives:
+  - id: ShiftPlanCommitted
+    version: 1.0.0
+    from:
+      - id: warehouse.workforce.events
+        version: 1.0.0
+  - id: LocationSlotRegistered
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: LocationSlotDecommissioned
+    version: 1.0.0
+    from:
+      - id: warehouse.facility.events
+        version: 1.0.0
+  - id: OrderAllocated
+    version: 0.5.0
+    from:
+      - id: warehouse.order-management.events
+        version: 1.0.0
+  - id: OrderPartiallyAllocated
+    version: 0.5.0
+    from:
+      - id: warehouse.order-management.events
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Process and process-path capacity, normalisation across native units, and forward-looking capacity shortage detection.
+
+| | |
+|---|---|
+| Bounded context | `warehouse-planning` |
+| Domain | WES (`wes`) |
+| DDD classification | Core |
+| Tier | WES, capacity planning |
+| Publishes (Kafka) | `warehouse.warehouse-planning.events`<br/>`warehouse.warehouse-planning.analytics` |
+| Consumes (Kafka) | `warehouse.workforce.events`<br/>`warehouse.facility.events`<br/>`warehouse.order-management.events` |
+| CloudEvents type prefix | `com.warehouse.wes.warehouse-planning.` |
+| Event source | `/warehouse/warehouse-planning` |
+| Repository | [IQVO/warehouse-planning](https://github.com/IQVO/warehouse-planning) |
+| REST API | [warehouse-planning-api](/docs/services/warehouse-planning-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **warehouse-planning** bounded context (WES
+subdomain): *can this warehouse process the demand assigned to it?*
+
+**Published (Phase 4).** The `CapacityPlan` aggregate raises four events,
+published to `warehouse.warehouse-planning.events` through a
+**transactional outbox**: the plan and its already-encoded events are
+written in ONE database transaction, and a relay drains them to Kafka
+(at-least-once; the CloudEvents `id` is persisted with the outbox row, so
+a retry republishes the same `id` -- consumers dedupe on it). Per plan:
+`CapacityPlanCreated` on creation; on publication
+`CapacityPlanPublished`, plus `CapacityShortageDetected` and
+`BottleneckDetected` only when the plan has a shortage.
+The `ProcessCapacity` aggregate publishes on the same topic and the same
+outbox: `ProcessCapacityRegistered` when its first (native) constraint
+brings it into being, `ProcessCapacityChanged` when a registration moves
+the effective rate (the minimum rate value, the binding constraint, or
+both); a registration the effective rate does not notice raises nothing.
+ProcessCapacity events are integration-stream only: the analytics fanout
+carries plan facts only (ADR 0005).
+
+**Consumed (Phase 3).** `ShiftPlanCommitted` (workforce-management) and
+`LocationSlotRegistered`/`LocationSlotDecommissioned` (facility-layout) keep
+local ProcessCapacity read models current; this context never makes a
+live cross-context call.
+
+**Consumed (ADR 0004, opt-in).** `OrderAllocated` and
+`OrderPartiallyAllocated` (order-management, topic
+`warehouse.order-management.events`) keep a local expected-demand read
+model current when `DEMAND_CONSUMER_GROUP` is set (unset = no consumer).
+Each order is counted once, at its latest promise cutoff, and attributed to
+the ONE configured site (`DEMAND_SITE_ID`): order-management's events carry
+no fulfillment site. `OrderRepromised` and every other type are ignored.
+
+**Analytics stream (ADR 0005).** The same four events are ALSO written to
+`warehouse.warehouse-planning.analytics` in the SAME outbox transaction
+(two outbox rows per event, one per topic), as CloudEvents 1.0 with the
+SAME `type` and the SAME `id` per occurrence but
+`dataschema=urn:warehouse:warehouse-planning:analytics:<EventName>:v1`.
+The integration messages are byte-identical to what they were before the
+stream existed. The analytics payloads are the integration payloads plus
+additive, analytics-only fields: today `binding_constraint` on
+`CapacityPlanPublished` (the constraint type -- LABOR, STATION, ... --
+binding the bottleneck step; `""` for a plan created before it was
+recorded). Only this service's own `planning-projector` consumes it (fixed
+consumer group, at-least-once, offsets committed after the projection
+committed), into a SEPARATE analytical database that
+`planning-reports` serves read-only. Poison messages go to
+`warehouse.warehouse-planning.analytics.dlq`.
+
+**Envelope (mandatory).** Every message is a CloudEvents 1.0 event in
+*structured content mode* (Kafka value = JSON event format) with the Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`.
+Optional W3C trace-context headers (`traceparent`, and `tracestate` /
+`baggage` when present) carry the trace of the request that wrote the
+outbox row (ADR 0014); consumers may extract them, and must not require
+them. All of
+`specversion` (`1.0`), `id`, `source` (`/warehouse/warehouse-planning`),
+`type`, `subject`, `time`, `datacontenttype` (`application/json`) and
+`dataschema` are required; the payload sits under `data`. No flat
+envelope, no toggle.
+
+**Type naming.** `com.warehouse.wes.warehouse-planning.<entity>.<EventName>`
+where `<entity>` is the aggregate that raised the event, lowercase, no
+separators -- here `capacityplan`. **dataschema** =
+`urn:warehouse:warehouse-planning:events:<EventName>:v1`. **subject** and
+the Kafka message key = the capacity plan id (one plan's events stay
+ordered on one partition). A breaking payload change gets a new `.v2`
+type and dataschema, never a mutation.
+
+
+## Architecture diagram
+<NodeGraph />
