@@ -1,0 +1,103 @@
+---
+id: returns-processing-api
+version: 1.0.0
+name: Returns Processing API
+summary: >-
+  REST API of returns-processing. The reverse flow of goods: authorize a return
+  against a shipped order line (RMA), receive and grade it (ReturnReceipt),
+  decide what happens to it (Disposition) and hand restockable units back to
+  inventory-storage as a staged line.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Returns Processing API
+badges:
+  - content: Returns
+    textColor: blue
+    backgroundColor: blue
+  - content: Receipts
+    textColor: blue
+    backgroundColor: blue
+  - content: Dispositions
+    textColor: blue
+    backgroundColor: blue
+  - content: Disposition policies
+    textColor: blue
+    backgroundColor: blue
+  - content: Health
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: returns-processing-api-authorizeReturn
+    version: 1.0.0
+  - id: returns-processing-api-listReturnsByOrder
+    version: 1.0.0
+  - id: returns-processing-api-getReturn
+    version: 1.0.0
+  - id: returns-processing-api-openReturnReceipt
+    version: 1.0.0
+  - id: returns-processing-api-inspectReturnLine
+    version: 1.0.0
+  - id: returns-processing-api-overrideDisposition
+    version: 1.0.0
+  - id: returns-processing-api-declareDispositionPolicy
+    version: 1.0.0
+  - id: returns-processing-api-getDispositionPolicy
+    version: 1.0.0
+  - id: returns-processing-api-healthz
+    version: 1.0.0
+  - id: returns-processing-api-readyz
+    version: 1.0.0
+  - id: returns-processing-api-metrics
+    version: 1.0.0
+---
+## Purpose
+The reverse flow of goods: authorize a return against a shipped order line (RMA), receive and grade it (ReturnReceipt), decide what happens to it (Disposition) and hand restockable units back to inventory-storage as a staged line. An analytics mirror is planned, not built (ADR 0004).
+
+| | |
+|---|---|
+| Bounded context | `returns-processing` |
+| Domain | WMS (`wms`) |
+| DDD classification | Supporting |
+| Tier | WMS |
+| Repository | [IQVO/returns-processing](https://github.com/IQVO/returns-processing) |
+| Events | [returns-processing](/docs/services/returns-processing) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+The WMS-tier owner of the reverse flow in the warehouse-systems platform
+(ADR 0001, ADR 0002): authorize a return against a **shipped** order line
+(RMA), receive and grade the arriving goods (ReturnReceipt), and decide
+what happens to each inspected line (**Disposition**: RESTOCK, REFURBISH,
+LIQUIDATE, DISPOSE, RTV) from a versioned **DispositionPolicy** keyed on
+grade and product classification.
+
+This service owns no stock: a RESTOCK disposition hands the goods to
+inventory-storage by event (`ReturnLineStaged`, the shape of its
+`ReceiptLineReceived` plus `rma_id`, `disposition_id`, `site_id`) and the
+stow stays an RF action there. Every other outcome is recorded for audit
+and touches no sibling. A line with no RMA is received as explicitly
+UNEXPECTED and raises `UnexpectedReturnReceived` for exception-management.
+
+Authorization facts (allocated lines, manifested work units, product
+classifications) are read from local copies fed by events (ADR 0003); this
+API never calls a sibling context. Events are published as CloudEvents on
+`warehouse.returns-processing.events` through a transactional outbox (see
+`apis/asyncapi.yaml`).
+
+Errors are RFC 7807 problem documents with
+`type = https://errors.returns-processing.warehouse-systems.dev/<slug>`.
+There is no authentication layer (fleet decision 2026-09-11).
+  
+
+## Architecture diagram
+<NodeGraph />
