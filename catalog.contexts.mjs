@@ -55,6 +55,14 @@ export const CONTEXTS = {
       "Min/max forward pick-face replenishment: raises requests that move stock from reserve to forward slots, driven by event-fed local copies of stock levels and slot plans.",
     topics: ["warehouse.pick-face-replenishment.events", "warehouse.pick-face-replenishment.analytics"],
   },
+  'returns-processing': {
+    subdomain: 'wms',
+    classification: 'Supporting',
+    tier: 'WMS',
+    purpose:
+      "The reverse flow of goods: authorize a return against a shipped order line (RMA), receive and grade it (ReturnReceipt), decide what happens to it (Disposition) and hand restockable units back to inventory-storage as a staged line. An analytics mirror is planned, not built (ADR 0004).",
+    topics: ["warehouse.returns-processing.events"],
+  },
   'product-master': {
     subdomain: 'wms',
     classification: 'Supporting',
@@ -70,6 +78,14 @@ export const CONTEXTS = {
     purpose:
       "Decides which SKUs deserve a forward pick slot: velocity-ranked slot plans and slot moves that a human approves, derived purely from event-fed local copies.",
     topics: ["warehouse.slotting-optimization.events"],
+  },
+  'exception-management': {
+    subdomain: 'wes',
+    classification: 'Supporting',
+    tier: 'WES',
+    purpose:
+      "The Problem Solve lifecycle: every case is opened by a fact another context published (CPT misses, diverted packages, weight discrepancies, backlog alarms, network-order risks, unexpected returns, count discrepancies); this service owns the triage, assignment, SLA and resolution of that case, never the producer's own state.",
+    topics: ["warehouse.exception-management.events"],
   },
   'fulfillment-execution': {
     subdomain: 'wes',

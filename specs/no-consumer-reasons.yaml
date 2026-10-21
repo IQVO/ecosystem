@@ -17,7 +17,6 @@
 com.warehouse.wes.work-planning.charge.ChargeForecastReceived: "reserved, not emitted today (ADR 0020)"
 com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected: "reserved, not emitted today (ADR 0020)"
 com.warehouse.wes.work-planning.plan.ShiftPlanCommitted: "reserved, not emitted today (ADR 0020)"
-com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached: "reserved, not emitted today (ADR 0020)"
 com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged: "reserved, not emitted today (ADR 0020)"
 com.warehouse.wes.work-planning.workpool.PathThrottled: "reserved, not emitted today (ADR 0020)"
 com.warehouse.wes.work-planning.workpool.RateDeviationDetected: "reserved, not emitted today (ADR 0020)"
@@ -32,8 +31,8 @@ com.warehouse.wms.facility-layout.placementrule.PlacementRuleDefined: "Published
 com.warehouse.wms.facility-layout.site.SiteRegistered: "Published Language fact; consumed on demand"
 com.warehouse.wms.facility-layout.site.SiteRoleChanged: "Published Language fact; consumed on demand"
 com.warehouse.wms.facility-layout.structure.FixedStructureRegistered: "Published Language fact; consumed on demand"
-# order-management — decided keep-list (E4).
-com.warehouse.wes.order-management.order.OrderRepromised: "the customer-facing delay trigger has no consumer by decision (E4)"
+# order-management — OrderRepromised is consumed by exception-management
+# (auto-resolve correlation); entry removed when its spec landed here.
 # network-inventory-planning — decided keep-list.
 com.warehouse.wes.network-inventory-planning.transfer.TransferPlanApproved: "operator approval record of the transfer saga; consumed on demand"
 # product-master — decided keep-list.
@@ -50,14 +49,33 @@ com.warehouse.wms.slotting-optimization.slotplan.SlotPlanGenerated: "slotting ru
 com.warehouse.wms.slotting-optimization.slotplan.SlotPlanRejected: "slotting run outcome fact (rejection record); consumed on demand"
 # pick-face-replenishment — decided keep-list.
 com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCompleted: "ledger mirror of inventory-storage's StockRelocated; consumed on demand"
+# returns-processing — decided keep-list (registration 2026-10-21).
+# ReturnLineStaged is consumed by inventory-storage (ADR 0044) and
+# UnexpectedReturnReceived by exception-management; the rest are the returns
+# ledger's own facts — the analytics mirror is planned, not built (ADR 0004).
+com.warehouse.wms.returns-processing.returnauthorization.ReturnAuthorized: "returns ledger fact; analytics mirror planned, not built (ADR 0004); consumed on demand"
+com.warehouse.wms.returns-processing.returnauthorization.ReturnAuthorizationRejected: "returns ledger fact; analytics mirror planned, not built (ADR 0004); consumed on demand"
+com.warehouse.wms.returns-processing.returnreceipt.ReturnReceiptOpened: "returns ledger fact; analytics mirror planned, not built (ADR 0004); consumed on demand"
+com.warehouse.wms.returns-processing.returnreceipt.ReturnLineInspected: "returns ledger fact; analytics mirror planned, not built (ADR 0004); consumed on demand"
+com.warehouse.wms.returns-processing.disposition.DispositionDecided: "returns ledger fact; analytics mirror planned, not built (ADR 0004); consumed on demand"
+# exception-management — decided keep-list (registration 2026-10-21).
+# Case lifecycle and policy facts; console and ops-agent read cases through the
+# REST API, no context consumes the event stream in v1.
+com.warehouse.wes.exception-management.exceptioncase.ExceptionOpened: "case lifecycle fact; console and ops-agent read cases via REST; no event consumer in v1"
+com.warehouse.wes.exception-management.exceptioncase.ExceptionTriaged: "case lifecycle fact; console and ops-agent read cases via REST; no event consumer in v1"
+com.warehouse.wes.exception-management.exceptioncase.ExceptionAssigned: "case lifecycle fact; console and ops-agent read cases via REST; no event consumer in v1"
+com.warehouse.wes.exception-management.exceptioncase.ExceptionEscalated: "case lifecycle fact; console and ops-agent read cases via REST; no event consumer in v1"
+com.warehouse.wes.exception-management.exceptioncase.ExceptionResolved: "case lifecycle fact; console and ops-agent read cases via REST; no event consumer in v1"
+com.warehouse.wes.exception-management.exceptioncase.ExceptionAutoResolved: "case lifecycle fact; console and ops-agent read cases via REST; no event consumer in v1"
+com.warehouse.wes.exception-management.exceptionpolicy.ExceptionPolicyDeclared: "policy declaration fact (append-only versions); no event consumer in v1"
 # network-fulfillment — publisher switched on 2026-10-17 (K19): these are facts
 # of the external-network channel, no consumer by decision.
-com.warehouse.wes.network-fulfillment.networkorder.AcknowledgementDeadlineAtRisk: "publisher switched on 2026-10-17 (K19); facts of the external-network channel, no consumer by decision"
+# AcknowledgementDeadlineAtRisk and OrphanedHoldCancelled are consumed by
+# exception-management; their entries were removed when its spec landed here.
 com.warehouse.wes.network-fulfillment.networkorder.NetworkOrderReceived: "publisher switched on 2026-10-17 (K19); facts of the external-network channel, no consumer by decision"
 com.warehouse.wes.network-fulfillment.networkorder.NetworkOrderRejected: "publisher switched on 2026-10-17 (K19); facts of the external-network channel, no consumer by decision"
 com.warehouse.wes.network-fulfillment.networkorder.NetworkOrderShipmentConfirmed: "publisher switched on 2026-10-17 (K19); facts of the external-network channel, no consumer by decision"
 com.warehouse.wes.network-fulfillment.networkorder.NetworkOrderSubmitted: "publisher switched on 2026-10-17 (K19); facts of the external-network channel, no consumer by decision"
-com.warehouse.wes.network-fulfillment.networkorder.OrphanedHoldCancelled: "publisher switched on 2026-10-17 (K19); facts of the external-network channel, no consumer by decision"
 #
 # Transitional (`pending:`) entries — deleted by the follow-up wave.
 # pick-face-replenishment — wes-work-planning consumer merged (K44); its
@@ -69,3 +87,7 @@ com.warehouse.wes.network-fulfillment.networkorder.OrphanedHoldCancelled: "publi
 # consumer not built yet -- the orphan sensor caught these on its first post-merge re-sync.
 com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered: "pending: new capacity fact (WPL #70); consumer not built yet"
 com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged: "pending: new capacity fact (WPL #70); consumer not built yet"
+# inventory-storage ItemStowed, promoted to warehouse.inventory.events on
+# 2026-10-21 (inventory-storage PR #239) — caught by this sync's orphan run;
+# no spec declares a consumer yet.
+com.warehouse.wms.inventory-storage.stock.ItemStowed: "pending: promoted to the integration topic (PR #239); no consumer spec yet"
