@@ -1,0 +1,180 @@
+---
+id: exception-management
+name: Exception Management (events)
+version: 1.0.0
+summary: >-
+  The Problem Solve lifecycle: every case is opened by a fact another context
+  published (CPT misses, diverted packages, weight discrepancies, backlog
+  alarms, network-order risks, unexpected returns, count discrepancies); this
+  service owns the triage, assignment, SLA and resolution of that case, never
+  the producer's own state.
+badges:
+  - content: exception-management
+    textColor: blue
+    backgroundColor: blue
+  - content: exceptioncase
+    textColor: blue
+    backgroundColor: blue
+  - content: exceptionpolicy
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: ExceptionOpened
+    version: 1.0.0
+    to:
+      - id: warehouse.exception-management.events
+        version: 1.0.0
+  - id: ExceptionTriaged
+    version: 1.0.0
+    to:
+      - id: warehouse.exception-management.events
+        version: 1.0.0
+  - id: ExceptionAssigned
+    version: 1.0.0
+    to:
+      - id: warehouse.exception-management.events
+        version: 1.0.0
+  - id: ExceptionEscalated
+    version: 1.0.0
+    to:
+      - id: warehouse.exception-management.events
+        version: 1.0.0
+  - id: ExceptionResolved
+    version: 1.0.0
+    to:
+      - id: warehouse.exception-management.events
+        version: 1.0.0
+  - id: ExceptionAutoResolved
+    version: 1.0.0
+    to:
+      - id: warehouse.exception-management.events
+        version: 1.0.0
+  - id: ExceptionPolicyDeclared
+    version: 1.0.0
+    to:
+      - id: warehouse.exception-management.events
+        version: 1.0.0
+receives:
+  - id: TaskCPTMissed
+    version: 2.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: PackageDiverted
+    version: 2.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: WeightDiscrepancyDetected
+    version: 2.0.0
+    from:
+      - id: warehouse.fulfillment.events
+        version: 2.0.0
+  - id: BacklogThresholdBreached
+    version: 1.0.0
+    from:
+      - id: warehouse.work-planning.events
+        version: 1.0.0
+  - id: AcknowledgementDeadlineAtRisk
+    version: 2.0.0
+    from:
+      - id: warehouse.network-fulfillment.events
+        version: 2.0.0
+  - id: OrphanedHoldCancelled
+    version: 2.0.0
+    from:
+      - id: warehouse.network-fulfillment.events
+        version: 2.0.0
+  - id: OrderRepromised
+    version: 1.0.0
+    from:
+      - id: warehouse.order-management.events
+        version: 1.0.0
+  - id: UnexpectedReturnReceived
+    version: 1.0.0
+    from:
+      - id: warehouse.returns-processing.events
+        version: 1.0.0
+  - id: DiscrepancyDetected
+    version: 1.0.0
+    from:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+  - id: ItemUnlocated
+    version: 1.0.0
+    from:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+The Problem Solve lifecycle: every case is opened by a fact another context published (CPT misses, diverted packages, weight discrepancies, backlog alarms, network-order risks, unexpected returns, count discrepancies); this service owns the triage, assignment, SLA and resolution of that case, never the producer's own state.
+
+| | |
+|---|---|
+| Bounded context | `exception-management` |
+| Domain | WES (`wes`) |
+| DDD classification | Supporting |
+| Tier | WES |
+| Publishes (Kafka) | `warehouse.exception-management.events` |
+| Consumes (Kafka) | `warehouse.fulfillment.events`<br/>`warehouse.work-planning.events`<br/>`warehouse.network-fulfillment.events`<br/>`warehouse.order-management.events`<br/>`warehouse.returns-processing.events`<br/>`warehouse.inventory.events` |
+| CloudEvents type prefix | `com.warehouse.wes.exception-management.` |
+| Event source | `/warehouse/exception-management` |
+| Repository | [IQVO/exception-management](https://github.com/IQVO/exception-management) |
+| REST API | [exception-management-api](/docs/services/exception-management-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **exception-management** bounded context (WES
+subdomain): the Problem Solve lifecycle (ADR 0001, ADR 0002). Every case
+is opened by a fact another context published; this service owns the
+triage, assignment, SLA and resolution of that case, never the producer's
+own state.
+
+**Published.** The `ExceptionCase` aggregate raises six events and the
+`ExceptionPolicy` aggregate one, all published to
+`warehouse.exception-management.events` through a **transactional
+outbox**: the aggregate row and its already-encoded events are written in
+ONE database transaction and a relay drains them to Kafka (at-least-once;
+the CloudEvents `id` is stored with the outbox row, so a retry republishes
+the same `id`). Kafka key = case id (source type for the policy event), so
+one case's history stays ordered on one partition.
+
+**Consumed (ADR 0003).** Exception facts from six sibling contexts:
+fulfillment-execution (`TaskCPTMissed`, `PackageDiverted`,
+`WeightDiscrepancyDetected`), wes-work-planning
+(`BacklogThresholdBreached`), network-fulfillment
+(`AcknowledgementDeadlineAtRisk`, `OrphanedHoldCancelled`),
+order-management (`OrderRepromised`, correlation for auto-resolve only),
+returns-processing (`UnexpectedReturnReceived`) and inventory-storage
+(`DiscrepancyDetected`, `ItemUnlocated`). Each consumed message opens or
+touches exactly one open case per dedup key (source type, source subject,
+site); the source payload is frozen on the case, never re-fetched. The
+consumed messages below are the producers' own contracts, restated here
+and never imported.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`.
+`specversion`, `id`, `source` (`/warehouse/exception-management`), `type`,
+`subject` (the case id; the source type for the policy event), `time`,
+`datacontenttype` (`application/json`) and `dataschema`
+(`urn:warehouse:exception-management:events:<EventName>:v1`) are all
+required. Kafka key = the subject. Type =
+`com.warehouse.wes.exception-management.<entity>.<EventName>`. A breaking
+payload change is a new `.v2` type, never a mutation.
+
+
+## Architecture diagram
+<NodeGraph />
