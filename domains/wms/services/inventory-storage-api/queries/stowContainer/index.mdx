@@ -1,0 +1,85 @@
+---
+id: inventory-storage-api-stowContainer
+version: 1.0.0
+name: stowContainer
+summary: Stow a sealed case into a case bin
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Containers'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/containers/{lpn}:stow'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Scan the LPN, scan the location (ADR 0045). The bin must accept sealed cases (handling unit CASE or PALLET, as published by facility-layout); a bin whose handling unit is unknown or EACH is 409 `bin-handling-unit-mismatch` (fail closed). The first stow sets the container's site from the bin's site (a carton event carries no site) and creates the SEALED_CASE stock unit holding the case's eaches; moving a stowed container to another bin of the same site is allowed, to another site is 409 `container-not-at-site`. Stowing into the bin it is already in is a no-op.
+
+Behind the Idempotency-Key middleware like the other creating POSTs (ADR 0018).
+
+
+
+
+## POST `(/containers/{lpn}:stow)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Caller-generated unique key (a UUID per logical submit) that makes a retried request safe (ADR 0018). Postgres is the only runtime, so the check is on in every deployment: a missing or empty key is answered with 400 `idempotency-key-required`; a replay with the same key and the same body returns the original response, while the same key with a different body is 422 `idempotency-key-reused`.
+
+- **lpn** (path) (required): The container's license plate (the carton SSCC, or an internal `LPN-<site>-<id>`).
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+A sealed case with an identity (ADR 0045). The ledger stays in eaches: `qtyEaches` is the case's content, held by the 1:1 SEALED_CASE stock unit `stockUnitId` once stowed.
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

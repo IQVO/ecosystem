@@ -14,7 +14,7 @@ info:
     (ADR 0001, ADR 0002).
 
     **Published.** The `Asn`, `DockAppointment` and `Receipt` aggregates raise
-    nine events, published to `warehouse.inbound-receiving.events` through a
+    eleven events, published to `warehouse.inbound-receiving.events` through a
     **transactional outbox**: the aggregate row and its already-encoded events
     are written in ONE database transaction and a relay drains them to Kafka
     (at-least-once; the CloudEvents `id` is stored with the outbox row, so a
@@ -32,7 +32,7 @@ info:
     default to `permissive` (consumer not started); a `kafka` mode with an
     unset group is a boot error.
 
-    **Analytics (ADR 0006).** The same nine events are ALSO written, in the
+    **Analytics (ADR 0006).** The same eleven events are ALSO written, in the
     same transaction, to `warehouse.inbound-receiving.analytics` with the same
     `type` and the same `id` per occurrence, `dataschema`
     `urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and payloads
@@ -178,6 +178,10 @@ channels:
                           format: date-time
                           description: Omitted when the supplier gave none.
                           x-parser-schema-id: <anonymous-schema-13>
+                        owner_ref:
+                          type: string
+                          description: Optional opaque tenant tag.
+                          x-parser-schema-id: <anonymous-schema-14>
                         lines:
                           type: array
                           minItems: 1
@@ -191,16 +195,87 @@ channels:
                               line_no:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-15>
+                                x-parser-schema-id: <anonymous-schema-16>
                               sku:
                                 type: string
-                                x-parser-schema-id: <anonymous-schema-16>
+                                x-parser-schema-id: <anonymous-schema-17>
                               expected_qty:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-17>
+                                x-parser-schema-id: <anonymous-schema-18>
                             x-parser-schema-id: AsnLineData
-                          x-parser-schema-id: <anonymous-schema-14>
+                          x-parser-schema-id: <anonymous-schema-15>
+                        cartons:
+                          type: array
+                          description: Optional announced cartons.
+                          items:
+                            type: object
+                            required:
+                              - sscc
+                              - kind
+                              - contents
+                            properties:
+                              sscc:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-21>
+                              parent_sscc:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-22>
+                              kind:
+                                type: string
+                                enum:
+                                  - HOMOGENEOUS_CASE
+                                  - MIXED
+                                x-parser-schema-id: <anonymous-schema-23>
+                              gross_weight_g:
+                                type: integer
+                                x-parser-schema-id: <anonymous-schema-24>
+                              dims:
+                                type: object
+                                properties:
+                                  length_mm:
+                                    type: integer
+                                    x-parser-schema-id: <anonymous-schema-26>
+                                  width_mm:
+                                    type: integer
+                                    x-parser-schema-id: <anonymous-schema-27>
+                                  height_mm:
+                                    type: integer
+                                    x-parser-schema-id: <anonymous-schema-28>
+                                x-parser-schema-id: <anonymous-schema-25>
+                              contents:
+                                type: array
+                                items:
+                                  type: object
+                                  required:
+                                    - line_no
+                                    - sku
+                                    - gtin
+                                    - qty
+                                  properties:
+                                    line_no:
+                                      type: integer
+                                      x-parser-schema-id: <anonymous-schema-31>
+                                    sku:
+                                      type: string
+                                      x-parser-schema-id: <anonymous-schema-32>
+                                    gtin:
+                                      type: string
+                                      x-parser-schema-id: <anonymous-schema-33>
+                                    qty:
+                                      type: integer
+                                      description: Eaches.
+                                      x-parser-schema-id: <anonymous-schema-34>
+                                    lot:
+                                      type: string
+                                      x-parser-schema-id: <anonymous-schema-35>
+                                    expiry:
+                                      type: string
+                                      x-parser-schema-id: <anonymous-schema-36>
+                                  x-parser-schema-id: <anonymous-schema-30>
+                                x-parser-schema-id: <anonymous-schema-29>
+                            x-parser-schema-id: <anonymous-schema-20>
+                          x-parser-schema-id: <anonymous-schema-19>
                       x-parser-schema-id: <anonymous-schema-10>
                   x-parser-schema-id: <anonymous-schema-9>
               x-parser-schema-id: ASNRegisteredEvent
@@ -290,13 +365,13 @@ channels:
                       properties:
                         asn_number:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-20>
+                          x-parser-schema-id: <anonymous-schema-39>
                         reason:
                           type: string
                           description: Omitted when none was given.
-                          x-parser-schema-id: <anonymous-schema-21>
-                      x-parser-schema-id: <anonymous-schema-19>
-                  x-parser-schema-id: <anonymous-schema-18>
+                          x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-38>
+                  x-parser-schema-id: <anonymous-schema-37>
               x-parser-schema-id: ASNCancelledEvent
             examples:
               - name: cancelled
@@ -386,30 +461,30 @@ channels:
                       properties:
                         appointment_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-24>
+                          x-parser-schema-id: <anonymous-schema-43>
                         door_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-25>
+                          x-parser-schema-id: <anonymous-schema-44>
                         carrier:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-26>
+                          x-parser-schema-id: <anonymous-schema-45>
                         window_start:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-27>
+                          x-parser-schema-id: <anonymous-schema-46>
                         window_end:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-28>
+                          x-parser-schema-id: <anonymous-schema-47>
                         asn_numbers:
                           type: array
                           minItems: 1
                           items:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-30>
-                          x-parser-schema-id: <anonymous-schema-29>
-                      x-parser-schema-id: <anonymous-schema-23>
-                  x-parser-schema-id: <anonymous-schema-22>
+                            x-parser-schema-id: <anonymous-schema-49>
+                          x-parser-schema-id: <anonymous-schema-48>
+                      x-parser-schema-id: <anonymous-schema-42>
+                  x-parser-schema-id: <anonymous-schema-41>
               x-parser-schema-id: DockAppointmentBookedEvent
             examples:
               - name: booked
@@ -499,16 +574,16 @@ channels:
                       properties:
                         appointment_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-33>
+                          x-parser-schema-id: <anonymous-schema-52>
                         door_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: <anonymous-schema-53>
                         checked_in_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-35>
-                      x-parser-schema-id: <anonymous-schema-32>
-                  x-parser-schema-id: <anonymous-schema-31>
+                          x-parser-schema-id: <anonymous-schema-54>
+                      x-parser-schema-id: <anonymous-schema-51>
+                  x-parser-schema-id: <anonymous-schema-50>
               x-parser-schema-id: DockAppointmentCheckedInEvent
             examples:
               - name: checkedIn
@@ -593,16 +668,16 @@ channels:
                       properties:
                         appointment_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-38>
+                          x-parser-schema-id: <anonymous-schema-57>
                         door_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-39>
+                          x-parser-schema-id: <anonymous-schema-58>
                         reason:
                           type: string
                           description: Omitted when none was given.
-                          x-parser-schema-id: <anonymous-schema-40>
-                      x-parser-schema-id: <anonymous-schema-37>
-                  x-parser-schema-id: <anonymous-schema-36>
+                          x-parser-schema-id: <anonymous-schema-59>
+                      x-parser-schema-id: <anonymous-schema-56>
+                  x-parser-schema-id: <anonymous-schema-55>
               x-parser-schema-id: DockAppointmentCancelledEvent
             examples:
               - name: cancelled
@@ -693,16 +768,16 @@ channels:
                       properties:
                         appointment_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-43>
+                          x-parser-schema-id: <anonymous-schema-62>
                         door_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-44>
+                          x-parser-schema-id: <anonymous-schema-63>
                         completed_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-45>
-                      x-parser-schema-id: <anonymous-schema-42>
-                  x-parser-schema-id: <anonymous-schema-41>
+                          x-parser-schema-id: <anonymous-schema-64>
+                      x-parser-schema-id: <anonymous-schema-61>
+                  x-parser-schema-id: <anonymous-schema-60>
               x-parser-schema-id: DockAppointmentCompletedEvent
             examples:
               - name: completed
@@ -788,24 +863,24 @@ channels:
                       properties:
                         receipt_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-48>
+                          x-parser-schema-id: <anonymous-schema-67>
                         asn_number:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-49>
+                          x-parser-schema-id: <anonymous-schema-68>
                         appointment_id:
                           type: string
                           description: Omitted for a walk-in delivery.
-                          x-parser-schema-id: <anonymous-schema-50>
+                          x-parser-schema-id: <anonymous-schema-69>
                         door_code:
                           type: string
                           description: Omitted when the receipt has no appointment.
-                          x-parser-schema-id: <anonymous-schema-51>
+                          x-parser-schema-id: <anonymous-schema-70>
                         opened_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-52>
-                      x-parser-schema-id: <anonymous-schema-47>
-                  x-parser-schema-id: <anonymous-schema-46>
+                          x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-66>
+                  x-parser-schema-id: <anonymous-schema-65>
               x-parser-schema-id: ReceiptOpenedEvent
             examples:
               - name: opened
@@ -901,33 +976,52 @@ channels:
                       properties:
                         receipt_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-55>
+                          x-parser-schema-id: <anonymous-schema-74>
                         asn_number:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-56>
+                          x-parser-schema-id: <anonymous-schema-75>
                         line_no:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-57>
+                          x-parser-schema-id: <anonymous-schema-76>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-58>
+                          x-parser-schema-id: <anonymous-schema-77>
                         quantity:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-59>
+                          x-parser-schema-id: <anonymous-schema-78>
                         condition:
                           type: string
                           enum:
                             - Good
                             - Damaged
-                          x-parser-schema-id: <anonymous-schema-60>
+                          x-parser-schema-id: <anonymous-schema-79>
                         received_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-61>
-                      x-parser-schema-id: <anonymous-schema-54>
-                  x-parser-schema-id: <anonymous-schema-53>
+                          x-parser-schema-id: <anonymous-schema-80>
+                        owner_ref:
+                          type: string
+                          description: Optional; omitted for fleet-owned stock.
+                          x-parser-schema-id: <anonymous-schema-81>
+                        pack_gtin:
+                          type: string
+                          description: >-
+                            Optional; the CASE GTIN when received as cases or
+                            from a homogeneous carton.
+                          x-parser-schema-id: <anonymous-schema-82>
+                        cases:
+                          type: integer
+                          minimum: 1
+                          description: Optional; cases booked; `quantity` stays eaches.
+                          x-parser-schema-id: <anonymous-schema-83>
+                        sscc:
+                          type: string
+                          description: Optional; the carton the quantity came from.
+                          x-parser-schema-id: <anonymous-schema-84>
+                      x-parser-schema-id: <anonymous-schema-73>
+                  x-parser-schema-id: <anonymous-schema-72>
               x-parser-schema-id: ReceiptLineReceivedEvent
             examples:
               - name: good
@@ -952,6 +1046,317 @@ channels:
                     condition: Good
                     received_at: '2026-10-09T08:10:00Z'
             messageId: ReceiptLineReceived
+          - name: ReceiptCartonReceived
+            title: Receipt carton received
+            summary: A carton (or one case) was received - identity only.
+            description: >
+              `type` =
+              `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived`;
+
+              subject = the receipt id, key = the ASN number.
+
+              IDENTITY ONLY: it never books quantity (`ReceiptLineReceived`
+              stays the
+
+              sole quantity authority, in eaches). inventory-storage uses it to
+
+              create or link a Container keyed (receipt_id, line_no, lpn), in
+              either
+
+              arrival order. `lpn` is the SSCC, or an internal `LPN-<ulid>` for
+              a
+
+              case received without one. There is no site: the site is derived
+              by
+
+              inventory-storage at stow (ADR 0013).
+            contentType: application/cloudevents+json
+            tags:
+              - name: receipt
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The aggregate instance id.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - receipt_id
+                        - asn_number
+                        - sealed
+                        - lpn
+                        - contents
+                        - received_at
+                      properties:
+                        receipt_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-87>
+                        asn_number:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-88>
+                        owner_ref:
+                          type: string
+                          description: Omitted for fleet-owned stock.
+                          x-parser-schema-id: <anonymous-schema-89>
+                        sscc:
+                          type: string
+                          description: Omitted for an unlabelled carton.
+                          x-parser-schema-id: <anonymous-schema-90>
+                        parent_sscc:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-91>
+                        sealed:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-92>
+                        lpn:
+                          type: string
+                          description: The SSCC, or an internal `LPN-<ulid>`.
+                          x-parser-schema-id: <anonymous-schema-93>
+                        contents:
+                          type: array
+                          items:
+                            type: object
+                            required:
+                              - line_no
+                              - sku
+                              - gtin
+                              - qty
+                              - condition
+                            properties:
+                              line_no:
+                                type: integer
+                                minimum: 1
+                                x-parser-schema-id: <anonymous-schema-96>
+                              sku:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-97>
+                              gtin:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-98>
+                              qty:
+                                type: integer
+                                minimum: 1
+                                description: Eaches.
+                                x-parser-schema-id: <anonymous-schema-99>
+                              lot:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-100>
+                              expiry:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-101>
+                              condition:
+                                type: string
+                                enum:
+                                  - Good
+                                  - Damaged
+                                x-parser-schema-id: <anonymous-schema-102>
+                            x-parser-schema-id: <anonymous-schema-95>
+                          x-parser-schema-id: <anonymous-schema-94>
+                        received_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-103>
+                      x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-85>
+              x-parser-schema-id: ReceiptCartonReceivedEvent
+            examples:
+              - name: example
+                payload:
+                  specversion: '1.0'
+                  id: 4a9f6c2e-9b1a-4d6e-8a52-0c7d1e4b9a11
+                  source: /warehouse/inbound-receiving
+                  type: >-
+                    com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived
+                  subject: rcpt-223e4567-e89b-12d3-a456-426614174000
+                  time: '2026-10-09T08:10:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:inbound-receiving:events:ReceiptCartonReceived:v1
+                  data:
+                    receipt_id: rcpt-223e4567-e89b-12d3-a456-426614174000
+                    asn_number: ASN-1001
+                    sscc: '340123450000000013'
+                    sealed: true
+                    lpn: '340123450000000013'
+                    contents:
+                      - line_no: 1
+                        sku: SKU-1
+                        gtin: '13041090004824'
+                        qty: 24
+                        condition: Good
+                    received_at: '2026-10-09T08:10:00Z'
+            messageId: ReceiptCartonReceived
+          - name: CartonDiscrepancyRaised
+            title: Carton discrepancy raised
+            summary: A finding about a physical carton.
+            description: >
+              `type` =
+              `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised`;
+
+              subject = the receipt id, key = the ASN number.
+
+              Carton discrepancies travel ONLY on this event; `ReceiptClosed`
+              keeps
+
+              its three v1 kinds. A refused scan books nothing and raises this
+
+              event; an accepted carton can raise it too (for example
+
+              `UnlabelledCarton`).
+            contentType: application/cloudevents+json
+            tags:
+              - name: receipt
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The aggregate instance id.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - receipt_id
+                        - kind
+                        - at
+                      properties:
+                        receipt_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-106>
+                        sscc:
+                          type: string
+                          description: Omitted when the finding has no SSCC.
+                          x-parser-schema-id: <anonymous-schema-107>
+                        kind:
+                          type: string
+                          enum:
+                            - UnexpectedCarton
+                            - MissingCarton
+                            - DuplicateSscc
+                            - UnknownGtin
+                            - CaseQtyMismatch
+                            - MixedCaseDeclaredAsCasePack
+                            - UnlabelledCarton
+                            - CartonOverLimit
+                            - MixedCartonContentMismatch
+                          x-parser-schema-id: <anonymous-schema-108>
+                        expected:
+                          type: string
+                          description: >-
+                            A count, a SKU, or `sku:qty` / `grossWeightG:<n>`
+                            pairs (CartonOverLimit: the breached limits;
+                            MixedCartonContentMismatch: the manifest).
+                          x-parser-schema-id: <anonymous-schema-109>
+                        actual:
+                          type: string
+                          description: The counterpart of `expected`.
+                          x-parser-schema-id: <anonymous-schema-110>
+                        at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-111>
+                      x-parser-schema-id: <anonymous-schema-105>
+                  x-parser-schema-id: <anonymous-schema-104>
+              x-parser-schema-id: CartonDiscrepancyRaisedEvent
+            examples:
+              - name: example
+                payload:
+                  specversion: '1.0'
+                  id: 5b0a7d3f-0c2b-4e7f-9b63-1d8e2f5c0b22
+                  source: /warehouse/inbound-receiving
+                  type: >-
+                    com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised
+                  subject: rcpt-223e4567-e89b-12d3-a456-426614174000
+                  time: '2026-10-09T08:10:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:inbound-receiving:events:CartonDiscrepancyRaised:v1
+                  data:
+                    receipt_id: rcpt-223e4567-e89b-12d3-a456-426614174000
+                    sscc: '340123450000000013'
+                    kind: UnexpectedCarton
+                    at: '2026-10-09T08:10:00Z'
+            messageId: CartonDiscrepancyRaised
           - name: ReceiptClosed
             title: Receipt closed
             summary: Receiving ended, with the discrepancies against the ASN.
@@ -1024,14 +1429,14 @@ channels:
                       properties:
                         receipt_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-64>
+                          x-parser-schema-id: <anonymous-schema-114>
                         asn_number:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-65>
+                          x-parser-schema-id: <anonymous-schema-115>
                         closed_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-66>
+                          x-parser-schema-id: <anonymous-schema-116>
                         discrepancies:
                           type: array
                           description: Empty when everything matched.
@@ -1048,34 +1453,34 @@ channels:
                               line_no:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-68>
+                                x-parser-schema-id: <anonymous-schema-118>
                               sku:
                                 type: string
-                                x-parser-schema-id: <anonymous-schema-69>
+                                x-parser-schema-id: <anonymous-schema-119>
                               kind:
                                 type: string
                                 enum:
                                   - Short
                                   - Over
                                   - Damaged
-                                x-parser-schema-id: <anonymous-schema-70>
+                                x-parser-schema-id: <anonymous-schema-120>
                               expected_qty:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-71>
+                                x-parser-schema-id: <anonymous-schema-121>
                               received_qty:
                                 type: integer
                                 minimum: 0
                                 description: Good plus damaged.
-                                x-parser-schema-id: <anonymous-schema-72>
+                                x-parser-schema-id: <anonymous-schema-122>
                               damaged_qty:
                                 type: integer
                                 minimum: 0
-                                x-parser-schema-id: <anonymous-schema-73>
+                                x-parser-schema-id: <anonymous-schema-123>
                             x-parser-schema-id: DiscrepancyData
-                          x-parser-schema-id: <anonymous-schema-67>
-                      x-parser-schema-id: <anonymous-schema-63>
-                  x-parser-schema-id: <anonymous-schema-62>
+                          x-parser-schema-id: <anonymous-schema-117>
+                      x-parser-schema-id: <anonymous-schema-113>
+                  x-parser-schema-id: <anonymous-schema-112>
               x-parser-schema-id: ReceiptClosedEvent
             examples:
               - name: closedWithDiscrepancies
@@ -1218,6 +1623,10 @@ channels:
                           format: date-time
                           description: Omitted when the supplier gave none.
                           x-parser-schema-id: <anonymous-schema-13>
+                        owner_ref:
+                          type: string
+                          description: Optional opaque tenant tag.
+                          x-parser-schema-id: <anonymous-schema-14>
                         lines:
                           type: array
                           minItems: 1
@@ -1231,16 +1640,87 @@ channels:
                               line_no:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-15>
+                                x-parser-schema-id: <anonymous-schema-16>
                               sku:
                                 type: string
-                                x-parser-schema-id: <anonymous-schema-16>
+                                x-parser-schema-id: <anonymous-schema-17>
                               expected_qty:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-17>
+                                x-parser-schema-id: <anonymous-schema-18>
                             x-parser-schema-id: AsnLineData
-                          x-parser-schema-id: <anonymous-schema-14>
+                          x-parser-schema-id: <anonymous-schema-15>
+                        cartons:
+                          type: array
+                          description: Optional announced cartons.
+                          items:
+                            type: object
+                            required:
+                              - sscc
+                              - kind
+                              - contents
+                            properties:
+                              sscc:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-21>
+                              parent_sscc:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-22>
+                              kind:
+                                type: string
+                                enum:
+                                  - HOMOGENEOUS_CASE
+                                  - MIXED
+                                x-parser-schema-id: <anonymous-schema-23>
+                              gross_weight_g:
+                                type: integer
+                                x-parser-schema-id: <anonymous-schema-24>
+                              dims:
+                                type: object
+                                properties:
+                                  length_mm:
+                                    type: integer
+                                    x-parser-schema-id: <anonymous-schema-26>
+                                  width_mm:
+                                    type: integer
+                                    x-parser-schema-id: <anonymous-schema-27>
+                                  height_mm:
+                                    type: integer
+                                    x-parser-schema-id: <anonymous-schema-28>
+                                x-parser-schema-id: <anonymous-schema-25>
+                              contents:
+                                type: array
+                                items:
+                                  type: object
+                                  required:
+                                    - line_no
+                                    - sku
+                                    - gtin
+                                    - qty
+                                  properties:
+                                    line_no:
+                                      type: integer
+                                      x-parser-schema-id: <anonymous-schema-31>
+                                    sku:
+                                      type: string
+                                      x-parser-schema-id: <anonymous-schema-32>
+                                    gtin:
+                                      type: string
+                                      x-parser-schema-id: <anonymous-schema-33>
+                                    qty:
+                                      type: integer
+                                      description: Eaches.
+                                      x-parser-schema-id: <anonymous-schema-34>
+                                    lot:
+                                      type: string
+                                      x-parser-schema-id: <anonymous-schema-35>
+                                    expiry:
+                                      type: string
+                                      x-parser-schema-id: <anonymous-schema-36>
+                                  x-parser-schema-id: <anonymous-schema-30>
+                                x-parser-schema-id: <anonymous-schema-29>
+                            x-parser-schema-id: <anonymous-schema-20>
+                          x-parser-schema-id: <anonymous-schema-19>
                       x-parser-schema-id: <anonymous-schema-10>
                   x-parser-schema-id: <anonymous-schema-9>
               x-parser-schema-id: ASNRegisteredEvent
@@ -1332,13 +1812,13 @@ channels:
                       properties:
                         asn_number:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-20>
+                          x-parser-schema-id: <anonymous-schema-39>
                         reason:
                           type: string
                           description: Omitted when none was given.
-                          x-parser-schema-id: <anonymous-schema-21>
-                      x-parser-schema-id: <anonymous-schema-19>
-                  x-parser-schema-id: <anonymous-schema-18>
+                          x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-38>
+                  x-parser-schema-id: <anonymous-schema-37>
               x-parser-schema-id: ASNCancelledEvent
             examples:
               - name: analytics
@@ -1426,30 +1906,30 @@ channels:
                       properties:
                         appointment_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-24>
+                          x-parser-schema-id: <anonymous-schema-43>
                         door_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-25>
+                          x-parser-schema-id: <anonymous-schema-44>
                         carrier:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-26>
+                          x-parser-schema-id: <anonymous-schema-45>
                         window_start:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-27>
+                          x-parser-schema-id: <anonymous-schema-46>
                         window_end:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-28>
+                          x-parser-schema-id: <anonymous-schema-47>
                         asn_numbers:
                           type: array
                           minItems: 1
                           items:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-30>
-                          x-parser-schema-id: <anonymous-schema-29>
-                      x-parser-schema-id: <anonymous-schema-23>
-                  x-parser-schema-id: <anonymous-schema-22>
+                            x-parser-schema-id: <anonymous-schema-49>
+                          x-parser-schema-id: <anonymous-schema-48>
+                      x-parser-schema-id: <anonymous-schema-42>
+                  x-parser-schema-id: <anonymous-schema-41>
               x-parser-schema-id: DockAppointmentBookedEvent
             examples:
               - name: analytics
@@ -1541,16 +2021,16 @@ channels:
                       properties:
                         appointment_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-33>
+                          x-parser-schema-id: <anonymous-schema-52>
                         door_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: <anonymous-schema-53>
                         checked_in_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-35>
-                      x-parser-schema-id: <anonymous-schema-32>
-                  x-parser-schema-id: <anonymous-schema-31>
+                          x-parser-schema-id: <anonymous-schema-54>
+                      x-parser-schema-id: <anonymous-schema-51>
+                  x-parser-schema-id: <anonymous-schema-50>
               x-parser-schema-id: DockAppointmentCheckedInEvent
             examples:
               - name: analytics
@@ -1637,16 +2117,16 @@ channels:
                       properties:
                         appointment_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-38>
+                          x-parser-schema-id: <anonymous-schema-57>
                         door_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-39>
+                          x-parser-schema-id: <anonymous-schema-58>
                         reason:
                           type: string
                           description: Omitted when none was given.
-                          x-parser-schema-id: <anonymous-schema-40>
-                      x-parser-schema-id: <anonymous-schema-37>
-                  x-parser-schema-id: <anonymous-schema-36>
+                          x-parser-schema-id: <anonymous-schema-59>
+                      x-parser-schema-id: <anonymous-schema-56>
+                  x-parser-schema-id: <anonymous-schema-55>
               x-parser-schema-id: DockAppointmentCancelledEvent
             examples:
               - name: analytics
@@ -1736,16 +2216,16 @@ channels:
                       properties:
                         appointment_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-43>
+                          x-parser-schema-id: <anonymous-schema-62>
                         door_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-44>
+                          x-parser-schema-id: <anonymous-schema-63>
                         completed_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-45>
-                      x-parser-schema-id: <anonymous-schema-42>
-                  x-parser-schema-id: <anonymous-schema-41>
+                          x-parser-schema-id: <anonymous-schema-64>
+                      x-parser-schema-id: <anonymous-schema-61>
+                  x-parser-schema-id: <anonymous-schema-60>
               x-parser-schema-id: DockAppointmentCompletedEvent
             examples:
               - name: analytics
@@ -1833,24 +2313,24 @@ channels:
                       properties:
                         receipt_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-48>
+                          x-parser-schema-id: <anonymous-schema-67>
                         asn_number:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-49>
+                          x-parser-schema-id: <anonymous-schema-68>
                         appointment_id:
                           type: string
                           description: Omitted for a walk-in delivery.
-                          x-parser-schema-id: <anonymous-schema-50>
+                          x-parser-schema-id: <anonymous-schema-69>
                         door_code:
                           type: string
                           description: Omitted when the receipt has no appointment.
-                          x-parser-schema-id: <anonymous-schema-51>
+                          x-parser-schema-id: <anonymous-schema-70>
                         opened_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-52>
-                      x-parser-schema-id: <anonymous-schema-47>
-                  x-parser-schema-id: <anonymous-schema-46>
+                          x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-66>
+                  x-parser-schema-id: <anonymous-schema-65>
               x-parser-schema-id: ReceiptOpenedEvent
             examples:
               - name: analytics
@@ -1944,33 +2424,52 @@ channels:
                       properties:
                         receipt_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-55>
+                          x-parser-schema-id: <anonymous-schema-74>
                         asn_number:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-56>
+                          x-parser-schema-id: <anonymous-schema-75>
                         line_no:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-57>
+                          x-parser-schema-id: <anonymous-schema-76>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-58>
+                          x-parser-schema-id: <anonymous-schema-77>
                         quantity:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-59>
+                          x-parser-schema-id: <anonymous-schema-78>
                         condition:
                           type: string
                           enum:
                             - Good
                             - Damaged
-                          x-parser-schema-id: <anonymous-schema-60>
+                          x-parser-schema-id: <anonymous-schema-79>
                         received_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-61>
-                      x-parser-schema-id: <anonymous-schema-54>
-                  x-parser-schema-id: <anonymous-schema-53>
+                          x-parser-schema-id: <anonymous-schema-80>
+                        owner_ref:
+                          type: string
+                          description: Optional; omitted for fleet-owned stock.
+                          x-parser-schema-id: <anonymous-schema-81>
+                        pack_gtin:
+                          type: string
+                          description: >-
+                            Optional; the CASE GTIN when received as cases or
+                            from a homogeneous carton.
+                          x-parser-schema-id: <anonymous-schema-82>
+                        cases:
+                          type: integer
+                          minimum: 1
+                          description: Optional; cases booked; `quantity` stays eaches.
+                          x-parser-schema-id: <anonymous-schema-83>
+                        sscc:
+                          type: string
+                          description: Optional; the carton the quantity came from.
+                          x-parser-schema-id: <anonymous-schema-84>
+                      x-parser-schema-id: <anonymous-schema-73>
+                  x-parser-schema-id: <anonymous-schema-72>
               x-parser-schema-id: ReceiptLineReceivedEvent
             examples:
               - name: analytics
@@ -1995,6 +2494,321 @@ channels:
                     condition: Good
                     received_at: '2026-10-09T08:10:00Z'
             messageId: ReceiptLineReceivedAnalytics
+          - name: ReceiptCartonReceived
+            title: Receipt carton received
+            summary: A carton (or one case) was received - identity only.
+            description: >
+              `type` =
+              `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived`;
+
+              subject = the receipt id, key = the ASN number. Same payload as on
+              the integration topic; dataschema
+              `urn:warehouse:inbound-receiving:analytics:ReceiptCartonReceived:v1`.
+
+              IDENTITY ONLY: it never books quantity (`ReceiptLineReceived`
+              stays the
+
+              sole quantity authority, in eaches). inventory-storage uses it to
+
+              create or link a Container keyed (receipt_id, line_no, lpn), in
+              either
+
+              arrival order. `lpn` is the SSCC, or an internal `LPN-<ulid>` for
+              a
+
+              case received without one. There is no site: the site is derived
+              by
+
+              inventory-storage at stow (ADR 0013).
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The aggregate instance id.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - receipt_id
+                        - asn_number
+                        - sealed
+                        - lpn
+                        - contents
+                        - received_at
+                      properties:
+                        receipt_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-87>
+                        asn_number:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-88>
+                        owner_ref:
+                          type: string
+                          description: Omitted for fleet-owned stock.
+                          x-parser-schema-id: <anonymous-schema-89>
+                        sscc:
+                          type: string
+                          description: Omitted for an unlabelled carton.
+                          x-parser-schema-id: <anonymous-schema-90>
+                        parent_sscc:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-91>
+                        sealed:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-92>
+                        lpn:
+                          type: string
+                          description: The SSCC, or an internal `LPN-<ulid>`.
+                          x-parser-schema-id: <anonymous-schema-93>
+                        contents:
+                          type: array
+                          items:
+                            type: object
+                            required:
+                              - line_no
+                              - sku
+                              - gtin
+                              - qty
+                              - condition
+                            properties:
+                              line_no:
+                                type: integer
+                                minimum: 1
+                                x-parser-schema-id: <anonymous-schema-96>
+                              sku:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-97>
+                              gtin:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-98>
+                              qty:
+                                type: integer
+                                minimum: 1
+                                description: Eaches.
+                                x-parser-schema-id: <anonymous-schema-99>
+                              lot:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-100>
+                              expiry:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-101>
+                              condition:
+                                type: string
+                                enum:
+                                  - Good
+                                  - Damaged
+                                x-parser-schema-id: <anonymous-schema-102>
+                            x-parser-schema-id: <anonymous-schema-95>
+                          x-parser-schema-id: <anonymous-schema-94>
+                        received_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-103>
+                      x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-85>
+              x-parser-schema-id: ReceiptCartonReceivedEvent
+            examples:
+              - name: example
+                payload:
+                  specversion: '1.0'
+                  id: 4a9f6c2e-9b1a-4d6e-8a52-0c7d1e4b9a11
+                  source: /warehouse/inbound-receiving
+                  type: >-
+                    com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived
+                  subject: rcpt-223e4567-e89b-12d3-a456-426614174000
+                  time: '2026-10-09T08:10:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:inbound-receiving:analytics:ReceiptCartonReceived:v1
+                  data:
+                    receipt_id: rcpt-223e4567-e89b-12d3-a456-426614174000
+                    asn_number: ASN-1001
+                    sscc: '340123450000000013'
+                    sealed: true
+                    lpn: '340123450000000013'
+                    contents:
+                      - line_no: 1
+                        sku: SKU-1
+                        gtin: '13041090004824'
+                        qty: 24
+                        condition: Good
+                    received_at: '2026-10-09T08:10:00Z'
+            messageId: ReceiptCartonReceivedAnalytics
+          - name: CartonDiscrepancyRaised
+            title: Carton discrepancy raised
+            summary: A finding about a physical carton.
+            description: >
+              `type` =
+              `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised`;
+
+              subject = the receipt id, key = the ASN number. Same payload as on
+              the integration topic; dataschema
+              `urn:warehouse:inbound-receiving:analytics:CartonDiscrepancyRaised:v1`.
+
+              Carton discrepancies travel ONLY on this event; `ReceiptClosed`
+              keeps
+
+              its three v1 kinds. A refused scan books nothing and raises this
+
+              event; an accepted carton can raise it too (for example
+
+              `UnlabelledCarton`).
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The aggregate instance id.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - receipt_id
+                        - kind
+                        - at
+                      properties:
+                        receipt_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-106>
+                        sscc:
+                          type: string
+                          description: Omitted when the finding has no SSCC.
+                          x-parser-schema-id: <anonymous-schema-107>
+                        kind:
+                          type: string
+                          enum:
+                            - UnexpectedCarton
+                            - MissingCarton
+                            - DuplicateSscc
+                            - UnknownGtin
+                            - CaseQtyMismatch
+                            - MixedCaseDeclaredAsCasePack
+                            - UnlabelledCarton
+                            - CartonOverLimit
+                            - MixedCartonContentMismatch
+                          x-parser-schema-id: <anonymous-schema-108>
+                        expected:
+                          type: string
+                          description: >-
+                            A count, a SKU, or `sku:qty` / `grossWeightG:<n>`
+                            pairs (CartonOverLimit: the breached limits;
+                            MixedCartonContentMismatch: the manifest).
+                          x-parser-schema-id: <anonymous-schema-109>
+                        actual:
+                          type: string
+                          description: The counterpart of `expected`.
+                          x-parser-schema-id: <anonymous-schema-110>
+                        at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-111>
+                      x-parser-schema-id: <anonymous-schema-105>
+                  x-parser-schema-id: <anonymous-schema-104>
+              x-parser-schema-id: CartonDiscrepancyRaisedEvent
+            examples:
+              - name: example
+                payload:
+                  specversion: '1.0'
+                  id: 5b0a7d3f-0c2b-4e7f-9b63-1d8e2f5c0b22
+                  source: /warehouse/inbound-receiving
+                  type: >-
+                    com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised
+                  subject: rcpt-223e4567-e89b-12d3-a456-426614174000
+                  time: '2026-10-09T08:10:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:inbound-receiving:analytics:CartonDiscrepancyRaised:v1
+                  data:
+                    receipt_id: rcpt-223e4567-e89b-12d3-a456-426614174000
+                    sscc: '340123450000000013'
+                    kind: UnexpectedCarton
+                    at: '2026-10-09T08:10:00Z'
+            messageId: CartonDiscrepancyRaisedAnalytics
           - name: ReceiptClosed
             title: Receipt closed (analytics)
             summary: >-
@@ -2065,14 +2879,14 @@ channels:
                       properties:
                         receipt_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-64>
+                          x-parser-schema-id: <anonymous-schema-114>
                         asn_number:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-65>
+                          x-parser-schema-id: <anonymous-schema-115>
                         closed_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-66>
+                          x-parser-schema-id: <anonymous-schema-116>
                         discrepancies:
                           type: array
                           description: Empty when everything matched.
@@ -2089,34 +2903,34 @@ channels:
                               line_no:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-68>
+                                x-parser-schema-id: <anonymous-schema-118>
                               sku:
                                 type: string
-                                x-parser-schema-id: <anonymous-schema-69>
+                                x-parser-schema-id: <anonymous-schema-119>
                               kind:
                                 type: string
                                 enum:
                                   - Short
                                   - Over
                                   - Damaged
-                                x-parser-schema-id: <anonymous-schema-70>
+                                x-parser-schema-id: <anonymous-schema-120>
                               expected_qty:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-71>
+                                x-parser-schema-id: <anonymous-schema-121>
                               received_qty:
                                 type: integer
                                 minimum: 0
                                 description: Good plus damaged.
-                                x-parser-schema-id: <anonymous-schema-72>
+                                x-parser-schema-id: <anonymous-schema-122>
                               damaged_qty:
                                 type: integer
                                 minimum: 0
-                                x-parser-schema-id: <anonymous-schema-73>
+                                x-parser-schema-id: <anonymous-schema-123>
                             x-parser-schema-id: DiscrepancyData
-                          x-parser-schema-id: <anonymous-schema-67>
-                      x-parser-schema-id: <anonymous-schema-63>
-                  x-parser-schema-id: <anonymous-schema-62>
+                          x-parser-schema-id: <anonymous-schema-117>
+                      x-parser-schema-id: <anonymous-schema-113>
+                  x-parser-schema-id: <anonymous-schema-112>
               x-parser-schema-id: ReceiptClosedEvent
             examples:
               - name: analytics
@@ -2160,7 +2974,7 @@ channels:
       every message carries the CloudEvents content-type header (plus the
       optional W3C `traceparent` of the writing request). Dispatch on the
       full `type`, ignore unknown types, dedupe on `id`, apply by `version`.
-    x-eventcatalog-channel-version: 1.0.0
+    x-eventcatalog-channel-version: 1.1.0
     subscribe:
       operationId: consumeProductRegistered
       summary: Consume product-master's ProductRegistered.
@@ -2243,16 +3057,16 @@ channels:
                   properties:
                     sku:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-76>
+                      x-parser-schema-id: <anonymous-schema-126>
                     description:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-127>
                     version:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-78>
-                  x-parser-schema-id: <anonymous-schema-75>
-              x-parser-schema-id: <anonymous-schema-74>
+                      x-parser-schema-id: <anonymous-schema-128>
+                  x-parser-schema-id: <anonymous-schema-125>
+              x-parser-schema-id: <anonymous-schema-124>
           x-parser-schema-id: ProductRegisteredEvent
         examples:
           - name: registered
@@ -2378,32 +3192,32 @@ channels:
                       properties:
                         eventName:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-81>
+                          x-parser-schema-id: <anonymous-schema-131>
                         eventType:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-82>
+                          x-parser-schema-id: <anonymous-schema-132>
                         occurredAt:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-83>
+                          x-parser-schema-id: <anonymous-schema-133>
                         locationCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-84>
+                          x-parser-schema-id: <anonymous-schema-134>
                         aisleId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-85>
+                          x-parser-schema-id: <anonymous-schema-135>
                         zoneId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-86>
+                          x-parser-schema-id: <anonymous-schema-136>
                         locationType:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-87>
+                          x-parser-schema-id: <anonymous-schema-137>
                         role:
                           type: string
                           description: >-
                             Storage, Dock, Yard, WorkCenter, Drop, Staging, QC,
                             Consolidation or Shipping; absent means Storage.
-                          x-parser-schema-id: <anonymous-schema-88>
+                          x-parser-schema-id: <anonymous-schema-138>
                         dockFlow:
                           type: string
                           enum:
@@ -2411,22 +3225,22 @@ channels:
                             - Outbound
                             - Both
                           description: Present only when role is Dock.
-                          x-parser-schema-id: <anonymous-schema-89>
+                          x-parser-schema-id: <anonymous-schema-139>
                         activities:
                           type: array
                           items:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-91>
+                            x-parser-schema-id: <anonymous-schema-141>
                           description: Present only when role is WorkCenter.
-                          x-parser-schema-id: <anonymous-schema-90>
+                          x-parser-schema-id: <anonymous-schema-140>
                         maxWeightKg:
                           type: number
-                          x-parser-schema-id: <anonymous-schema-92>
+                          x-parser-schema-id: <anonymous-schema-142>
                         maxVolumeM3:
                           type: number
-                          x-parser-schema-id: <anonymous-schema-93>
-                      x-parser-schema-id: <anonymous-schema-80>
-                  x-parser-schema-id: <anonymous-schema-79>
+                          x-parser-schema-id: <anonymous-schema-143>
+                      x-parser-schema-id: <anonymous-schema-130>
+                  x-parser-schema-id: <anonymous-schema-129>
               x-parser-schema-id: LocationSlotRegisteredEvent
             examples:
               - name: inboundDock
@@ -2527,19 +3341,19 @@ channels:
                       properties:
                         eventName:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-96>
+                          x-parser-schema-id: <anonymous-schema-146>
                         eventType:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-97>
+                          x-parser-schema-id: <anonymous-schema-147>
                         occurredAt:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-98>
+                          x-parser-schema-id: <anonymous-schema-148>
                         locationCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-99>
-                      x-parser-schema-id: <anonymous-schema-95>
-                  x-parser-schema-id: <anonymous-schema-94>
+                          x-parser-schema-id: <anonymous-schema-149>
+                      x-parser-schema-id: <anonymous-schema-145>
+                  x-parser-schema-id: <anonymous-schema-144>
               x-parser-schema-id: LocationSlotDecommissionedEvent
             examples:
               - name: decommissioned
@@ -2638,6 +3452,10 @@ components:
                     format: date-time
                     description: Omitted when the supplier gave none.
                     x-parser-schema-id: <anonymous-schema-13>
+                  owner_ref:
+                    type: string
+                    description: Optional opaque tenant tag.
+                    x-parser-schema-id: <anonymous-schema-14>
                   lines:
                     type: array
                     minItems: 1
@@ -2651,16 +3469,87 @@ components:
                         line_no:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-15>
+                          x-parser-schema-id: <anonymous-schema-16>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-16>
+                          x-parser-schema-id: <anonymous-schema-17>
                         expected_qty:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-17>
+                          x-parser-schema-id: <anonymous-schema-18>
                       x-parser-schema-id: AsnLineData
-                    x-parser-schema-id: <anonymous-schema-14>
+                    x-parser-schema-id: <anonymous-schema-15>
+                  cartons:
+                    type: array
+                    description: Optional announced cartons.
+                    items:
+                      type: object
+                      required:
+                        - sscc
+                        - kind
+                        - contents
+                      properties:
+                        sscc:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-21>
+                        parent_sscc:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-22>
+                        kind:
+                          type: string
+                          enum:
+                            - HOMOGENEOUS_CASE
+                            - MIXED
+                          x-parser-schema-id: <anonymous-schema-23>
+                        gross_weight_g:
+                          type: integer
+                          x-parser-schema-id: <anonymous-schema-24>
+                        dims:
+                          type: object
+                          properties:
+                            length_mm:
+                              type: integer
+                              x-parser-schema-id: <anonymous-schema-26>
+                            width_mm:
+                              type: integer
+                              x-parser-schema-id: <anonymous-schema-27>
+                            height_mm:
+                              type: integer
+                              x-parser-schema-id: <anonymous-schema-28>
+                          x-parser-schema-id: <anonymous-schema-25>
+                        contents:
+                          type: array
+                          items:
+                            type: object
+                            required:
+                              - line_no
+                              - sku
+                              - gtin
+                              - qty
+                            properties:
+                              line_no:
+                                type: integer
+                                x-parser-schema-id: <anonymous-schema-31>
+                              sku:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-32>
+                              gtin:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-33>
+                              qty:
+                                type: integer
+                                description: Eaches.
+                                x-parser-schema-id: <anonymous-schema-34>
+                              lot:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-35>
+                              expiry:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-36>
+                            x-parser-schema-id: <anonymous-schema-30>
+                          x-parser-schema-id: <anonymous-schema-29>
+                      x-parser-schema-id: <anonymous-schema-20>
+                    x-parser-schema-id: <anonymous-schema-19>
                 x-parser-schema-id: <anonymous-schema-10>
             x-parser-schema-id: <anonymous-schema-9>
         x-parser-schema-id: ASNRegisteredEvent
@@ -2751,13 +3640,13 @@ components:
                 properties:
                   asn_number:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-20>
+                    x-parser-schema-id: <anonymous-schema-39>
                   reason:
                     type: string
                     description: Omitted when none was given.
-                    x-parser-schema-id: <anonymous-schema-21>
-                x-parser-schema-id: <anonymous-schema-19>
-            x-parser-schema-id: <anonymous-schema-18>
+                    x-parser-schema-id: <anonymous-schema-40>
+                x-parser-schema-id: <anonymous-schema-38>
+            x-parser-schema-id: <anonymous-schema-37>
         x-parser-schema-id: ASNCancelledEvent
       examples:
         - name: cancelled
@@ -2847,30 +3736,30 @@ components:
                 properties:
                   appointment_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-24>
+                    x-parser-schema-id: <anonymous-schema-43>
                   door_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-25>
+                    x-parser-schema-id: <anonymous-schema-44>
                   carrier:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-26>
+                    x-parser-schema-id: <anonymous-schema-45>
                   window_start:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-27>
+                    x-parser-schema-id: <anonymous-schema-46>
                   window_end:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-28>
+                    x-parser-schema-id: <anonymous-schema-47>
                   asn_numbers:
                     type: array
                     minItems: 1
                     items:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-30>
-                    x-parser-schema-id: <anonymous-schema-29>
-                x-parser-schema-id: <anonymous-schema-23>
-            x-parser-schema-id: <anonymous-schema-22>
+                      x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: <anonymous-schema-48>
+                x-parser-schema-id: <anonymous-schema-42>
+            x-parser-schema-id: <anonymous-schema-41>
         x-parser-schema-id: DockAppointmentBookedEvent
       examples:
         - name: booked
@@ -2960,16 +3849,16 @@ components:
                 properties:
                   appointment_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-33>
+                    x-parser-schema-id: <anonymous-schema-52>
                   door_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: <anonymous-schema-53>
                   checked_in_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-35>
-                x-parser-schema-id: <anonymous-schema-32>
-            x-parser-schema-id: <anonymous-schema-31>
+                    x-parser-schema-id: <anonymous-schema-54>
+                x-parser-schema-id: <anonymous-schema-51>
+            x-parser-schema-id: <anonymous-schema-50>
         x-parser-schema-id: DockAppointmentCheckedInEvent
       examples:
         - name: checkedIn
@@ -3054,16 +3943,16 @@ components:
                 properties:
                   appointment_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-38>
+                    x-parser-schema-id: <anonymous-schema-57>
                   door_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-39>
+                    x-parser-schema-id: <anonymous-schema-58>
                   reason:
                     type: string
                     description: Omitted when none was given.
-                    x-parser-schema-id: <anonymous-schema-40>
-                x-parser-schema-id: <anonymous-schema-37>
-            x-parser-schema-id: <anonymous-schema-36>
+                    x-parser-schema-id: <anonymous-schema-59>
+                x-parser-schema-id: <anonymous-schema-56>
+            x-parser-schema-id: <anonymous-schema-55>
         x-parser-schema-id: DockAppointmentCancelledEvent
       examples:
         - name: cancelled
@@ -3154,16 +4043,16 @@ components:
                 properties:
                   appointment_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-43>
+                    x-parser-schema-id: <anonymous-schema-62>
                   door_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-44>
+                    x-parser-schema-id: <anonymous-schema-63>
                   completed_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-45>
-                x-parser-schema-id: <anonymous-schema-42>
-            x-parser-schema-id: <anonymous-schema-41>
+                    x-parser-schema-id: <anonymous-schema-64>
+                x-parser-schema-id: <anonymous-schema-61>
+            x-parser-schema-id: <anonymous-schema-60>
         x-parser-schema-id: DockAppointmentCompletedEvent
       examples:
         - name: completed
@@ -3248,24 +4137,24 @@ components:
                 properties:
                   receipt_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-48>
+                    x-parser-schema-id: <anonymous-schema-67>
                   asn_number:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: <anonymous-schema-68>
                   appointment_id:
                     type: string
                     description: Omitted for a walk-in delivery.
-                    x-parser-schema-id: <anonymous-schema-50>
+                    x-parser-schema-id: <anonymous-schema-69>
                   door_code:
                     type: string
                     description: Omitted when the receipt has no appointment.
-                    x-parser-schema-id: <anonymous-schema-51>
+                    x-parser-schema-id: <anonymous-schema-70>
                   opened_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-52>
-                x-parser-schema-id: <anonymous-schema-47>
-            x-parser-schema-id: <anonymous-schema-46>
+                    x-parser-schema-id: <anonymous-schema-71>
+                x-parser-schema-id: <anonymous-schema-66>
+            x-parser-schema-id: <anonymous-schema-65>
         x-parser-schema-id: ReceiptOpenedEvent
       examples:
         - name: opened
@@ -3361,33 +4250,52 @@ components:
                 properties:
                   receipt_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-74>
                   asn_number:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-56>
+                    x-parser-schema-id: <anonymous-schema-75>
                   line_no:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-57>
+                    x-parser-schema-id: <anonymous-schema-76>
                   sku:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-58>
+                    x-parser-schema-id: <anonymous-schema-77>
                   quantity:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-78>
                   condition:
                     type: string
                     enum:
                       - Good
                       - Damaged
-                    x-parser-schema-id: <anonymous-schema-60>
+                    x-parser-schema-id: <anonymous-schema-79>
                   received_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-61>
-                x-parser-schema-id: <anonymous-schema-54>
-            x-parser-schema-id: <anonymous-schema-53>
+                    x-parser-schema-id: <anonymous-schema-80>
+                  owner_ref:
+                    type: string
+                    description: Optional; omitted for fleet-owned stock.
+                    x-parser-schema-id: <anonymous-schema-81>
+                  pack_gtin:
+                    type: string
+                    description: >-
+                      Optional; the CASE GTIN when received as cases or from a
+                      homogeneous carton.
+                    x-parser-schema-id: <anonymous-schema-82>
+                  cases:
+                    type: integer
+                    minimum: 1
+                    description: Optional; cases booked; `quantity` stays eaches.
+                    x-parser-schema-id: <anonymous-schema-83>
+                  sscc:
+                    type: string
+                    description: Optional; the carton the quantity came from.
+                    x-parser-schema-id: <anonymous-schema-84>
+                x-parser-schema-id: <anonymous-schema-73>
+            x-parser-schema-id: <anonymous-schema-72>
         x-parser-schema-id: ReceiptLineReceivedEvent
       examples:
         - name: good
@@ -3410,6 +4318,311 @@ components:
               condition: Good
               received_at: '2026-10-09T08:10:00Z'
       messageId: ReceiptLineReceived
+    ReceiptCartonReceived:
+      name: ReceiptCartonReceived
+      title: Receipt carton received
+      summary: A carton (or one case) was received - identity only.
+      description: >
+        `type` =
+        `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived`;
+
+        subject = the receipt id, key = the ASN number.
+
+        IDENTITY ONLY: it never books quantity (`ReceiptLineReceived` stays the
+
+        sole quantity authority, in eaches). inventory-storage uses it to
+
+        create or link a Container keyed (receipt_id, line_no, lpn), in either
+
+        arrival order. `lpn` is the SSCC, or an internal `LPN-<ulid>` for a
+
+        case received without one. There is no site: the site is derived by
+
+        inventory-storage at stow (ADR 0013).
+      contentType: application/cloudevents+json
+      tags:
+        - name: receipt
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - receipt_id
+                  - asn_number
+                  - sealed
+                  - lpn
+                  - contents
+                  - received_at
+                properties:
+                  receipt_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-87>
+                  asn_number:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-88>
+                  owner_ref:
+                    type: string
+                    description: Omitted for fleet-owned stock.
+                    x-parser-schema-id: <anonymous-schema-89>
+                  sscc:
+                    type: string
+                    description: Omitted for an unlabelled carton.
+                    x-parser-schema-id: <anonymous-schema-90>
+                  parent_sscc:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-91>
+                  sealed:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-92>
+                  lpn:
+                    type: string
+                    description: The SSCC, or an internal `LPN-<ulid>`.
+                    x-parser-schema-id: <anonymous-schema-93>
+                  contents:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - line_no
+                        - sku
+                        - gtin
+                        - qty
+                        - condition
+                      properties:
+                        line_no:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-96>
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-97>
+                        gtin:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-98>
+                        qty:
+                          type: integer
+                          minimum: 1
+                          description: Eaches.
+                          x-parser-schema-id: <anonymous-schema-99>
+                        lot:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-100>
+                        expiry:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-101>
+                        condition:
+                          type: string
+                          enum:
+                            - Good
+                            - Damaged
+                          x-parser-schema-id: <anonymous-schema-102>
+                      x-parser-schema-id: <anonymous-schema-95>
+                    x-parser-schema-id: <anonymous-schema-94>
+                  received_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-103>
+                x-parser-schema-id: <anonymous-schema-86>
+            x-parser-schema-id: <anonymous-schema-85>
+        x-parser-schema-id: ReceiptCartonReceivedEvent
+      examples:
+        - name: example
+          payload:
+            specversion: '1.0'
+            id: 4a9f6c2e-9b1a-4d6e-8a52-0c7d1e4b9a11
+            source: /warehouse/inbound-receiving
+            type: com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived
+            subject: rcpt-223e4567-e89b-12d3-a456-426614174000
+            time: '2026-10-09T08:10:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inbound-receiving:events:ReceiptCartonReceived:v1
+            data:
+              receipt_id: rcpt-223e4567-e89b-12d3-a456-426614174000
+              asn_number: ASN-1001
+              sscc: '340123450000000013'
+              sealed: true
+              lpn: '340123450000000013'
+              contents:
+                - line_no: 1
+                  sku: SKU-1
+                  gtin: '13041090004824'
+                  qty: 24
+                  condition: Good
+              received_at: '2026-10-09T08:10:00Z'
+      messageId: ReceiptCartonReceived
+    CartonDiscrepancyRaised:
+      name: CartonDiscrepancyRaised
+      title: Carton discrepancy raised
+      summary: A finding about a physical carton.
+      description: >
+        `type` =
+        `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised`;
+
+        subject = the receipt id, key = the ASN number.
+
+        Carton discrepancies travel ONLY on this event; `ReceiptClosed` keeps
+
+        its three v1 kinds. A refused scan books nothing and raises this
+
+        event; an accepted carton can raise it too (for example
+
+        `UnlabelledCarton`).
+      contentType: application/cloudevents+json
+      tags:
+        - name: receipt
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - receipt_id
+                  - kind
+                  - at
+                properties:
+                  receipt_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-106>
+                  sscc:
+                    type: string
+                    description: Omitted when the finding has no SSCC.
+                    x-parser-schema-id: <anonymous-schema-107>
+                  kind:
+                    type: string
+                    enum:
+                      - UnexpectedCarton
+                      - MissingCarton
+                      - DuplicateSscc
+                      - UnknownGtin
+                      - CaseQtyMismatch
+                      - MixedCaseDeclaredAsCasePack
+                      - UnlabelledCarton
+                      - CartonOverLimit
+                      - MixedCartonContentMismatch
+                    x-parser-schema-id: <anonymous-schema-108>
+                  expected:
+                    type: string
+                    description: >-
+                      A count, a SKU, or `sku:qty` / `grossWeightG:<n>` pairs
+                      (CartonOverLimit: the breached limits;
+                      MixedCartonContentMismatch: the manifest).
+                    x-parser-schema-id: <anonymous-schema-109>
+                  actual:
+                    type: string
+                    description: The counterpart of `expected`.
+                    x-parser-schema-id: <anonymous-schema-110>
+                  at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-111>
+                x-parser-schema-id: <anonymous-schema-105>
+            x-parser-schema-id: <anonymous-schema-104>
+        x-parser-schema-id: CartonDiscrepancyRaisedEvent
+      examples:
+        - name: example
+          payload:
+            specversion: '1.0'
+            id: 5b0a7d3f-0c2b-4e7f-9b63-1d8e2f5c0b22
+            source: /warehouse/inbound-receiving
+            type: >-
+              com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised
+            subject: rcpt-223e4567-e89b-12d3-a456-426614174000
+            time: '2026-10-09T08:10:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inbound-receiving:events:CartonDiscrepancyRaised:v1
+            data:
+              receipt_id: rcpt-223e4567-e89b-12d3-a456-426614174000
+              sscc: '340123450000000013'
+              kind: UnexpectedCarton
+              at: '2026-10-09T08:10:00Z'
+      messageId: CartonDiscrepancyRaised
     ReceiptClosed:
       name: ReceiptClosed
       title: Receipt closed
@@ -3478,14 +4691,14 @@ components:
                 properties:
                   receipt_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-64>
+                    x-parser-schema-id: <anonymous-schema-114>
                   asn_number:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-65>
+                    x-parser-schema-id: <anonymous-schema-115>
                   closed_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-66>
+                    x-parser-schema-id: <anonymous-schema-116>
                   discrepancies:
                     type: array
                     description: Empty when everything matched.
@@ -3502,34 +4715,34 @@ components:
                         line_no:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-68>
+                          x-parser-schema-id: <anonymous-schema-118>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-69>
+                          x-parser-schema-id: <anonymous-schema-119>
                         kind:
                           type: string
                           enum:
                             - Short
                             - Over
                             - Damaged
-                          x-parser-schema-id: <anonymous-schema-70>
+                          x-parser-schema-id: <anonymous-schema-120>
                         expected_qty:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-71>
+                          x-parser-schema-id: <anonymous-schema-121>
                         received_qty:
                           type: integer
                           minimum: 0
                           description: Good plus damaged.
-                          x-parser-schema-id: <anonymous-schema-72>
+                          x-parser-schema-id: <anonymous-schema-122>
                         damaged_qty:
                           type: integer
                           minimum: 0
-                          x-parser-schema-id: <anonymous-schema-73>
+                          x-parser-schema-id: <anonymous-schema-123>
                       x-parser-schema-id: DiscrepancyData
-                    x-parser-schema-id: <anonymous-schema-67>
-                x-parser-schema-id: <anonymous-schema-63>
-            x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-117>
+                x-parser-schema-id: <anonymous-schema-113>
+            x-parser-schema-id: <anonymous-schema-112>
         x-parser-schema-id: ReceiptClosedEvent
       examples:
         - name: closedWithDiscrepancies
@@ -3645,6 +4858,10 @@ components:
                     format: date-time
                     description: Omitted when the supplier gave none.
                     x-parser-schema-id: <anonymous-schema-13>
+                  owner_ref:
+                    type: string
+                    description: Optional opaque tenant tag.
+                    x-parser-schema-id: <anonymous-schema-14>
                   lines:
                     type: array
                     minItems: 1
@@ -3658,16 +4875,87 @@ components:
                         line_no:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-15>
+                          x-parser-schema-id: <anonymous-schema-16>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-16>
+                          x-parser-schema-id: <anonymous-schema-17>
                         expected_qty:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-17>
+                          x-parser-schema-id: <anonymous-schema-18>
                       x-parser-schema-id: AsnLineData
-                    x-parser-schema-id: <anonymous-schema-14>
+                    x-parser-schema-id: <anonymous-schema-15>
+                  cartons:
+                    type: array
+                    description: Optional announced cartons.
+                    items:
+                      type: object
+                      required:
+                        - sscc
+                        - kind
+                        - contents
+                      properties:
+                        sscc:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-21>
+                        parent_sscc:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-22>
+                        kind:
+                          type: string
+                          enum:
+                            - HOMOGENEOUS_CASE
+                            - MIXED
+                          x-parser-schema-id: <anonymous-schema-23>
+                        gross_weight_g:
+                          type: integer
+                          x-parser-schema-id: <anonymous-schema-24>
+                        dims:
+                          type: object
+                          properties:
+                            length_mm:
+                              type: integer
+                              x-parser-schema-id: <anonymous-schema-26>
+                            width_mm:
+                              type: integer
+                              x-parser-schema-id: <anonymous-schema-27>
+                            height_mm:
+                              type: integer
+                              x-parser-schema-id: <anonymous-schema-28>
+                          x-parser-schema-id: <anonymous-schema-25>
+                        contents:
+                          type: array
+                          items:
+                            type: object
+                            required:
+                              - line_no
+                              - sku
+                              - gtin
+                              - qty
+                            properties:
+                              line_no:
+                                type: integer
+                                x-parser-schema-id: <anonymous-schema-31>
+                              sku:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-32>
+                              gtin:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-33>
+                              qty:
+                                type: integer
+                                description: Eaches.
+                                x-parser-schema-id: <anonymous-schema-34>
+                              lot:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-35>
+                              expiry:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-36>
+                            x-parser-schema-id: <anonymous-schema-30>
+                          x-parser-schema-id: <anonymous-schema-29>
+                      x-parser-schema-id: <anonymous-schema-20>
+                    x-parser-schema-id: <anonymous-schema-19>
                 x-parser-schema-id: <anonymous-schema-10>
             x-parser-schema-id: <anonymous-schema-9>
         x-parser-schema-id: ASNRegisteredEvent
@@ -3760,13 +5048,13 @@ components:
                 properties:
                   asn_number:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-20>
+                    x-parser-schema-id: <anonymous-schema-39>
                   reason:
                     type: string
                     description: Omitted when none was given.
-                    x-parser-schema-id: <anonymous-schema-21>
-                x-parser-schema-id: <anonymous-schema-19>
-            x-parser-schema-id: <anonymous-schema-18>
+                    x-parser-schema-id: <anonymous-schema-40>
+                x-parser-schema-id: <anonymous-schema-38>
+            x-parser-schema-id: <anonymous-schema-37>
         x-parser-schema-id: ASNCancelledEvent
       examples:
         - name: analytics
@@ -3855,30 +5143,30 @@ components:
                 properties:
                   appointment_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-24>
+                    x-parser-schema-id: <anonymous-schema-43>
                   door_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-25>
+                    x-parser-schema-id: <anonymous-schema-44>
                   carrier:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-26>
+                    x-parser-schema-id: <anonymous-schema-45>
                   window_start:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-27>
+                    x-parser-schema-id: <anonymous-schema-46>
                   window_end:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-28>
+                    x-parser-schema-id: <anonymous-schema-47>
                   asn_numbers:
                     type: array
                     minItems: 1
                     items:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-30>
-                    x-parser-schema-id: <anonymous-schema-29>
-                x-parser-schema-id: <anonymous-schema-23>
-            x-parser-schema-id: <anonymous-schema-22>
+                      x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: <anonymous-schema-48>
+                x-parser-schema-id: <anonymous-schema-42>
+            x-parser-schema-id: <anonymous-schema-41>
         x-parser-schema-id: DockAppointmentBookedEvent
       examples:
         - name: analytics
@@ -3970,16 +5258,16 @@ components:
                 properties:
                   appointment_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-33>
+                    x-parser-schema-id: <anonymous-schema-52>
                   door_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: <anonymous-schema-53>
                   checked_in_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-35>
-                x-parser-schema-id: <anonymous-schema-32>
-            x-parser-schema-id: <anonymous-schema-31>
+                    x-parser-schema-id: <anonymous-schema-54>
+                x-parser-schema-id: <anonymous-schema-51>
+            x-parser-schema-id: <anonymous-schema-50>
         x-parser-schema-id: DockAppointmentCheckedInEvent
       examples:
         - name: analytics
@@ -4067,16 +5355,16 @@ components:
                 properties:
                   appointment_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-38>
+                    x-parser-schema-id: <anonymous-schema-57>
                   door_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-39>
+                    x-parser-schema-id: <anonymous-schema-58>
                   reason:
                     type: string
                     description: Omitted when none was given.
-                    x-parser-schema-id: <anonymous-schema-40>
-                x-parser-schema-id: <anonymous-schema-37>
-            x-parser-schema-id: <anonymous-schema-36>
+                    x-parser-schema-id: <anonymous-schema-59>
+                x-parser-schema-id: <anonymous-schema-56>
+            x-parser-schema-id: <anonymous-schema-55>
         x-parser-schema-id: DockAppointmentCancelledEvent
       examples:
         - name: analytics
@@ -4165,16 +5453,16 @@ components:
                 properties:
                   appointment_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-43>
+                    x-parser-schema-id: <anonymous-schema-62>
                   door_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-44>
+                    x-parser-schema-id: <anonymous-schema-63>
                   completed_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-45>
-                x-parser-schema-id: <anonymous-schema-42>
-            x-parser-schema-id: <anonymous-schema-41>
+                    x-parser-schema-id: <anonymous-schema-64>
+                x-parser-schema-id: <anonymous-schema-61>
+            x-parser-schema-id: <anonymous-schema-60>
         x-parser-schema-id: DockAppointmentCompletedEvent
       examples:
         - name: analytics
@@ -4262,24 +5550,24 @@ components:
                 properties:
                   receipt_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-48>
+                    x-parser-schema-id: <anonymous-schema-67>
                   asn_number:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: <anonymous-schema-68>
                   appointment_id:
                     type: string
                     description: Omitted for a walk-in delivery.
-                    x-parser-schema-id: <anonymous-schema-50>
+                    x-parser-schema-id: <anonymous-schema-69>
                   door_code:
                     type: string
                     description: Omitted when the receipt has no appointment.
-                    x-parser-schema-id: <anonymous-schema-51>
+                    x-parser-schema-id: <anonymous-schema-70>
                   opened_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-52>
-                x-parser-schema-id: <anonymous-schema-47>
-            x-parser-schema-id: <anonymous-schema-46>
+                    x-parser-schema-id: <anonymous-schema-71>
+                x-parser-schema-id: <anonymous-schema-66>
+            x-parser-schema-id: <anonymous-schema-65>
         x-parser-schema-id: ReceiptOpenedEvent
       examples:
         - name: analytics
@@ -4374,33 +5662,52 @@ components:
                 properties:
                   receipt_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-74>
                   asn_number:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-56>
+                    x-parser-schema-id: <anonymous-schema-75>
                   line_no:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-57>
+                    x-parser-schema-id: <anonymous-schema-76>
                   sku:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-58>
+                    x-parser-schema-id: <anonymous-schema-77>
                   quantity:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-78>
                   condition:
                     type: string
                     enum:
                       - Good
                       - Damaged
-                    x-parser-schema-id: <anonymous-schema-60>
+                    x-parser-schema-id: <anonymous-schema-79>
                   received_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-61>
-                x-parser-schema-id: <anonymous-schema-54>
-            x-parser-schema-id: <anonymous-schema-53>
+                    x-parser-schema-id: <anonymous-schema-80>
+                  owner_ref:
+                    type: string
+                    description: Optional; omitted for fleet-owned stock.
+                    x-parser-schema-id: <anonymous-schema-81>
+                  pack_gtin:
+                    type: string
+                    description: >-
+                      Optional; the CASE GTIN when received as cases or from a
+                      homogeneous carton.
+                    x-parser-schema-id: <anonymous-schema-82>
+                  cases:
+                    type: integer
+                    minimum: 1
+                    description: Optional; cases booked; `quantity` stays eaches.
+                    x-parser-schema-id: <anonymous-schema-83>
+                  sscc:
+                    type: string
+                    description: Optional; the carton the quantity came from.
+                    x-parser-schema-id: <anonymous-schema-84>
+                x-parser-schema-id: <anonymous-schema-73>
+            x-parser-schema-id: <anonymous-schema-72>
         x-parser-schema-id: ReceiptLineReceivedEvent
       examples:
         - name: analytics
@@ -4423,6 +5730,316 @@ components:
               condition: Good
               received_at: '2026-10-09T08:10:00Z'
       messageId: ReceiptLineReceivedAnalytics
+    ReceiptCartonReceivedAnalytics:
+      name: ReceiptCartonReceived
+      title: Receipt carton received
+      summary: A carton (or one case) was received - identity only.
+      description: >
+        `type` =
+        `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived`;
+
+        subject = the receipt id, key = the ASN number. Same payload as on the
+        integration topic; dataschema
+        `urn:warehouse:inbound-receiving:analytics:ReceiptCartonReceived:v1`.
+
+        IDENTITY ONLY: it never books quantity (`ReceiptLineReceived` stays the
+
+        sole quantity authority, in eaches). inventory-storage uses it to
+
+        create or link a Container keyed (receipt_id, line_no, lpn), in either
+
+        arrival order. `lpn` is the SSCC, or an internal `LPN-<ulid>` for a
+
+        case received without one. There is no site: the site is derived by
+
+        inventory-storage at stow (ADR 0013).
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - receipt_id
+                  - asn_number
+                  - sealed
+                  - lpn
+                  - contents
+                  - received_at
+                properties:
+                  receipt_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-87>
+                  asn_number:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-88>
+                  owner_ref:
+                    type: string
+                    description: Omitted for fleet-owned stock.
+                    x-parser-schema-id: <anonymous-schema-89>
+                  sscc:
+                    type: string
+                    description: Omitted for an unlabelled carton.
+                    x-parser-schema-id: <anonymous-schema-90>
+                  parent_sscc:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-91>
+                  sealed:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-92>
+                  lpn:
+                    type: string
+                    description: The SSCC, or an internal `LPN-<ulid>`.
+                    x-parser-schema-id: <anonymous-schema-93>
+                  contents:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - line_no
+                        - sku
+                        - gtin
+                        - qty
+                        - condition
+                      properties:
+                        line_no:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-96>
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-97>
+                        gtin:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-98>
+                        qty:
+                          type: integer
+                          minimum: 1
+                          description: Eaches.
+                          x-parser-schema-id: <anonymous-schema-99>
+                        lot:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-100>
+                        expiry:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-101>
+                        condition:
+                          type: string
+                          enum:
+                            - Good
+                            - Damaged
+                          x-parser-schema-id: <anonymous-schema-102>
+                      x-parser-schema-id: <anonymous-schema-95>
+                    x-parser-schema-id: <anonymous-schema-94>
+                  received_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-103>
+                x-parser-schema-id: <anonymous-schema-86>
+            x-parser-schema-id: <anonymous-schema-85>
+        x-parser-schema-id: ReceiptCartonReceivedEvent
+      examples:
+        - name: example
+          payload:
+            specversion: '1.0'
+            id: 4a9f6c2e-9b1a-4d6e-8a52-0c7d1e4b9a11
+            source: /warehouse/inbound-receiving
+            type: com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived
+            subject: rcpt-223e4567-e89b-12d3-a456-426614174000
+            time: '2026-10-09T08:10:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inbound-receiving:analytics:ReceiptCartonReceived:v1
+            data:
+              receipt_id: rcpt-223e4567-e89b-12d3-a456-426614174000
+              asn_number: ASN-1001
+              sscc: '340123450000000013'
+              sealed: true
+              lpn: '340123450000000013'
+              contents:
+                - line_no: 1
+                  sku: SKU-1
+                  gtin: '13041090004824'
+                  qty: 24
+                  condition: Good
+              received_at: '2026-10-09T08:10:00Z'
+      messageId: ReceiptCartonReceivedAnalytics
+    CartonDiscrepancyRaisedAnalytics:
+      name: CartonDiscrepancyRaised
+      title: Carton discrepancy raised
+      summary: A finding about a physical carton.
+      description: >
+        `type` =
+        `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised`;
+
+        subject = the receipt id, key = the ASN number. Same payload as on the
+        integration topic; dataschema
+        `urn:warehouse:inbound-receiving:analytics:CartonDiscrepancyRaised:v1`.
+
+        Carton discrepancies travel ONLY on this event; `ReceiptClosed` keeps
+
+        its three v1 kinds. A refused scan books nothing and raises this
+
+        event; an accepted carton can raise it too (for example
+
+        `UnlabelledCarton`).
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - receipt_id
+                  - kind
+                  - at
+                properties:
+                  receipt_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-106>
+                  sscc:
+                    type: string
+                    description: Omitted when the finding has no SSCC.
+                    x-parser-schema-id: <anonymous-schema-107>
+                  kind:
+                    type: string
+                    enum:
+                      - UnexpectedCarton
+                      - MissingCarton
+                      - DuplicateSscc
+                      - UnknownGtin
+                      - CaseQtyMismatch
+                      - MixedCaseDeclaredAsCasePack
+                      - UnlabelledCarton
+                      - CartonOverLimit
+                      - MixedCartonContentMismatch
+                    x-parser-schema-id: <anonymous-schema-108>
+                  expected:
+                    type: string
+                    description: >-
+                      A count, a SKU, or `sku:qty` / `grossWeightG:<n>` pairs
+                      (CartonOverLimit: the breached limits;
+                      MixedCartonContentMismatch: the manifest).
+                    x-parser-schema-id: <anonymous-schema-109>
+                  actual:
+                    type: string
+                    description: The counterpart of `expected`.
+                    x-parser-schema-id: <anonymous-schema-110>
+                  at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-111>
+                x-parser-schema-id: <anonymous-schema-105>
+            x-parser-schema-id: <anonymous-schema-104>
+        x-parser-schema-id: CartonDiscrepancyRaisedEvent
+      examples:
+        - name: example
+          payload:
+            specversion: '1.0'
+            id: 5b0a7d3f-0c2b-4e7f-9b63-1d8e2f5c0b22
+            source: /warehouse/inbound-receiving
+            type: >-
+              com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised
+            subject: rcpt-223e4567-e89b-12d3-a456-426614174000
+            time: '2026-10-09T08:10:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:warehouse:inbound-receiving:analytics:CartonDiscrepancyRaised:v1
+            data:
+              receipt_id: rcpt-223e4567-e89b-12d3-a456-426614174000
+              sscc: '340123450000000013'
+              kind: UnexpectedCarton
+              at: '2026-10-09T08:10:00Z'
+      messageId: CartonDiscrepancyRaisedAnalytics
     ReceiptClosedAnalytics:
       name: ReceiptClosed
       title: Receipt closed (analytics)
@@ -4493,14 +6110,14 @@ components:
                 properties:
                   receipt_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-64>
+                    x-parser-schema-id: <anonymous-schema-114>
                   asn_number:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-65>
+                    x-parser-schema-id: <anonymous-schema-115>
                   closed_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-66>
+                    x-parser-schema-id: <anonymous-schema-116>
                   discrepancies:
                     type: array
                     description: Empty when everything matched.
@@ -4517,34 +6134,34 @@ components:
                         line_no:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-68>
+                          x-parser-schema-id: <anonymous-schema-118>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-69>
+                          x-parser-schema-id: <anonymous-schema-119>
                         kind:
                           type: string
                           enum:
                             - Short
                             - Over
                             - Damaged
-                          x-parser-schema-id: <anonymous-schema-70>
+                          x-parser-schema-id: <anonymous-schema-120>
                         expected_qty:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-71>
+                          x-parser-schema-id: <anonymous-schema-121>
                         received_qty:
                           type: integer
                           minimum: 0
                           description: Good plus damaged.
-                          x-parser-schema-id: <anonymous-schema-72>
+                          x-parser-schema-id: <anonymous-schema-122>
                         damaged_qty:
                           type: integer
                           minimum: 0
-                          x-parser-schema-id: <anonymous-schema-73>
+                          x-parser-schema-id: <anonymous-schema-123>
                       x-parser-schema-id: DiscrepancyData
-                    x-parser-schema-id: <anonymous-schema-67>
-                x-parser-schema-id: <anonymous-schema-63>
-            x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-117>
+                x-parser-schema-id: <anonymous-schema-113>
+            x-parser-schema-id: <anonymous-schema-112>
         x-parser-schema-id: ReceiptClosedEvent
       examples:
         - name: analytics
@@ -4650,16 +6267,16 @@ components:
                 properties:
                   sku:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-76>
+                    x-parser-schema-id: <anonymous-schema-126>
                   description:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-77>
+                    x-parser-schema-id: <anonymous-schema-127>
                   version:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-78>
-                x-parser-schema-id: <anonymous-schema-75>
-            x-parser-schema-id: <anonymous-schema-74>
+                    x-parser-schema-id: <anonymous-schema-128>
+                x-parser-schema-id: <anonymous-schema-125>
+            x-parser-schema-id: <anonymous-schema-124>
         x-parser-schema-id: ProductRegisteredEvent
       examples:
         - name: registered
@@ -4758,32 +6375,32 @@ components:
                 properties:
                   eventName:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-81>
+                    x-parser-schema-id: <anonymous-schema-131>
                   eventType:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-82>
+                    x-parser-schema-id: <anonymous-schema-132>
                   occurredAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-83>
+                    x-parser-schema-id: <anonymous-schema-133>
                   locationCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-84>
+                    x-parser-schema-id: <anonymous-schema-134>
                   aisleId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-85>
+                    x-parser-schema-id: <anonymous-schema-135>
                   zoneId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-86>
+                    x-parser-schema-id: <anonymous-schema-136>
                   locationType:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-87>
+                    x-parser-schema-id: <anonymous-schema-137>
                   role:
                     type: string
                     description: >-
                       Storage, Dock, Yard, WorkCenter, Drop, Staging, QC,
                       Consolidation or Shipping; absent means Storage.
-                    x-parser-schema-id: <anonymous-schema-88>
+                    x-parser-schema-id: <anonymous-schema-138>
                   dockFlow:
                     type: string
                     enum:
@@ -4791,22 +6408,22 @@ components:
                       - Outbound
                       - Both
                     description: Present only when role is Dock.
-                    x-parser-schema-id: <anonymous-schema-89>
+                    x-parser-schema-id: <anonymous-schema-139>
                   activities:
                     type: array
                     items:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-91>
+                      x-parser-schema-id: <anonymous-schema-141>
                     description: Present only when role is WorkCenter.
-                    x-parser-schema-id: <anonymous-schema-90>
+                    x-parser-schema-id: <anonymous-schema-140>
                   maxWeightKg:
                     type: number
-                    x-parser-schema-id: <anonymous-schema-92>
+                    x-parser-schema-id: <anonymous-schema-142>
                   maxVolumeM3:
                     type: number
-                    x-parser-schema-id: <anonymous-schema-93>
-                x-parser-schema-id: <anonymous-schema-80>
-            x-parser-schema-id: <anonymous-schema-79>
+                    x-parser-schema-id: <anonymous-schema-143>
+                x-parser-schema-id: <anonymous-schema-130>
+            x-parser-schema-id: <anonymous-schema-129>
         x-parser-schema-id: LocationSlotRegisteredEvent
       examples:
         - name: inboundDock
@@ -4906,19 +6523,19 @@ components:
                 properties:
                   eventName:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-96>
+                    x-parser-schema-id: <anonymous-schema-146>
                   eventType:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-97>
+                    x-parser-schema-id: <anonymous-schema-147>
                   occurredAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-98>
+                    x-parser-schema-id: <anonymous-schema-148>
                   locationCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-99>
-                x-parser-schema-id: <anonymous-schema-95>
-            x-parser-schema-id: <anonymous-schema-94>
+                    x-parser-schema-id: <anonymous-schema-149>
+                x-parser-schema-id: <anonymous-schema-145>
+            x-parser-schema-id: <anonymous-schema-144>
         x-parser-schema-id: LocationSlotDecommissionedEvent
       examples:
         - name: decommissioned
@@ -4994,14 +6611,14 @@ components:
         line_no:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-15>
+          x-parser-schema-id: <anonymous-schema-16>
         sku:
           type: string
-          x-parser-schema-id: <anonymous-schema-16>
+          x-parser-schema-id: <anonymous-schema-17>
         expected_qty:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-17>
+          x-parser-schema-id: <anonymous-schema-18>
       x-parser-schema-id: AsnLineData
     DiscrepancyData:
       type: object
@@ -5016,30 +6633,30 @@ components:
         line_no:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-68>
+          x-parser-schema-id: <anonymous-schema-118>
         sku:
           type: string
-          x-parser-schema-id: <anonymous-schema-69>
+          x-parser-schema-id: <anonymous-schema-119>
         kind:
           type: string
           enum:
             - Short
             - Over
             - Damaged
-          x-parser-schema-id: <anonymous-schema-70>
+          x-parser-schema-id: <anonymous-schema-120>
         expected_qty:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-71>
+          x-parser-schema-id: <anonymous-schema-121>
         received_qty:
           type: integer
           minimum: 0
           description: Good plus damaged.
-          x-parser-schema-id: <anonymous-schema-72>
+          x-parser-schema-id: <anonymous-schema-122>
         damaged_qty:
           type: integer
           minimum: 0
-          x-parser-schema-id: <anonymous-schema-73>
+          x-parser-schema-id: <anonymous-schema-123>
       x-parser-schema-id: DiscrepancyData
     ASNRegisteredEvent:
       allOf:
@@ -5105,6 +6722,10 @@ components:
                   format: date-time
                   description: Omitted when the supplier gave none.
                   x-parser-schema-id: <anonymous-schema-13>
+                owner_ref:
+                  type: string
+                  description: Optional opaque tenant tag.
+                  x-parser-schema-id: <anonymous-schema-14>
                 lines:
                   type: array
                   minItems: 1
@@ -5118,16 +6739,87 @@ components:
                       line_no:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-15>
+                        x-parser-schema-id: <anonymous-schema-16>
                       sku:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-16>
+                        x-parser-schema-id: <anonymous-schema-17>
                       expected_qty:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-17>
+                        x-parser-schema-id: <anonymous-schema-18>
                     x-parser-schema-id: AsnLineData
-                  x-parser-schema-id: <anonymous-schema-14>
+                  x-parser-schema-id: <anonymous-schema-15>
+                cartons:
+                  type: array
+                  description: Optional announced cartons.
+                  items:
+                    type: object
+                    required:
+                      - sscc
+                      - kind
+                      - contents
+                    properties:
+                      sscc:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-21>
+                      parent_sscc:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-22>
+                      kind:
+                        type: string
+                        enum:
+                          - HOMOGENEOUS_CASE
+                          - MIXED
+                        x-parser-schema-id: <anonymous-schema-23>
+                      gross_weight_g:
+                        type: integer
+                        x-parser-schema-id: <anonymous-schema-24>
+                      dims:
+                        type: object
+                        properties:
+                          length_mm:
+                            type: integer
+                            x-parser-schema-id: <anonymous-schema-26>
+                          width_mm:
+                            type: integer
+                            x-parser-schema-id: <anonymous-schema-27>
+                          height_mm:
+                            type: integer
+                            x-parser-schema-id: <anonymous-schema-28>
+                        x-parser-schema-id: <anonymous-schema-25>
+                      contents:
+                        type: array
+                        items:
+                          type: object
+                          required:
+                            - line_no
+                            - sku
+                            - gtin
+                            - qty
+                          properties:
+                            line_no:
+                              type: integer
+                              x-parser-schema-id: <anonymous-schema-31>
+                            sku:
+                              type: string
+                              x-parser-schema-id: <anonymous-schema-32>
+                            gtin:
+                              type: string
+                              x-parser-schema-id: <anonymous-schema-33>
+                            qty:
+                              type: integer
+                              description: Eaches.
+                              x-parser-schema-id: <anonymous-schema-34>
+                            lot:
+                              type: string
+                              x-parser-schema-id: <anonymous-schema-35>
+                            expiry:
+                              type: string
+                              x-parser-schema-id: <anonymous-schema-36>
+                          x-parser-schema-id: <anonymous-schema-30>
+                        x-parser-schema-id: <anonymous-schema-29>
+                    x-parser-schema-id: <anonymous-schema-20>
+                  x-parser-schema-id: <anonymous-schema-19>
               x-parser-schema-id: <anonymous-schema-10>
           x-parser-schema-id: <anonymous-schema-9>
       x-parser-schema-id: ASNRegisteredEvent
@@ -5184,13 +6876,13 @@ components:
               properties:
                 asn_number:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-20>
+                  x-parser-schema-id: <anonymous-schema-39>
                 reason:
                   type: string
                   description: Omitted when none was given.
-                  x-parser-schema-id: <anonymous-schema-21>
-              x-parser-schema-id: <anonymous-schema-19>
-          x-parser-schema-id: <anonymous-schema-18>
+                  x-parser-schema-id: <anonymous-schema-40>
+              x-parser-schema-id: <anonymous-schema-38>
+          x-parser-schema-id: <anonymous-schema-37>
       x-parser-schema-id: ASNCancelledEvent
     DockAppointmentBookedEvent:
       allOf:
@@ -5250,30 +6942,30 @@ components:
               properties:
                 appointment_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-24>
+                  x-parser-schema-id: <anonymous-schema-43>
                 door_code:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-25>
+                  x-parser-schema-id: <anonymous-schema-44>
                 carrier:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-26>
+                  x-parser-schema-id: <anonymous-schema-45>
                 window_start:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-27>
+                  x-parser-schema-id: <anonymous-schema-46>
                 window_end:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-28>
+                  x-parser-schema-id: <anonymous-schema-47>
                 asn_numbers:
                   type: array
                   minItems: 1
                   items:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-30>
-                  x-parser-schema-id: <anonymous-schema-29>
-              x-parser-schema-id: <anonymous-schema-23>
-          x-parser-schema-id: <anonymous-schema-22>
+                    x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: <anonymous-schema-48>
+              x-parser-schema-id: <anonymous-schema-42>
+          x-parser-schema-id: <anonymous-schema-41>
       x-parser-schema-id: DockAppointmentBookedEvent
     DockAppointmentCheckedInEvent:
       allOf:
@@ -5330,16 +7022,16 @@ components:
               properties:
                 appointment_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-33>
+                  x-parser-schema-id: <anonymous-schema-52>
                 door_code:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-34>
+                  x-parser-schema-id: <anonymous-schema-53>
                 checked_in_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-35>
-              x-parser-schema-id: <anonymous-schema-32>
-          x-parser-schema-id: <anonymous-schema-31>
+                  x-parser-schema-id: <anonymous-schema-54>
+              x-parser-schema-id: <anonymous-schema-51>
+          x-parser-schema-id: <anonymous-schema-50>
       x-parser-schema-id: DockAppointmentCheckedInEvent
     DockAppointmentCancelledEvent:
       allOf:
@@ -5395,16 +7087,16 @@ components:
               properties:
                 appointment_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-38>
+                  x-parser-schema-id: <anonymous-schema-57>
                 door_code:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-39>
+                  x-parser-schema-id: <anonymous-schema-58>
                 reason:
                   type: string
                   description: Omitted when none was given.
-                  x-parser-schema-id: <anonymous-schema-40>
-              x-parser-schema-id: <anonymous-schema-37>
-          x-parser-schema-id: <anonymous-schema-36>
+                  x-parser-schema-id: <anonymous-schema-59>
+              x-parser-schema-id: <anonymous-schema-56>
+          x-parser-schema-id: <anonymous-schema-55>
       x-parser-schema-id: DockAppointmentCancelledEvent
     DockAppointmentCompletedEvent:
       allOf:
@@ -5461,16 +7153,16 @@ components:
               properties:
                 appointment_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-43>
+                  x-parser-schema-id: <anonymous-schema-62>
                 door_code:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-44>
+                  x-parser-schema-id: <anonymous-schema-63>
                 completed_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-45>
-              x-parser-schema-id: <anonymous-schema-42>
-          x-parser-schema-id: <anonymous-schema-41>
+                  x-parser-schema-id: <anonymous-schema-64>
+              x-parser-schema-id: <anonymous-schema-61>
+          x-parser-schema-id: <anonymous-schema-60>
       x-parser-schema-id: DockAppointmentCompletedEvent
     ReceiptOpenedEvent:
       allOf:
@@ -5527,24 +7219,24 @@ components:
               properties:
                 receipt_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-48>
+                  x-parser-schema-id: <anonymous-schema-67>
                 asn_number:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: <anonymous-schema-68>
                 appointment_id:
                   type: string
                   description: Omitted for a walk-in delivery.
-                  x-parser-schema-id: <anonymous-schema-50>
+                  x-parser-schema-id: <anonymous-schema-69>
                 door_code:
                   type: string
                   description: Omitted when the receipt has no appointment.
-                  x-parser-schema-id: <anonymous-schema-51>
+                  x-parser-schema-id: <anonymous-schema-70>
                 opened_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-52>
-              x-parser-schema-id: <anonymous-schema-47>
-          x-parser-schema-id: <anonymous-schema-46>
+                  x-parser-schema-id: <anonymous-schema-71>
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: <anonymous-schema-65>
       x-parser-schema-id: ReceiptOpenedEvent
     ReceiptLineReceivedEvent:
       allOf:
@@ -5605,34 +7297,271 @@ components:
               properties:
                 receipt_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-74>
                 asn_number:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-56>
+                  x-parser-schema-id: <anonymous-schema-75>
                 line_no:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-57>
+                  x-parser-schema-id: <anonymous-schema-76>
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-58>
+                  x-parser-schema-id: <anonymous-schema-77>
                 quantity:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-78>
                 condition:
                   type: string
                   enum:
                     - Good
                     - Damaged
-                  x-parser-schema-id: <anonymous-schema-60>
+                  x-parser-schema-id: <anonymous-schema-79>
                 received_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-61>
-              x-parser-schema-id: <anonymous-schema-54>
-          x-parser-schema-id: <anonymous-schema-53>
+                  x-parser-schema-id: <anonymous-schema-80>
+                owner_ref:
+                  type: string
+                  description: Optional; omitted for fleet-owned stock.
+                  x-parser-schema-id: <anonymous-schema-81>
+                pack_gtin:
+                  type: string
+                  description: >-
+                    Optional; the CASE GTIN when received as cases or from a
+                    homogeneous carton.
+                  x-parser-schema-id: <anonymous-schema-82>
+                cases:
+                  type: integer
+                  minimum: 1
+                  description: Optional; cases booked; `quantity` stays eaches.
+                  x-parser-schema-id: <anonymous-schema-83>
+                sscc:
+                  type: string
+                  description: Optional; the carton the quantity came from.
+                  x-parser-schema-id: <anonymous-schema-84>
+              x-parser-schema-id: <anonymous-schema-73>
+          x-parser-schema-id: <anonymous-schema-72>
       x-parser-schema-id: ReceiptLineReceivedEvent
+    ReceiptCartonReceivedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The aggregate instance id.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - receipt_id
+                - asn_number
+                - sealed
+                - lpn
+                - contents
+                - received_at
+              properties:
+                receipt_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-87>
+                asn_number:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-88>
+                owner_ref:
+                  type: string
+                  description: Omitted for fleet-owned stock.
+                  x-parser-schema-id: <anonymous-schema-89>
+                sscc:
+                  type: string
+                  description: Omitted for an unlabelled carton.
+                  x-parser-schema-id: <anonymous-schema-90>
+                parent_sscc:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-91>
+                sealed:
+                  type: boolean
+                  x-parser-schema-id: <anonymous-schema-92>
+                lpn:
+                  type: string
+                  description: The SSCC, or an internal `LPN-<ulid>`.
+                  x-parser-schema-id: <anonymous-schema-93>
+                contents:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - line_no
+                      - sku
+                      - gtin
+                      - qty
+                      - condition
+                    properties:
+                      line_no:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-96>
+                      sku:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-97>
+                      gtin:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-98>
+                      qty:
+                        type: integer
+                        minimum: 1
+                        description: Eaches.
+                        x-parser-schema-id: <anonymous-schema-99>
+                      lot:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-100>
+                      expiry:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-101>
+                      condition:
+                        type: string
+                        enum:
+                          - Good
+                          - Damaged
+                        x-parser-schema-id: <anonymous-schema-102>
+                    x-parser-schema-id: <anonymous-schema-95>
+                  x-parser-schema-id: <anonymous-schema-94>
+                received_at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-103>
+              x-parser-schema-id: <anonymous-schema-86>
+          x-parser-schema-id: <anonymous-schema-85>
+      x-parser-schema-id: ReceiptCartonReceivedEvent
+    CartonDiscrepancyRaisedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The aggregate instance id.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - receipt_id
+                - kind
+                - at
+              properties:
+                receipt_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-106>
+                sscc:
+                  type: string
+                  description: Omitted when the finding has no SSCC.
+                  x-parser-schema-id: <anonymous-schema-107>
+                kind:
+                  type: string
+                  enum:
+                    - UnexpectedCarton
+                    - MissingCarton
+                    - DuplicateSscc
+                    - UnknownGtin
+                    - CaseQtyMismatch
+                    - MixedCaseDeclaredAsCasePack
+                    - UnlabelledCarton
+                    - CartonOverLimit
+                    - MixedCartonContentMismatch
+                  x-parser-schema-id: <anonymous-schema-108>
+                expected:
+                  type: string
+                  description: >-
+                    A count, a SKU, or `sku:qty` / `grossWeightG:<n>` pairs
+                    (CartonOverLimit: the breached limits;
+                    MixedCartonContentMismatch: the manifest).
+                  x-parser-schema-id: <anonymous-schema-109>
+                actual:
+                  type: string
+                  description: The counterpart of `expected`.
+                  x-parser-schema-id: <anonymous-schema-110>
+                at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-111>
+              x-parser-schema-id: <anonymous-schema-105>
+          x-parser-schema-id: <anonymous-schema-104>
+      x-parser-schema-id: CartonDiscrepancyRaisedEvent
     ReceiptClosedEvent:
       allOf:
         - type: object
@@ -5689,14 +7618,14 @@ components:
               properties:
                 receipt_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-64>
+                  x-parser-schema-id: <anonymous-schema-114>
                 asn_number:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-65>
+                  x-parser-schema-id: <anonymous-schema-115>
                 closed_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-66>
+                  x-parser-schema-id: <anonymous-schema-116>
                 discrepancies:
                   type: array
                   description: Empty when everything matched.
@@ -5713,34 +7642,34 @@ components:
                       line_no:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-68>
+                        x-parser-schema-id: <anonymous-schema-118>
                       sku:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-69>
+                        x-parser-schema-id: <anonymous-schema-119>
                       kind:
                         type: string
                         enum:
                           - Short
                           - Over
                           - Damaged
-                        x-parser-schema-id: <anonymous-schema-70>
+                        x-parser-schema-id: <anonymous-schema-120>
                       expected_qty:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-71>
+                        x-parser-schema-id: <anonymous-schema-121>
                       received_qty:
                         type: integer
                         minimum: 0
                         description: Good plus damaged.
-                        x-parser-schema-id: <anonymous-schema-72>
+                        x-parser-schema-id: <anonymous-schema-122>
                       damaged_qty:
                         type: integer
                         minimum: 0
-                        x-parser-schema-id: <anonymous-schema-73>
+                        x-parser-schema-id: <anonymous-schema-123>
                     x-parser-schema-id: DiscrepancyData
-                  x-parser-schema-id: <anonymous-schema-67>
-              x-parser-schema-id: <anonymous-schema-63>
-          x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-117>
+              x-parser-schema-id: <anonymous-schema-113>
+          x-parser-schema-id: <anonymous-schema-112>
       x-parser-schema-id: ReceiptClosedEvent
     ProductRegisteredEvent:
       allOf:
@@ -5797,16 +7726,16 @@ components:
               properties:
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-76>
+                  x-parser-schema-id: <anonymous-schema-126>
                 description:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-77>
+                  x-parser-schema-id: <anonymous-schema-127>
                 version:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-78>
-              x-parser-schema-id: <anonymous-schema-75>
-          x-parser-schema-id: <anonymous-schema-74>
+                  x-parser-schema-id: <anonymous-schema-128>
+              x-parser-schema-id: <anonymous-schema-125>
+          x-parser-schema-id: <anonymous-schema-124>
       x-parser-schema-id: ProductRegisteredEvent
     LocationSlotRegisteredEvent:
       allOf:
@@ -5866,32 +7795,32 @@ components:
               properties:
                 eventName:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-81>
+                  x-parser-schema-id: <anonymous-schema-131>
                 eventType:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-82>
+                  x-parser-schema-id: <anonymous-schema-132>
                 occurredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-83>
+                  x-parser-schema-id: <anonymous-schema-133>
                 locationCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-134>
                 aisleId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-85>
+                  x-parser-schema-id: <anonymous-schema-135>
                 zoneId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-136>
                 locationType:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-87>
+                  x-parser-schema-id: <anonymous-schema-137>
                 role:
                   type: string
                   description: >-
                     Storage, Dock, Yard, WorkCenter, Drop, Staging, QC,
                     Consolidation or Shipping; absent means Storage.
-                  x-parser-schema-id: <anonymous-schema-88>
+                  x-parser-schema-id: <anonymous-schema-138>
                 dockFlow:
                   type: string
                   enum:
@@ -5899,22 +7828,22 @@ components:
                     - Outbound
                     - Both
                   description: Present only when role is Dock.
-                  x-parser-schema-id: <anonymous-schema-89>
+                  x-parser-schema-id: <anonymous-schema-139>
                 activities:
                   type: array
                   items:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-91>
+                    x-parser-schema-id: <anonymous-schema-141>
                   description: Present only when role is WorkCenter.
-                  x-parser-schema-id: <anonymous-schema-90>
+                  x-parser-schema-id: <anonymous-schema-140>
                 maxWeightKg:
                   type: number
-                  x-parser-schema-id: <anonymous-schema-92>
+                  x-parser-schema-id: <anonymous-schema-142>
                 maxVolumeM3:
                   type: number
-                  x-parser-schema-id: <anonymous-schema-93>
-              x-parser-schema-id: <anonymous-schema-80>
-          x-parser-schema-id: <anonymous-schema-79>
+                  x-parser-schema-id: <anonymous-schema-143>
+              x-parser-schema-id: <anonymous-schema-130>
+          x-parser-schema-id: <anonymous-schema-129>
       x-parser-schema-id: LocationSlotRegisteredEvent
     LocationSlotDecommissionedEvent:
       allOf:
@@ -5969,19 +7898,19 @@ components:
               properties:
                 eventName:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-96>
+                  x-parser-schema-id: <anonymous-schema-146>
                 eventType:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-147>
                 occurredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-98>
+                  x-parser-schema-id: <anonymous-schema-148>
                 locationCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-99>
-              x-parser-schema-id: <anonymous-schema-95>
-          x-parser-schema-id: <anonymous-schema-94>
+                  x-parser-schema-id: <anonymous-schema-149>
+              x-parser-schema-id: <anonymous-schema-145>
+          x-parser-schema-id: <anonymous-schema-144>
       x-parser-schema-id: LocationSlotDecommissionedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

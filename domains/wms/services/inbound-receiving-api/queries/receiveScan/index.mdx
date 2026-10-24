@@ -1,0 +1,112 @@
+---
+id: inbound-receiving-api-receiveScan
+version: 1.0.0
+name: receiveScan
+summary: Receive by scan
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Receipts'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/receipts/{receiptId}/scans'
+  statusCodes:
+    - '200'
+    - '201'
+    - '400'
+    - '404'
+    - '409'
+    - '412'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Receives goods from ONE scan. Give EITHER `scan` (the raw string the
+scanner delivered; GS1-128 element strings and `]E0`/`]I1`/`]C1`
+symbology prefixes are parsed server-side) OR `kind` and `id` (a client
+that already parsed it; the service re-validates). The scan resolves to
+`SSCC` (the carton's whole manifest is accepted), `CASE_GTIN` (`qty`
+counts CASES, default 1; the service multiplies by the active CASE
+units per pack) or `EACH_GTIN` (`qty` eaches, default 1). Every
+quantity booked, and every event, is in eaches. `kind` (or
+`expectedKind` with a raw scan) is the kind the screen expects: a scan
+of another kind is 422 `scan-kind-mismatch` and changes nothing.
+
+A scan that cannot be accepted because of a finding (an SSCC not on the
+manifest or already received, an unknown GTIN, a quantity that
+contradicts the pack) is NOT an error: it books nothing, raises the
+finding as `CartonDiscrepancyRaised` and answers **200** with
+`accepted=false`; an accepted scan answers **201**. Carton discrepancies
+are never added to `ReceiptClosed`, whose three v1 kinds stay
+`Short`, `Over` and `Damaged`. This is NOT naturally idempotent, so the
+`Idempotency-Key` is required.
+
+
+
+
+
+## POST `(/receipts/{receiptId}/scans)`
+
+### Parameters
+- **receiptId** (path) (required): The receipt id, `rcpt-` followed by a lowercase UUID.
+- **Idempotency-Key** (header) (required): Caller-supplied key for this resource-creating request, unique per
+logical action (a UUID minted per submit). A retry with the same key
+and body replays the original response; the same key with a different
+body is 422 `idempotency-key-reused`; a missing or empty key is 400
+`idempotency-key-required`.
+
+- **If-Match** (header): The `ETag` the caller last saw. When it no longer matches the current
+version the request is refused with 412 `version-mismatch`.
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">412</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-412.json" maxHeight="500" id="response-412" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />
