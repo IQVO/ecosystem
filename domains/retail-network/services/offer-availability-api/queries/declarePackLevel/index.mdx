@@ -1,0 +1,67 @@
+---
+id: offer-availability-api-declarePackLevel
+version: 0.1.0
+name: declarePackLevel
+summary: Declare a pack level of a catalogue item (DeclarePackLevel)
+schemaPath: request-body.json
+badges:
+  - content: PUT
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Catalog items'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: PUT
+  path: '/catalog-items/{catalogItemId}/packaging/{level}'
+  statusCodes:
+    - '200'
+    - '404'
+    - '409'
+    - '422'
+owners:
+  - claudioed
+sidebar:
+  badge: PUT
+---
+## Overview
+Declares the pack level (EACH, INNER, CASE or PALLET) identified by a GS1 GTIN and publishes CatalogItemPackagingDeclared (ADR 0006). unitsPerPack is in eaches: 1 for EACH, at least 2 above it and at least twice the child's. A level above EACH names the childGtin of an active lower level of the same item. The unitsPerPack of a GTIN is immutable: re-declaring an active GTIN with another count is 409 pack-quantity-immutable (a new count is a new GTIN). Declaring a NEW GTIN at a level that has an active one retires the old level (CatalogItemPackLevelRetired, then CatalogItemPackagingDeclared, one aggregate version). The identical declaration changes nothing and publishes nothing; new dimsMm or grossWeightG on an active GTIN are updated in place. A GTIN identifies one item or pack level, forever (409 gtin-already-assigned). A DISCONTINUED item takes no packaging change (409 illegal-transition).
+
+
+
+
+## PUT `(/catalog-items/{catalogItemId}/packaging/{level})`
+
+### Parameters
+- **catalogItemId** (path) (required)
+- **level** (path) (required): The packaging level, lowest first EACH \< INNER \< CASE \< PALLET.
+- **Idempotency-Key** (header) (required): Client-chosen key. A repeat on the same route with the same key and the same request replays the first response; the same key with another body is 422 idempotency-key-reused. Keys are kept for 24 hours.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+
+
+## Architecture
+
+<NodeGraph />

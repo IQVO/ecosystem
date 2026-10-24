@@ -1,0 +1,165 @@
+---
+id: shipping-and-tracking
+name: Shipping And Tracking (events)
+version: 1.0.0
+summary: >-
+  Issues shipping labels (the only place outside customer-ordering that ever
+  sees a ship-to address) and owns each package's journey: one customer-visible
+  timeline consolidated from vendor handover, load and delivery facts, ending in
+  delivered, returned or lost.
+badges:
+  - content: shipping-and-tracking
+    textColor: blue
+    backgroundColor: blue
+  - content: label
+    textColor: blue
+    backgroundColor: blue
+  - content: journey
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: LabelIssued
+    version: 1.0.0
+    to:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: LabelVoided
+    version: 1.0.0
+    to:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: PackageScanned
+    version: 1.0.0
+    to:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: PackageHandedOver
+    version: 1.0.0
+    to:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: PackageDelivered
+    version: 1.0.0
+    to:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: PackageExceptionRaised
+    version: 1.0.0
+    to:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: PackageReturned
+    version: 1.0.0
+    to:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: PackageLost
+    version: 1.0.0
+    to:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+receives:
+  - id: VendorShipmentConfirmed
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: LoadDeparted
+    version: 1.0.0
+    from:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: LoadArrived
+    version: 1.0.0
+    from:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: PackageOutForDelivery
+    version: 1.0.0
+    from:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: DeliveryAttempted
+    version: 1.0.0
+    from:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: PackageReturnInitiated
+    version: 1.0.0
+    from:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: CatalogItemCreated
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Issues shipping labels (the only place outside customer-ordering that ever sees a ship-to address) and owns each package's journey: one customer-visible timeline consolidated from vendor handover, load and delivery facts, ending in delivered, returned or lost.
+
+| | |
+|---|---|
+| Bounded context | `shipping-and-tracking` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Generic |
+| Tier | Retail Network, logistics tier |
+| Publishes (Kafka) | `retailnetwork.shipping-and-tracking.events` |
+| Consumes (Kafka) | `shippingAndTrackingEvents`<br/>`vendorConnectivityEvents`<br/>`linehaulEvents`<br/>`lastMileEvents`<br/>`offerAvailabilityEvents` |
+| CloudEvents type prefix | `com.retailnetwork.logistics.shipping-and-tracking.` |
+| Event source | `/retailnetwork/shipping-and-tracking` |
+| Repository | [IQVO/shipping-and-tracking](https://github.com/IQVO/shipping-and-tracking) |
+| REST API | [shipping-and-tracking-api](/docs/services/shipping-and-tracking-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **shipping-and-tracking** bounded context of the retail
+network (logistics tier): it issues shipping labels and owns each package's
+journey, the one customer-visible timeline consolidated from vendor handover,
+load and delivery facts (ADR 0001, ADR 0002).
+
+**Published.** Eight events, all on `retailnetwork.shipping-and-tracking.events`,
+through a **transactional outbox**: the aggregate rows and their already-encoded
+events are written in ONE database transaction and an always-on relay drains
+them to Kafka (at-least-once; the CloudEvents `id` is stored with the outbox row,
+so a retry republishes the same `id`). The eight types are catalogued in ADR 0004.
+Every one is an integration event: the model's analytics-only events
+(LabelVoided, PackageReturned, PackageLost) were promoted by contracts-delta
+E6 and E16, so nothing is published on `retailnetwork.shipping-and-tracking.analytics`.
+No event carries a ship-to address or any part of it (the opaque `stopKey` and the
+postal prefix on LabelIssued are the only derived values; ADR 0002 A9, A10).
+
+**Consumed.** Seven types from four topics (ADR 0003): vendor-connectivity
+VendorShipmentConfirmed, linehaul-transportation LoadDeparted and LoadArrived,
+last-mile-delivery PackageOutForDelivery, DeliveryAttempted and
+PackageReturnInitiated, offer-availability CatalogItemCreated. Each consumer
+group dedupes on the CloudEvents `id` (inbox table `processed_events`),
+dispatches on the full `type`, ignores unknown types and fields, and parks a
+poison message on a dead-letter topic.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`.
+`specversion`, `id`, `source` (`/retailnetwork/shipping-and-tracking`), `type`,
+`subject` (the aggregate root id), `time`, `datacontenttype` (`application/json`)
+and `dataschema` (`urn:retailnetwork:shipping-and-tracking:events:<EventName>:v1`)
+are all required. Kafka key = the subject, so one aggregate's events stay ordered
+on one partition. Type = `com.retailnetwork.logistics.shipping-and-tracking.<entity>.<EventName>`
+with entity `label` or `journey`. A breaking payload change is a new `.v2` type,
+never a mutation.
+
+**Conventions.** `data` is camelCase; timestamps are RFC 3339 UTC; optional fields
+are omitted when unset; arrays are always present.
+
+
+## Architecture diagram
+<NodeGraph />

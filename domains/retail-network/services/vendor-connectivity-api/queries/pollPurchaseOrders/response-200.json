@@ -1,0 +1,209 @@
+{
+  "type": "object",
+  "required": [
+    "purchaseOrders"
+  ],
+  "properties": {
+    "purchaseOrders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "The network's instruction to one vendor node to ship one shipment group in\nfull by `requiredShipBy`. Carries no ship-to PII.\n",
+        "required": [
+          "poNumber",
+          "vendorId",
+          "nodeId",
+          "state",
+          "issuedAt",
+          "requiredShipBy",
+          "ackBy",
+          "lines",
+          "labels",
+          "trackingNumbers"
+        ],
+        "properties": {
+          "poNumber": {
+            "type": "string",
+            "example": "PO-7f3c"
+          },
+          "vendorId": {
+            "type": "string",
+            "example": "V-WS"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ISSUED",
+              "ACK_PROCESSING",
+              "ACCEPTED",
+              "REJECTED",
+              "EXPIRED",
+              "SHIPMENT_PROCESSING",
+              "SHIPPED",
+              "CANCELLED"
+            ]
+          },
+          "issuedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "requiredShipBy": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The pickup cutoff the order must be ready for (the fleet calls it the CPT)."
+          },
+          "ackBy": {
+            "type": "string",
+            "format": "date-time",
+            "description": "min(issuedAt + vendor ackWindow, requiredShipBy - node handlingTime)."
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "lineNo",
+                "listingId",
+                "quantity"
+              ],
+              "properties": {
+                "lineNo": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "listingId": {
+                  "type": "string",
+                  "description": "The network's listing (one catalogue item offered from one node)."
+                },
+                "quantity": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "packaging": {
+                  "type": "array",
+                  "description": "The active packaging levels of the listing's catalogue item, from the network's catalogue (empty when none was declared).",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "level",
+                      "gtin",
+                      "unitsPerPack"
+                    ],
+                    "properties": {
+                      "level": {
+                        "type": "string",
+                        "enum": [
+                          "EACH",
+                          "INNER",
+                          "CASE",
+                          "PALLET"
+                        ]
+                      },
+                      "gtin": {
+                        "type": "string",
+                        "description": "The 14-digit GTIN of the level.",
+                        "example": "10614141000019"
+                      },
+                      "childGtin": {
+                        "type": "string",
+                        "description": "The GTIN of the next lower level; absent for EACH.",
+                        "example": "00614141000036"
+                      },
+                      "unitsPerPack": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Eaches in one unit of this level (1 for EACH).",
+                        "example": 12
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "acknowledgement": {
+            "description": "Absent until the vendor's acknowledgement transaction succeeds.",
+            "allOf": [
+              {
+                "type": "object",
+                "required": [
+                  "decision",
+                  "transactionId"
+                ],
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "ACCEPT",
+                      "REJECT"
+                    ]
+                  },
+                  "reasonCode": {
+                    "type": "string",
+                    "enum": [
+                      "OUT_OF_STOCK",
+                      "UNKNOWN_LISTING",
+                      "CANNOT_MEET_SHIP_BY",
+                      "DISCONTINUED"
+                    ]
+                  },
+                  "transactionId": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "labelRef",
+                "trackingNumber",
+                "carrier"
+              ],
+              "description": "A shipping label reference. Never carries the ship-to address.",
+              "properties": {
+                "packageNo": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "labelRef": {
+                  "type": "string"
+                },
+                "trackingNumber": {
+                  "type": "string"
+                },
+                "carrier": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The labels issued so far; `[]` when none."
+          },
+          "trackingNumbers": {
+            "type": "array",
+            "description": "The tracking numbers confirmed shipped; `[]` until the shipment confirmation succeeds.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "shippedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "nextToken": {
+      "type": "string",
+      "description": "Absent on the last page."
+    }
+  },
+  "isSchema": true
+}

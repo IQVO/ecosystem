@@ -1,0 +1,359 @@
+{
+  "type": "object",
+  "required": [
+    "nodeId",
+    "nodeType",
+    "operator",
+    "regionId",
+    "timezone",
+    "location",
+    "capabilities",
+    "status"
+  ],
+  "properties": {
+    "nodeId": {
+      "type": "string"
+    },
+    "nodeType": {
+      "type": "string",
+      "enum": [
+        "FULFILLMENT_CENTER",
+        "INBOUND_CROSS_DOCK",
+        "RETURNS_CENTER",
+        "SORTATION_CENTER",
+        "DELIVERY_STATION",
+        "AIR_HUB"
+      ]
+    },
+    "subtype": {
+      "type": "string",
+      "description": "Only for FULFILLMENT_CENTER.",
+      "enum": [
+        "SORTABLE",
+        "NON_SORTABLE",
+        "XL",
+        "SOFT_LINES",
+        "SUB_SAME_DAY",
+        "FRESH",
+        "MICRO"
+      ]
+    },
+    "operator": {
+      "type": "string",
+      "enum": [
+        "NETWORK",
+        "VENDOR"
+      ]
+    },
+    "vendorRef": {
+      "type": "object",
+      "required": [
+        "vendorId",
+        "vendorNodeCode"
+      ],
+      "properties": {
+        "vendorId": {
+          "type": "string"
+        },
+        "vendorNodeCode": {
+          "type": "string",
+          "description": "The vendor's own code for the node, unique per vendor."
+        }
+      }
+    },
+    "regionId": {
+      "type": "string"
+    },
+    "timezone": {
+      "type": "string"
+    },
+    "location": {
+      "type": "object",
+      "required": [
+        "postalCode",
+        "countryCode"
+      ],
+      "properties": {
+        "postalCode": {
+          "type": "string"
+        },
+        "countryCode": {
+          "type": "string",
+          "description": "ISO 3166-1 alpha-2.",
+          "example": "BR"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "Derived from the node type (DefaultCapabilitiesByType), never set by a caller.",
+      "properties": {
+        "outbound": {
+          "type": "boolean"
+        },
+        "inbound": {
+          "type": "boolean"
+        },
+        "returns": {
+          "type": "boolean"
+        },
+        "sort": {
+          "type": "boolean"
+        },
+        "lastMile": {
+          "type": "boolean"
+        },
+        "air": {
+          "type": "boolean"
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PROPOSED",
+        "ACTIVE",
+        "SUSPENDED",
+        "RETIRED"
+      ]
+    },
+    "operationalProfile": {
+      "allOf": [
+        {
+          "type": "object",
+          "required": [
+            "profileRevision",
+            "timezone",
+            "operatingHoursByDay",
+            "handlingTimeMinutes",
+            "cutoffs",
+            "throughputCap",
+            "declaredBy"
+          ],
+          "properties": {
+            "profileRevision": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Must be strictly greater than the node's current revision."
+            },
+            "timezone": {
+              "type": "string",
+              "example": "America/Sao_Paulo"
+            },
+            "operatingHoursByDay": {
+              "type": "object",
+              "description": "Per day of week, the local opening hours. A missing day is closed.",
+              "properties": {
+                "monday": {
+                  "type": "object",
+                  "required": [
+                    "start",
+                    "end"
+                  ],
+                  "properties": {
+                    "start": {
+                      "type": "string",
+                      "description": "Local opening time, HH:mm.",
+                      "example": "06:00"
+                    },
+                    "end": {
+                      "type": "string",
+                      "description": "Local closing time, HH:mm.",
+                      "example": "22:00"
+                    }
+                  }
+                },
+                "tuesday": "[Circular]",
+                "wednesday": "[Circular]",
+                "thursday": "[Circular]",
+                "friday": "[Circular]",
+                "saturday": "[Circular]",
+                "sunday": "[Circular]"
+              }
+            },
+            "holidays": {
+              "type": "array",
+              "description": "ISO dates on which the node is closed all day.",
+              "items": {
+                "type": "string",
+                "format": "date"
+              }
+            },
+            "handlingTimeMinutes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cutoffs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "localTime"
+                ],
+                "properties": {
+                  "localTime": {
+                    "type": "string",
+                    "description": "Local time, HH:mm, inside the operating hours of every day of the cutoff.",
+                    "example": "18:00"
+                  },
+                  "days": {
+                    "type": "array",
+                    "description": "The weekdays the cutoff applies to. Default, when absent, is every operating day.",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "monday",
+                        "tuesday",
+                        "wednesday",
+                        "thursday",
+                        "friday",
+                        "saturday",
+                        "sunday"
+                      ]
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  },
+                  "maxOrders": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            },
+            "throughputCap": {
+              "type": "object",
+              "required": [
+                "value",
+                "timeUnit",
+                "unit"
+              ],
+              "properties": {
+                "value": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "timeUnit": {
+                  "type": "string",
+                  "description": "The time unit of the cap.",
+                  "enum": [
+                    "HOUR",
+                    "DAY"
+                  ],
+                  "example": "HOUR"
+                },
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "ORDER"
+                  ]
+                }
+              }
+            },
+            "sortDwellMinutes": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Declared only by SORTATION_CENTER and AIR_HUB nodes."
+            },
+            "inbound": {
+              "type": "object",
+              "description": "What the node declares about the inbound goods it receives. Every field is optional and an absent field means \"not declared\", which a consumer treats as unchecked; at least one field is set. Weight is in grams and dimensions in millimetres, both integers.",
+              "minProperties": 1,
+              "additionalProperties": false,
+              "properties": {
+                "maxCartonWeightG": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2147483647,
+                  "description": "The heaviest carton the node accepts, in grams.",
+                  "example": 25000
+                },
+                "maxCartonDimsMm": {
+                  "type": "object",
+                  "description": "The largest carton a node accepts, in millimetres. The three edges are declared together.",
+                  "required": [
+                    "l",
+                    "w",
+                    "h"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "l": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647,
+                      "example": 600
+                    },
+                    "w": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647,
+                      "example": 400
+                    },
+                    "h": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647,
+                      "example": 300
+                    }
+                  }
+                },
+                "acceptsPallets": {
+                  "type": "boolean",
+                  "description": "Whether the node receives pallets.",
+                  "example": true
+                },
+                "requiresSscc": {
+                  "type": "boolean",
+                  "description": "Whether every inbound carton must carry an SSCC.",
+                  "example": false
+                }
+              }
+            },
+            "declaredBy": {
+              "type": "string",
+              "enum": [
+                "VENDOR",
+                "NETWORK_OPS"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "declaredAt"
+          ],
+          "properties": {
+            "declaredAt": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      ]
+    },
+    "activatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "suspendedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "suspendReason": {
+      "type": "string"
+    },
+    "retiredAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "isSchema": true
+}

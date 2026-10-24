@@ -28,13 +28,19 @@ export function escapeMdx(text = '') {
     return `__CODE_${kept.length - 1}__`;
   });
   return masked
-    .replace(/{/g, '\\{')
+    .replace(/\{/g, '\\{')
     .replace(/}/g, '\\}')
-    .replace(/</g, '\\<')
+    .replace(/</g, '&lt;')
     .replace(/__CODE_(\d+)__/g, (_, i) => kept[Number(i)]);
 }
 
 const table = (rows) => rows.map(([k, v]) => `| ${k} | ${v} |`).join('\n');
+
+// CloudEvents naming per organization: warehouse types are
+// com.warehouse.<subdomain>.<ctx>…, retail-network types are
+// com.retailnetwork.<tier>.<ctx>… (the tier is the type segment, not the domain).
+const ceOrg = (c) => SUBDOMAINS[c.subdomain]?.typeOrg ?? 'warehouse';
+const ceSegment = (c) => c.ceSegment ?? c.subdomain;
 
 const consumedTopics = (ctx, document) => {
   const own = new Set(CONTEXTS[ctx].topics);
@@ -49,7 +55,7 @@ export function domainMarkdown(id) {
   return `## Overview
 ${sd.description}
 
-CloudEvents types in this domain follow \`com.warehouse.${id}.<bounded-context>.<entity>.<EventName>\`.
+CloudEvents types in this domain follow \`${sd.typePattern ?? `com.warehouse.${id}.<bounded-context>.<entity>.<EventName>`}\`.
 Each bounded context below is documented twice: as an **events** service (the Kafka contract, from its
 AsyncAPI file) and as a **REST API** service (\`<context>-api\`, from its OpenAPI files, including the
 separate \`*-reports\` analytics binary where one exists).
@@ -80,8 +86,8 @@ ${table([
   ['Tier', c.tier],
   ['Publishes (Kafka)', c.topics.map(code).join('<br/>')],
   ['Consumes (Kafka)', consumed.length ? consumed.map(code).join('<br/>') : 'nothing: this context is a pure publisher'],
-  ['CloudEvents type prefix', code(`com.warehouse.${c.subdomain}.${ctx}.`)],
-  ['Event source', code(`/warehouse/${ctx}`)],
+  ['CloudEvents type prefix', code(`com.${ceOrg(c)}.${ceSegment(c)}.${ctx}.`)],
+  ['Event source', code(`/${ceOrg(c)}/${ctx}`)],
   ['Repository', `[IQVO/${ctx}](${REPO(ctx)})`],
   ['REST API', `[${ctx}-api](/docs/services/${ctx}-api)`],
 ])}
@@ -118,7 +124,9 @@ ${markdown}`;
 }
 
 export function messageMarkdown({ message, markdown }) {
-  const description = message.hasDescription() ? escapeMdx(message.description()) : '';
+  // Description arrives pre-escaped from scripts/prepare-specs.mjs (step 7);
+  // escaping here again would double the backslashes.
+  const description = message.hasDescription() ? message.description() : '';
   const example = message.examples().all()[0];
   const payload = example?.payload?.();
   const type = payload?.type;
@@ -128,8 +136,11 @@ export function messageMarkdown({ message, markdown }) {
   const tags = (message.tags().all() || []).map((t) => t.name());
   // The notice states a fact about the type's INTEGRATION publication: only
   // the `.events` channel page carries it. The `.analytics` mirror has its own
-  // consumer (the context's projector) and must not show it.
-  const noConsumer = channelIds.some((id) => id.endsWith('.events')) ? noConsumerReasonFor(type) : undefined;
+  // consumer (the context's projector) and must not show it. AsyncAPI 3 channel
+  // ids are friendly keys — fall back to the channel address for the suffix test.
+  const chans = message.channels().all();
+  const onEventsChannel = chans.some((ch) => ch.id().endsWith('.events') || String(ch.address?.() ?? '').endsWith('.events'));
+  const noConsumer = onEventsChannel ? noConsumerReasonFor(type) : undefined;
   const rows = [
     type && ['CloudEvents `type`', code(type)],
     payload?.source && ['CloudEvents `source`', code(payload.source)],

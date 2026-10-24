@@ -1,0 +1,72 @@
+---
+id: customer-ordering-api-cancelOrder
+version: 0.1.0
+name: cancelOrder
+summary: Request the cancellation of every group that is not yet locked
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Orders'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/orders/{orderId}:cancel'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+CancelOrder is a request (G12, G25). Every group still PROMISED (no node locked yet) moves to CANCELLATION_REQUESTED and CustomerOrderCancelled is published through the outbox with those groupNos; locked, shipped and delivered groups are untouched. order-sourcing decides: FulfillmentCancelled makes the group CANCELLED (the order is CANCELLED once every group is), FulfillmentCancelRefused returns the group to fulfilment (the vendor ships; the shopper path becomes a return). Refused with 409 cancel-after-lock (ErrCancelAfterLock) when no group is unlocked. Repeating the request, or cancelling a CANCELLED order, returns the order unchanged and publishes nothing.
+
+
+
+
+## POST `(/orders/{orderId}:cancel)`
+
+### Parameters
+- **orderId** (path) (required): The customer order id (aggregate root id, CloudEvents subject).
+- **Idempotency-Key** (header) (required): Client-chosen key (route, key; 24 hour TTL); a replay with the same body returns the stored response.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+The customer order without the ship-to address.
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+
+
+## Architecture
+
+<NodeGraph />

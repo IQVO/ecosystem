@@ -1423,6 +1423,20 @@ channels:
                             maxVolumeM3:
                               type: number
                               x-parser-schema-id: <anonymous-schema-94>
+                            handlingUnit:
+                              type: string
+                              enum:
+                                - EACH
+                                - CASE
+                                - PALLET
+                              description: >
+                                OPTIONAL (ADR-0040). The unit of handling the
+                                slot accepts. Omitted when none was recorded at
+                                registration (every slot registered before the
+                                field existed); a later value arrives as
+                                `LocationSlotHandlingUnitDeclared`.
+                              example: CASE
+                              x-parser-schema-id: <anonymous-schema-95>
                           x-parser-schema-id: <anonymous-schema-84>
                       x-parser-schema-id: <anonymous-schema-83>
                   x-parser-schema-id: <anonymous-schema-80>
@@ -1516,11 +1530,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
-                      x-parser-schema-id: <anonymous-schema-97>
+                      x-parser-schema-id: <anonymous-schema-98>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
-                      x-parser-schema-id: <anonymous-schema-98>
+                      x-parser-schema-id: <anonymous-schema-99>
                     data:
                       allOf:
                         - type: object
@@ -1553,11 +1567,11 @@ channels:
                           properties:
                             locationCode:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-101>
-                          x-parser-schema-id: <anonymous-schema-100>
-                      x-parser-schema-id: <anonymous-schema-99>
-                  x-parser-schema-id: <anonymous-schema-96>
-              x-parser-schema-id: <anonymous-schema-95>
+                              x-parser-schema-id: <anonymous-schema-102>
+                          x-parser-schema-id: <anonymous-schema-101>
+                      x-parser-schema-id: <anonymous-schema-100>
+                  x-parser-schema-id: <anonymous-schema-97>
+              x-parser-schema-id: <anonymous-schema-96>
             messageId: LocationSlotDecommissioned
           - name: FacilityLayoutImported
             contentType: application/cloudevents+json
@@ -1650,11 +1664,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.FacilityLayoutImported
-                      x-parser-schema-id: <anonymous-schema-104>
+                      x-parser-schema-id: <anonymous-schema-105>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:FacilityLayoutImported:v1
-                      x-parser-schema-id: <anonymous-schema-105>
+                      x-parser-schema-id: <anonymous-schema-106>
                     data:
                       allOf:
                         - type: object
@@ -1689,18 +1703,175 @@ channels:
                           properties:
                             rowsSubmitted:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-108>
+                              x-parser-schema-id: <anonymous-schema-109>
                             slotsImported:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-109>
+                              x-parser-schema-id: <anonymous-schema-110>
                             rowsRejected:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-110>
-                          x-parser-schema-id: <anonymous-schema-107>
-                      x-parser-schema-id: <anonymous-schema-106>
-                  x-parser-schema-id: <anonymous-schema-103>
-              x-parser-schema-id: <anonymous-schema-102>
+                              x-parser-schema-id: <anonymous-schema-111>
+                          x-parser-schema-id: <anonymous-schema-108>
+                      x-parser-schema-id: <anonymous-schema-107>
+                  x-parser-schema-id: <anonymous-schema-104>
+              x-parser-schema-id: <anonymous-schema-103>
             messageId: FacilityLayoutImported
+          - name: LocationSlotHandlingUnitDeclared
+            contentType: application/cloudevents+json
+            title: Location slot handling unit declared
+            tags:
+              - name: locationslot
+            summary: A slot's handling unit (EACH, CASE or PALLET) was set or changed.
+            description: >
+              Raised by `DeclareLocationHandlingUnit` (ADR-0040), i.e. `PUT
+              /locations/{locationCode}/handling-unit`. The slot is identified
+              by `locationCode`, exactly as in `LocationSlotRegistered`.
+              CloudEvents `subject` and Kafka key: `locationCode` (same
+              partition as that location's `LocationSlotRegistered`). **Consumed
+              live** by inventory-storage's facility cache, which uses the
+              handling unit to decide whether a sealed case may be stowed in the
+              bin. Last write wins per `locationCode` (same partition, so
+              ordered).
+            payload:
+              allOf:
+                - type: object
+                  description: >
+                    CloudEvents 1.0 structured-mode envelope (ADR-0024). Every
+                    attribute below is REQUIRED in this fleet. `data` carries
+                    the domain event's own JSON verbatim.
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  additionalProperties: false
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-2>
+                    id:
+                      type: string
+                      format: uuid
+                      description: >
+                        Minted once per domain event and persisted with the
+                        outbox row, so a redelivery carries the same id.
+                        `(source, id)` is the consumer idempotency key.
+                      x-parser-schema-id: <anonymous-schema-3>
+                    source:
+                      type: string
+                      format: uri-reference
+                      const: /warehouse/facility-layout
+                      x-parser-schema-id: <anonymous-schema-4>
+                    type:
+                      type: string
+                      description: >
+                        `com.warehouse.wms.facility-layout.<entity>.<EventName>`.
+                        Consumers dispatch on the full string.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    subject:
+                      type: string
+                      minLength: 1
+                      description: Id of the aggregate instance the event is about.
+                      x-parser-schema-id: <anonymous-schema-6>
+                    time:
+                      type: string
+                      format: date-time
+                      description: >-
+                        When the domain fact occurred (not when it was
+                        published), UTC.
+                      x-parser-schema-id: <anonymous-schema-7>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-8>
+                    dataschema:
+                      type: string
+                      format: uri
+                      description: >
+                        `urn:warehouse:facility-layout:events:<EventName>:v<N>`
+                        on this channel (`...:analytics:...` on
+                        warehouse.facility.analytics).
+                      x-parser-schema-id: <anonymous-schema-9>
+                    data:
+                      type: object
+                      description: The domain event's own JSON payload.
+                      x-parser-schema-id: <anonymous-schema-10>
+                  x-parser-schema-id: cloudEvent
+                - type: object
+                  properties:
+                    type:
+                      const: >-
+                        com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared
+                      x-parser-schema-id: <anonymous-schema-114>
+                    dataschema:
+                      const: >-
+                        urn:warehouse:facility-layout:events:LocationSlotHandlingUnitDeclared:v1
+                      x-parser-schema-id: <anonymous-schema-115>
+                    data:
+                      allOf:
+                        - type: object
+                          description: >
+                            Fields present in every event's `data` payload — the
+                            domain event base struct's own serialization.
+                          required:
+                            - eventName
+                            - eventType
+                            - occurredAt
+                          properties:
+                            eventName:
+                              type: string
+                              description: The bare PascalCase event name.
+                              x-parser-schema-id: <anonymous-schema-15>
+                            eventType:
+                              type: string
+                              description: >-
+                                Same reverse-DNS type as the CloudEvents `type`
+                                attribute.
+                              x-parser-schema-id: <anonymous-schema-16>
+                            occurredAt:
+                              type: string
+                              format: date-time
+                              x-parser-schema-id: <anonymous-schema-17>
+                          x-parser-schema-id: eventDataBase
+                        - type: object
+                          required:
+                            - locationCode
+                            - handlingUnit
+                            - declaredAt
+                          properties:
+                            locationCode:
+                              type: string
+                              description: >
+                                The full coded location, e.g.
+                                `WH1-STOR-AMB-A07-03-02-B`.
+                              example: WH1-STOR-AMB-A07-03-02-B
+                              x-parser-schema-id: <anonymous-schema-118>
+                            handlingUnit:
+                              type: string
+                              enum:
+                                - EACH
+                                - CASE
+                                - PALLET
+                              example: CASE
+                              x-parser-schema-id: <anonymous-schema-119>
+                            declaredAt:
+                              type: string
+                              format: date-time
+                              description: >-
+                                When the unit was declared (equals
+                                `occurredAt`).
+                              example: '2026-10-24T12:00:00Z'
+                              x-parser-schema-id: <anonymous-schema-120>
+                          x-parser-schema-id: <anonymous-schema-117>
+                      x-parser-schema-id: <anonymous-schema-116>
+                  x-parser-schema-id: <anonymous-schema-113>
+              x-parser-schema-id: <anonymous-schema-112>
+            messageId: LocationSlotHandlingUnitDeclared
           - name: LocationGeometryUpdated
             contentType: application/cloudevents+json
             title: Location geometry updated
@@ -1787,11 +1958,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.LocationGeometryUpdated
-                      x-parser-schema-id: <anonymous-schema-113>
+                      x-parser-schema-id: <anonymous-schema-123>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:LocationGeometryUpdated:v1
-                      x-parser-schema-id: <anonymous-schema-114>
+                      x-parser-schema-id: <anonymous-schema-124>
                     data:
                       allOf:
                         - type: object
@@ -1833,44 +2004,44 @@ channels:
                               description: >
                                 The full coded location, e.g.
                                 `WH1-STOR-AMB-A07-03-02-B`.
-                              x-parser-schema-id: <anonymous-schema-117>
+                              x-parser-schema-id: <anonymous-schema-127>
                             xM:
                               type: number
                               description: >-
                                 Position in the site's local coordinate frame,
                                 in metres.
-                              x-parser-schema-id: <anonymous-schema-118>
+                              x-parser-schema-id: <anonymous-schema-128>
                             yM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-119>
+                              x-parser-schema-id: <anonymous-schema-129>
                             zM:
                               type: number
                               description: >-
                                 Height above floor level, in metres. Never
                                 negative.
-                              x-parser-schema-id: <anonymous-schema-120>
+                              x-parser-schema-id: <anonymous-schema-130>
                             widthM:
                               type: number
                               description: >-
                                 Footprint extent, in metres. Always strictly
                                 positive.
-                              x-parser-schema-id: <anonymous-schema-121>
+                              x-parser-schema-id: <anonymous-schema-131>
                             depthM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-122>
+                              x-parser-schema-id: <anonymous-schema-132>
                             heightM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-123>
+                              x-parser-schema-id: <anonymous-schema-133>
                             pickSequence:
                               type: integer
                               description: >
                                 Optional explicit pick-path override for this
                                 slot. Absent when no override was given.
-                              x-parser-schema-id: <anonymous-schema-124>
-                          x-parser-schema-id: <anonymous-schema-116>
-                      x-parser-schema-id: <anonymous-schema-115>
-                  x-parser-schema-id: <anonymous-schema-112>
-              x-parser-schema-id: <anonymous-schema-111>
+                              x-parser-schema-id: <anonymous-schema-134>
+                          x-parser-schema-id: <anonymous-schema-126>
+                      x-parser-schema-id: <anonymous-schema-125>
+                  x-parser-schema-id: <anonymous-schema-122>
+              x-parser-schema-id: <anonymous-schema-121>
             messageId: LocationGeometryUpdated
           - name: AisleGeometryUpdated
             contentType: application/cloudevents+json
@@ -1959,11 +2130,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.aisle.AisleGeometryUpdated
-                      x-parser-schema-id: <anonymous-schema-127>
+                      x-parser-schema-id: <anonymous-schema-137>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:AisleGeometryUpdated:v1
-                      x-parser-schema-id: <anonymous-schema-128>
+                      x-parser-schema-id: <anonymous-schema-138>
                     data:
                       allOf:
                         - type: object
@@ -2004,35 +2175,35 @@ channels:
                             aisleId:
                               type: string
                               example: WH1-STOR-AMB-A07
-                              x-parser-schema-id: <anonymous-schema-131>
+                              x-parser-schema-id: <anonymous-schema-141>
                             startXM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-132>
+                              x-parser-schema-id: <anonymous-schema-142>
                             startYM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-133>
+                              x-parser-schema-id: <anonymous-schema-143>
                             startZM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-134>
+                              x-parser-schema-id: <anonymous-schema-144>
                             endXM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-135>
+                              x-parser-schema-id: <anonymous-schema-145>
                             endYM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-136>
+                              x-parser-schema-id: <anonymous-schema-146>
                             endZM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-137>
+                              x-parser-schema-id: <anonymous-schema-147>
                             lengthM:
                               type: number
                               description: >-
                                 The centreline's straight-line length, in
                                 metres.
-                              x-parser-schema-id: <anonymous-schema-138>
-                          x-parser-schema-id: <anonymous-schema-130>
-                      x-parser-schema-id: <anonymous-schema-129>
-                  x-parser-schema-id: <anonymous-schema-126>
-              x-parser-schema-id: <anonymous-schema-125>
+                              x-parser-schema-id: <anonymous-schema-148>
+                          x-parser-schema-id: <anonymous-schema-140>
+                      x-parser-schema-id: <anonymous-schema-139>
+                  x-parser-schema-id: <anonymous-schema-136>
+              x-parser-schema-id: <anonymous-schema-135>
             messageId: AisleGeometryUpdated
           - name: FixedStructureRegistered
             contentType: application/cloudevents+json
@@ -2121,11 +2292,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.structure.FixedStructureRegistered
-                      x-parser-schema-id: <anonymous-schema-141>
+                      x-parser-schema-id: <anonymous-schema-151>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:FixedStructureRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-142>
+                      x-parser-schema-id: <anonymous-schema-152>
                     data:
                       allOf:
                         - type: object
@@ -2168,44 +2339,44 @@ channels:
                             structureId:
                               type: string
                               example: STR-1
-                              x-parser-schema-id: <anonymous-schema-145>
+                              x-parser-schema-id: <anonymous-schema-155>
                             siteCode:
                               type: string
                               example: WH1
-                              x-parser-schema-id: <anonymous-schema-146>
+                              x-parser-schema-id: <anonymous-schema-156>
                             kind:
                               type: string
                               description: Wall, Column, Office, Conveyor, or Other.
-                              x-parser-schema-id: <anonymous-schema-147>
+                              x-parser-schema-id: <anonymous-schema-157>
                             xM:
                               type: number
                               description: >-
                                 Footprint origin, in the site's local coordinate
                                 frame, in metres.
-                              x-parser-schema-id: <anonymous-schema-148>
+                              x-parser-schema-id: <anonymous-schema-158>
                             yM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-149>
+                              x-parser-schema-id: <anonymous-schema-159>
                             zM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-150>
+                              x-parser-schema-id: <anonymous-schema-160>
                             widthM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-151>
+                              x-parser-schema-id: <anonymous-schema-161>
                             depthM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-152>
+                              x-parser-schema-id: <anonymous-schema-162>
                             heightM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-153>
+                              x-parser-schema-id: <anonymous-schema-163>
                             label:
                               type: string
                               example: North wall
-                              x-parser-schema-id: <anonymous-schema-154>
-                          x-parser-schema-id: <anonymous-schema-144>
-                      x-parser-schema-id: <anonymous-schema-143>
-                  x-parser-schema-id: <anonymous-schema-140>
-              x-parser-schema-id: <anonymous-schema-139>
+                              x-parser-schema-id: <anonymous-schema-164>
+                          x-parser-schema-id: <anonymous-schema-154>
+                      x-parser-schema-id: <anonymous-schema-153>
+                  x-parser-schema-id: <anonymous-schema-150>
+              x-parser-schema-id: <anonymous-schema-149>
             messageId: FixedStructureRegistered
           - name: CrossAisleRegistered
             contentType: application/cloudevents+json
@@ -2296,11 +2467,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.crossaisle.CrossAisleRegistered
-                      x-parser-schema-id: <anonymous-schema-157>
+                      x-parser-schema-id: <anonymous-schema-167>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:CrossAisleRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-158>
+                      x-parser-schema-id: <anonymous-schema-168>
                     data:
                       allOf:
                         - type: object
@@ -2337,23 +2508,23 @@ channels:
                             zoneId:
                               type: string
                               example: WH1-STOR-AMB
-                              x-parser-schema-id: <anonymous-schema-161>
+                              x-parser-schema-id: <anonymous-schema-171>
                             fromAisle:
                               type: string
                               example: A07
-                              x-parser-schema-id: <anonymous-schema-162>
+                              x-parser-schema-id: <anonymous-schema-172>
                             toAisle:
                               type: string
                               example: A08
-                              x-parser-schema-id: <anonymous-schema-163>
+                              x-parser-schema-id: <anonymous-schema-173>
                             atBay:
                               type: string
                               example: '02'
-                              x-parser-schema-id: <anonymous-schema-164>
-                          x-parser-schema-id: <anonymous-schema-160>
-                      x-parser-schema-id: <anonymous-schema-159>
-                  x-parser-schema-id: <anonymous-schema-156>
-              x-parser-schema-id: <anonymous-schema-155>
+                              x-parser-schema-id: <anonymous-schema-174>
+                          x-parser-schema-id: <anonymous-schema-170>
+                      x-parser-schema-id: <anonymous-schema-169>
+                  x-parser-schema-id: <anonymous-schema-166>
+              x-parser-schema-id: <anonymous-schema-165>
             messageId: CrossAisleRegistered
   warehouse.facility.analytics:
     description: >
@@ -2469,10 +2640,10 @@ channels:
                   properties:
                     type:
                       const: com.warehouse.wms.facility-layout.site.SiteRegistered
-                      x-parser-schema-id: <anonymous-schema-167>
+                      x-parser-schema-id: <anonymous-schema-177>
                     dataschema:
                       const: urn:warehouse:facility-layout:events:SiteRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-168>
+                      x-parser-schema-id: <anonymous-schema-178>
                     data:
                       allOf:
                         - type: object
@@ -2507,10 +2678,10 @@ channels:
                             siteCode:
                               type: string
                               description: Uppercase alphanumeric, unique. e.g. `WH1`.
-                              x-parser-schema-id: <anonymous-schema-171>
+                              x-parser-schema-id: <anonymous-schema-181>
                             siteName:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-172>
+                              x-parser-schema-id: <anonymous-schema-182>
                             siteRole:
                               type: string
                               description: >
@@ -2535,10 +2706,10 @@ channels:
                                 - DELIVERY_STATION
                                 - AIR_HUB_GATEWAY
                               x-parser-schema-id: siteRole
-                          x-parser-schema-id: <anonymous-schema-170>
-                      x-parser-schema-id: <anonymous-schema-169>
-                  x-parser-schema-id: <anonymous-schema-166>
-              x-parser-schema-id: <anonymous-schema-165>
+                          x-parser-schema-id: <anonymous-schema-180>
+                      x-parser-schema-id: <anonymous-schema-179>
+                  x-parser-schema-id: <anonymous-schema-176>
+              x-parser-schema-id: <anonymous-schema-175>
             messageId: SiteRegisteredAnalytics
           - name: ZoneRegistered
             contentType: application/cloudevents+json
@@ -2626,10 +2797,10 @@ channels:
                   properties:
                     type:
                       const: com.warehouse.wms.facility-layout.zone.ZoneRegistered
-                      x-parser-schema-id: <anonymous-schema-175>
+                      x-parser-schema-id: <anonymous-schema-185>
                     dataschema:
                       const: urn:warehouse:facility-layout:events:ZoneRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-176>
+                      x-parser-schema-id: <anonymous-schema-186>
                     data:
                       allOf:
                         - type: object
@@ -2667,16 +2838,16 @@ channels:
                           properties:
                             zoneId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-179>
+                              x-parser-schema-id: <anonymous-schema-189>
                             siteCode:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-180>
+                              x-parser-schema-id: <anonymous-schema-190>
                             areaCode:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-181>
+                              x-parser-schema-id: <anonymous-schema-191>
                             zoneCode:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-182>
+                              x-parser-schema-id: <anonymous-schema-192>
                             temperatureClass:
                               type: string
                               enum:
@@ -2687,11 +2858,11 @@ channels:
                               x-parser-schema-id: temperatureClass
                             hazmat:
                               type: boolean
-                              x-parser-schema-id: <anonymous-schema-183>
-                          x-parser-schema-id: <anonymous-schema-178>
-                      x-parser-schema-id: <anonymous-schema-177>
-                  x-parser-schema-id: <anonymous-schema-174>
-              x-parser-schema-id: <anonymous-schema-173>
+                              x-parser-schema-id: <anonymous-schema-193>
+                          x-parser-schema-id: <anonymous-schema-188>
+                      x-parser-schema-id: <anonymous-schema-187>
+                  x-parser-schema-id: <anonymous-schema-184>
+              x-parser-schema-id: <anonymous-schema-183>
             messageId: ZoneRegisteredAnalytics
           - name: AisleRegistered
             contentType: application/cloudevents+json
@@ -2777,10 +2948,10 @@ channels:
                   properties:
                     type:
                       const: com.warehouse.wms.facility-layout.aisle.AisleRegistered
-                      x-parser-schema-id: <anonymous-schema-186>
+                      x-parser-schema-id: <anonymous-schema-196>
                     dataschema:
                       const: urn:warehouse:facility-layout:events:AisleRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-187>
+                      x-parser-schema-id: <anonymous-schema-197>
                     data:
                       allOf:
                         - type: object
@@ -2817,17 +2988,17 @@ channels:
                           properties:
                             aisleId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-190>
+                              x-parser-schema-id: <anonymous-schema-200>
                             zoneId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-191>
+                              x-parser-schema-id: <anonymous-schema-201>
                             aisleCode:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-192>
+                              x-parser-schema-id: <anonymous-schema-202>
                             sequenceHint:
                               type: integer
                               description: Walk-order position within the zone.
-                              x-parser-schema-id: <anonymous-schema-193>
+                              x-parser-schema-id: <anonymous-schema-203>
                             direction:
                               type: string
                               enum:
@@ -2835,10 +3006,10 @@ channels:
                                 - TwoWay
                               description: How an aisle may be traversed.
                               x-parser-schema-id: direction
-                          x-parser-schema-id: <anonymous-schema-189>
-                      x-parser-schema-id: <anonymous-schema-188>
-                  x-parser-schema-id: <anonymous-schema-185>
-              x-parser-schema-id: <anonymous-schema-184>
+                          x-parser-schema-id: <anonymous-schema-199>
+                      x-parser-schema-id: <anonymous-schema-198>
+                  x-parser-schema-id: <anonymous-schema-195>
+              x-parser-schema-id: <anonymous-schema-194>
             messageId: AisleRegisteredAnalytics
           - name: LocationTypeRegistered
             contentType: application/cloudevents+json
@@ -2925,11 +3096,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationtype.LocationTypeRegistered
-                      x-parser-schema-id: <anonymous-schema-196>
+                      x-parser-schema-id: <anonymous-schema-206>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:LocationTypeRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-197>
+                      x-parser-schema-id: <anonymous-schema-207>
                     data:
                       allOf:
                         - type: object
@@ -2965,7 +3136,7 @@ channels:
                             locationType:
                               type: string
                               description: e.g. `PalletRack`, `ShelfBin`.
-                              x-parser-schema-id: <anonymous-schema-200>
+                              x-parser-schema-id: <anonymous-schema-210>
                             role:
                               type: string
                               description: >
@@ -2975,20 +3146,20 @@ channels:
                                 absent on events emitted before this field
                                 existed, which consumers should treat as
                                 `Storage`.
-                              x-parser-schema-id: <anonymous-schema-201>
+                              x-parser-schema-id: <anonymous-schema-211>
                             maxWeightKg:
                               type: number
                               description: >
                                 0/absent for a role that does not require
                                 capacity (Dock, Yard, WorkCenter, QC, Shipping).
-                              x-parser-schema-id: <anonymous-schema-202>
+                              x-parser-schema-id: <anonymous-schema-212>
                             maxVolumeM3:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-203>
-                          x-parser-schema-id: <anonymous-schema-199>
-                      x-parser-schema-id: <anonymous-schema-198>
-                  x-parser-schema-id: <anonymous-schema-195>
-              x-parser-schema-id: <anonymous-schema-194>
+                              x-parser-schema-id: <anonymous-schema-213>
+                          x-parser-schema-id: <anonymous-schema-209>
+                      x-parser-schema-id: <anonymous-schema-208>
+                  x-parser-schema-id: <anonymous-schema-205>
+              x-parser-schema-id: <anonymous-schema-204>
             messageId: LocationTypeRegisteredAnalytics
           - name: PlacementRuleDefined
             contentType: application/cloudevents+json
@@ -3077,11 +3248,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.placementrule.PlacementRuleDefined
-                      x-parser-schema-id: <anonymous-schema-206>
+                      x-parser-schema-id: <anonymous-schema-216>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:PlacementRuleDefined:v1
-                      x-parser-schema-id: <anonymous-schema-207>
+                      x-parser-schema-id: <anonymous-schema-217>
                     data:
                       allOf:
                         - type: object
@@ -3117,22 +3288,22 @@ channels:
                           properties:
                             ruleId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-210>
+                              x-parser-schema-id: <anonymous-schema-220>
                             locationType:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-211>
+                              x-parser-schema-id: <anonymous-schema-221>
                             effect:
                               type: string
                               description: Allow or deny.
-                              x-parser-schema-id: <anonymous-schema-212>
+                              x-parser-schema-id: <anonymous-schema-222>
                             predicate:
                               type: string
                               description: The zone-matching predicate expression.
-                              x-parser-schema-id: <anonymous-schema-213>
-                          x-parser-schema-id: <anonymous-schema-209>
-                      x-parser-schema-id: <anonymous-schema-208>
-                  x-parser-schema-id: <anonymous-schema-205>
-              x-parser-schema-id: <anonymous-schema-204>
+                              x-parser-schema-id: <anonymous-schema-223>
+                          x-parser-schema-id: <anonymous-schema-219>
+                      x-parser-schema-id: <anonymous-schema-218>
+                  x-parser-schema-id: <anonymous-schema-215>
+              x-parser-schema-id: <anonymous-schema-214>
             messageId: PlacementRuleDefinedAnalytics
           - name: LocationSlotRegistered
             contentType: application/cloudevents+json
@@ -3221,11 +3392,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered
-                      x-parser-schema-id: <anonymous-schema-216>
+                      x-parser-schema-id: <anonymous-schema-226>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:LocationSlotRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-217>
+                      x-parser-schema-id: <anonymous-schema-227>
                     data:
                       allOf:
                         - type: object
@@ -3266,16 +3437,16 @@ channels:
                               description: >
                                 The full coded location, e.g.
                                 `WH1-STOR-AMB-A07-03-02-B`.
-                              x-parser-schema-id: <anonymous-schema-220>
+                              x-parser-schema-id: <anonymous-schema-230>
                             aisleId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-221>
+                              x-parser-schema-id: <anonymous-schema-231>
                             zoneId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-222>
+                              x-parser-schema-id: <anonymous-schema-232>
                             locationType:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-223>
+                              x-parser-schema-id: <anonymous-schema-233>
                             role:
                               type: string
                               description: >
@@ -3283,36 +3454,50 @@ channels:
                                 absent on events emitted before this field
                                 existed, which consumers should treat as
                                 `Storage`.
-                              x-parser-schema-id: <anonymous-schema-224>
+                              x-parser-schema-id: <anonymous-schema-234>
                             dockFlow:
                               type: string
                               description: >
                                 Inbound, Outbound, or Both. Present only when
                                 role is Dock (ADR-0016).
-                              x-parser-schema-id: <anonymous-schema-225>
+                              x-parser-schema-id: <anonymous-schema-235>
                             activities:
                               type: array
                               items:
                                 type: string
-                                x-parser-schema-id: <anonymous-schema-227>
+                                x-parser-schema-id: <anonymous-schema-237>
                               description: >
                                 Pack, Sort, QC, VAS, Deconsolidate, Receive
                                 and/or Kit. Present only when role is WorkCenter
                                 (ADR-0016).
-                              x-parser-schema-id: <anonymous-schema-226>
+                              x-parser-schema-id: <anonymous-schema-236>
                             maxWeightKg:
                               type: number
                               description: >
                                 0/absent for a role that does not require
                                 capacity (Dock, Yard, WorkCenter, QC, Shipping).
-                              x-parser-schema-id: <anonymous-schema-228>
+                              x-parser-schema-id: <anonymous-schema-238>
                             maxVolumeM3:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-229>
-                          x-parser-schema-id: <anonymous-schema-219>
-                      x-parser-schema-id: <anonymous-schema-218>
-                  x-parser-schema-id: <anonymous-schema-215>
-              x-parser-schema-id: <anonymous-schema-214>
+                              x-parser-schema-id: <anonymous-schema-239>
+                            handlingUnit:
+                              type: string
+                              enum:
+                                - EACH
+                                - CASE
+                                - PALLET
+                              description: >
+                                OPTIONAL (ADR-0040). The unit of handling the
+                                slot accepts. Omitted when none was recorded at
+                                registration (every slot registered before the
+                                field existed); a later value arrives as
+                                `LocationSlotHandlingUnitDeclared`.
+                              example: CASE
+                              x-parser-schema-id: <anonymous-schema-240>
+                          x-parser-schema-id: <anonymous-schema-229>
+                      x-parser-schema-id: <anonymous-schema-228>
+                  x-parser-schema-id: <anonymous-schema-225>
+              x-parser-schema-id: <anonymous-schema-224>
             messageId: LocationSlotRegisteredAnalytics
           - name: LocationSlotDecommissioned
             contentType: application/cloudevents+json
@@ -3402,11 +3587,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
-                      x-parser-schema-id: <anonymous-schema-232>
+                      x-parser-schema-id: <anonymous-schema-243>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
-                      x-parser-schema-id: <anonymous-schema-233>
+                      x-parser-schema-id: <anonymous-schema-244>
                     data:
                       allOf:
                         - type: object
@@ -3439,11 +3624,11 @@ channels:
                           properties:
                             locationCode:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-236>
-                          x-parser-schema-id: <anonymous-schema-235>
-                      x-parser-schema-id: <anonymous-schema-234>
-                  x-parser-schema-id: <anonymous-schema-231>
-              x-parser-schema-id: <anonymous-schema-230>
+                              x-parser-schema-id: <anonymous-schema-247>
+                          x-parser-schema-id: <anonymous-schema-246>
+                      x-parser-schema-id: <anonymous-schema-245>
+                  x-parser-schema-id: <anonymous-schema-242>
+              x-parser-schema-id: <anonymous-schema-241>
             messageId: LocationSlotDecommissionedAnalytics
           - name: FacilityLayoutImported
             contentType: application/cloudevents+json
@@ -3536,11 +3721,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.FacilityLayoutImported
-                      x-parser-schema-id: <anonymous-schema-239>
+                      x-parser-schema-id: <anonymous-schema-250>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:FacilityLayoutImported:v1
-                      x-parser-schema-id: <anonymous-schema-240>
+                      x-parser-schema-id: <anonymous-schema-251>
                     data:
                       allOf:
                         - type: object
@@ -3575,18 +3760,175 @@ channels:
                           properties:
                             rowsSubmitted:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-243>
+                              x-parser-schema-id: <anonymous-schema-254>
                             slotsImported:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-244>
+                              x-parser-schema-id: <anonymous-schema-255>
                             rowsRejected:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-245>
-                          x-parser-schema-id: <anonymous-schema-242>
-                      x-parser-schema-id: <anonymous-schema-241>
-                  x-parser-schema-id: <anonymous-schema-238>
-              x-parser-schema-id: <anonymous-schema-237>
+                              x-parser-schema-id: <anonymous-schema-256>
+                          x-parser-schema-id: <anonymous-schema-253>
+                      x-parser-schema-id: <anonymous-schema-252>
+                  x-parser-schema-id: <anonymous-schema-249>
+              x-parser-schema-id: <anonymous-schema-248>
             messageId: FacilityLayoutImportedAnalytics
+          - name: LocationSlotHandlingUnitDeclared
+            contentType: application/cloudevents+json
+            title: Location slot handling unit declared
+            tags:
+              - name: locationslot
+            summary: A slot's handling unit (EACH, CASE or PALLET) was set or changed.
+            description: >
+              Raised by `DeclareLocationHandlingUnit` (ADR-0040), i.e. `PUT
+              /locations/{locationCode}/handling-unit`. The slot is identified
+              by `locationCode`, exactly as in `LocationSlotRegistered`.
+              CloudEvents `subject` and Kafka key: `locationCode` (same
+              partition as that location's `LocationSlotRegistered`). **Consumed
+              live** by inventory-storage's facility cache, which uses the
+              handling unit to decide whether a sealed case may be stowed in the
+              bin. Last write wins per `locationCode` (same partition, so
+              ordered).
+            payload:
+              allOf:
+                - type: object
+                  description: >
+                    CloudEvents 1.0 structured-mode envelope (ADR-0024). Every
+                    attribute below is REQUIRED in this fleet. `data` carries
+                    the domain event's own JSON verbatim.
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  additionalProperties: false
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-2>
+                    id:
+                      type: string
+                      format: uuid
+                      description: >
+                        Minted once per domain event and persisted with the
+                        outbox row, so a redelivery carries the same id.
+                        `(source, id)` is the consumer idempotency key.
+                      x-parser-schema-id: <anonymous-schema-3>
+                    source:
+                      type: string
+                      format: uri-reference
+                      const: /warehouse/facility-layout
+                      x-parser-schema-id: <anonymous-schema-4>
+                    type:
+                      type: string
+                      description: >
+                        `com.warehouse.wms.facility-layout.<entity>.<EventName>`.
+                        Consumers dispatch on the full string.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    subject:
+                      type: string
+                      minLength: 1
+                      description: Id of the aggregate instance the event is about.
+                      x-parser-schema-id: <anonymous-schema-6>
+                    time:
+                      type: string
+                      format: date-time
+                      description: >-
+                        When the domain fact occurred (not when it was
+                        published), UTC.
+                      x-parser-schema-id: <anonymous-schema-7>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-8>
+                    dataschema:
+                      type: string
+                      format: uri
+                      description: >
+                        `urn:warehouse:facility-layout:events:<EventName>:v<N>`
+                        on this channel (`...:analytics:...` on
+                        warehouse.facility.analytics).
+                      x-parser-schema-id: <anonymous-schema-9>
+                    data:
+                      type: object
+                      description: The domain event's own JSON payload.
+                      x-parser-schema-id: <anonymous-schema-10>
+                  x-parser-schema-id: cloudEvent
+                - type: object
+                  properties:
+                    type:
+                      const: >-
+                        com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared
+                      x-parser-schema-id: <anonymous-schema-259>
+                    dataschema:
+                      const: >-
+                        urn:warehouse:facility-layout:events:LocationSlotHandlingUnitDeclared:v1
+                      x-parser-schema-id: <anonymous-schema-260>
+                    data:
+                      allOf:
+                        - type: object
+                          description: >
+                            Fields present in every event's `data` payload — the
+                            domain event base struct's own serialization.
+                          required:
+                            - eventName
+                            - eventType
+                            - occurredAt
+                          properties:
+                            eventName:
+                              type: string
+                              description: The bare PascalCase event name.
+                              x-parser-schema-id: <anonymous-schema-15>
+                            eventType:
+                              type: string
+                              description: >-
+                                Same reverse-DNS type as the CloudEvents `type`
+                                attribute.
+                              x-parser-schema-id: <anonymous-schema-16>
+                            occurredAt:
+                              type: string
+                              format: date-time
+                              x-parser-schema-id: <anonymous-schema-17>
+                          x-parser-schema-id: eventDataBase
+                        - type: object
+                          required:
+                            - locationCode
+                            - handlingUnit
+                            - declaredAt
+                          properties:
+                            locationCode:
+                              type: string
+                              description: >
+                                The full coded location, e.g.
+                                `WH1-STOR-AMB-A07-03-02-B`.
+                              example: WH1-STOR-AMB-A07-03-02-B
+                              x-parser-schema-id: <anonymous-schema-263>
+                            handlingUnit:
+                              type: string
+                              enum:
+                                - EACH
+                                - CASE
+                                - PALLET
+                              example: CASE
+                              x-parser-schema-id: <anonymous-schema-264>
+                            declaredAt:
+                              type: string
+                              format: date-time
+                              description: >-
+                                When the unit was declared (equals
+                                `occurredAt`).
+                              example: '2026-10-24T12:00:00Z'
+                              x-parser-schema-id: <anonymous-schema-265>
+                          x-parser-schema-id: <anonymous-schema-262>
+                      x-parser-schema-id: <anonymous-schema-261>
+                  x-parser-schema-id: <anonymous-schema-258>
+              x-parser-schema-id: <anonymous-schema-257>
+            messageId: LocationSlotHandlingUnitDeclaredAnalytics
           - name: LocationGeometryUpdated
             contentType: application/cloudevents+json
             title: Location geometry updated
@@ -3673,11 +4015,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.LocationGeometryUpdated
-                      x-parser-schema-id: <anonymous-schema-248>
+                      x-parser-schema-id: <anonymous-schema-268>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:LocationGeometryUpdated:v1
-                      x-parser-schema-id: <anonymous-schema-249>
+                      x-parser-schema-id: <anonymous-schema-269>
                     data:
                       allOf:
                         - type: object
@@ -3719,44 +4061,44 @@ channels:
                               description: >
                                 The full coded location, e.g.
                                 `WH1-STOR-AMB-A07-03-02-B`.
-                              x-parser-schema-id: <anonymous-schema-252>
+                              x-parser-schema-id: <anonymous-schema-272>
                             xM:
                               type: number
                               description: >-
                                 Position in the site's local coordinate frame,
                                 in metres.
-                              x-parser-schema-id: <anonymous-schema-253>
+                              x-parser-schema-id: <anonymous-schema-273>
                             yM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-254>
+                              x-parser-schema-id: <anonymous-schema-274>
                             zM:
                               type: number
                               description: >-
                                 Height above floor level, in metres. Never
                                 negative.
-                              x-parser-schema-id: <anonymous-schema-255>
+                              x-parser-schema-id: <anonymous-schema-275>
                             widthM:
                               type: number
                               description: >-
                                 Footprint extent, in metres. Always strictly
                                 positive.
-                              x-parser-schema-id: <anonymous-schema-256>
+                              x-parser-schema-id: <anonymous-schema-276>
                             depthM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-257>
+                              x-parser-schema-id: <anonymous-schema-277>
                             heightM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-258>
+                              x-parser-schema-id: <anonymous-schema-278>
                             pickSequence:
                               type: integer
                               description: >
                                 Optional explicit pick-path override for this
                                 slot. Absent when no override was given.
-                              x-parser-schema-id: <anonymous-schema-259>
-                          x-parser-schema-id: <anonymous-schema-251>
-                      x-parser-schema-id: <anonymous-schema-250>
-                  x-parser-schema-id: <anonymous-schema-247>
-              x-parser-schema-id: <anonymous-schema-246>
+                              x-parser-schema-id: <anonymous-schema-279>
+                          x-parser-schema-id: <anonymous-schema-271>
+                      x-parser-schema-id: <anonymous-schema-270>
+                  x-parser-schema-id: <anonymous-schema-267>
+              x-parser-schema-id: <anonymous-schema-266>
             messageId: LocationGeometryUpdatedAnalytics
           - name: AisleGeometryUpdated
             contentType: application/cloudevents+json
@@ -3845,11 +4187,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.aisle.AisleGeometryUpdated
-                      x-parser-schema-id: <anonymous-schema-262>
+                      x-parser-schema-id: <anonymous-schema-282>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:AisleGeometryUpdated:v1
-                      x-parser-schema-id: <anonymous-schema-263>
+                      x-parser-schema-id: <anonymous-schema-283>
                     data:
                       allOf:
                         - type: object
@@ -3890,35 +4232,35 @@ channels:
                             aisleId:
                               type: string
                               example: WH1-STOR-AMB-A07
-                              x-parser-schema-id: <anonymous-schema-266>
+                              x-parser-schema-id: <anonymous-schema-286>
                             startXM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-267>
+                              x-parser-schema-id: <anonymous-schema-287>
                             startYM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-268>
+                              x-parser-schema-id: <anonymous-schema-288>
                             startZM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-269>
+                              x-parser-schema-id: <anonymous-schema-289>
                             endXM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-270>
+                              x-parser-schema-id: <anonymous-schema-290>
                             endYM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-271>
+                              x-parser-schema-id: <anonymous-schema-291>
                             endZM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-272>
+                              x-parser-schema-id: <anonymous-schema-292>
                             lengthM:
                               type: number
                               description: >-
                                 The centreline's straight-line length, in
                                 metres.
-                              x-parser-schema-id: <anonymous-schema-273>
-                          x-parser-schema-id: <anonymous-schema-265>
-                      x-parser-schema-id: <anonymous-schema-264>
-                  x-parser-schema-id: <anonymous-schema-261>
-              x-parser-schema-id: <anonymous-schema-260>
+                              x-parser-schema-id: <anonymous-schema-293>
+                          x-parser-schema-id: <anonymous-schema-285>
+                      x-parser-schema-id: <anonymous-schema-284>
+                  x-parser-schema-id: <anonymous-schema-281>
+              x-parser-schema-id: <anonymous-schema-280>
             messageId: AisleGeometryUpdatedAnalytics
           - name: FixedStructureRegistered
             contentType: application/cloudevents+json
@@ -4007,11 +4349,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.structure.FixedStructureRegistered
-                      x-parser-schema-id: <anonymous-schema-276>
+                      x-parser-schema-id: <anonymous-schema-296>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:FixedStructureRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-277>
+                      x-parser-schema-id: <anonymous-schema-297>
                     data:
                       allOf:
                         - type: object
@@ -4054,44 +4396,44 @@ channels:
                             structureId:
                               type: string
                               example: STR-1
-                              x-parser-schema-id: <anonymous-schema-280>
+                              x-parser-schema-id: <anonymous-schema-300>
                             siteCode:
                               type: string
                               example: WH1
-                              x-parser-schema-id: <anonymous-schema-281>
+                              x-parser-schema-id: <anonymous-schema-301>
                             kind:
                               type: string
                               description: Wall, Column, Office, Conveyor, or Other.
-                              x-parser-schema-id: <anonymous-schema-282>
+                              x-parser-schema-id: <anonymous-schema-302>
                             xM:
                               type: number
                               description: >-
                                 Footprint origin, in the site's local coordinate
                                 frame, in metres.
-                              x-parser-schema-id: <anonymous-schema-283>
+                              x-parser-schema-id: <anonymous-schema-303>
                             yM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-284>
+                              x-parser-schema-id: <anonymous-schema-304>
                             zM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-285>
+                              x-parser-schema-id: <anonymous-schema-305>
                             widthM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-286>
+                              x-parser-schema-id: <anonymous-schema-306>
                             depthM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-287>
+                              x-parser-schema-id: <anonymous-schema-307>
                             heightM:
                               type: number
-                              x-parser-schema-id: <anonymous-schema-288>
+                              x-parser-schema-id: <anonymous-schema-308>
                             label:
                               type: string
                               example: North wall
-                              x-parser-schema-id: <anonymous-schema-289>
-                          x-parser-schema-id: <anonymous-schema-279>
-                      x-parser-schema-id: <anonymous-schema-278>
-                  x-parser-schema-id: <anonymous-schema-275>
-              x-parser-schema-id: <anonymous-schema-274>
+                              x-parser-schema-id: <anonymous-schema-309>
+                          x-parser-schema-id: <anonymous-schema-299>
+                      x-parser-schema-id: <anonymous-schema-298>
+                  x-parser-schema-id: <anonymous-schema-295>
+              x-parser-schema-id: <anonymous-schema-294>
             messageId: FixedStructureRegisteredAnalytics
           - name: CrossAisleRegistered
             contentType: application/cloudevents+json
@@ -4182,11 +4524,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.crossaisle.CrossAisleRegistered
-                      x-parser-schema-id: <anonymous-schema-292>
+                      x-parser-schema-id: <anonymous-schema-312>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:CrossAisleRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-293>
+                      x-parser-schema-id: <anonymous-schema-313>
                     data:
                       allOf:
                         - type: object
@@ -4223,23 +4565,23 @@ channels:
                             zoneId:
                               type: string
                               example: WH1-STOR-AMB
-                              x-parser-schema-id: <anonymous-schema-296>
+                              x-parser-schema-id: <anonymous-schema-316>
                             fromAisle:
                               type: string
                               example: A07
-                              x-parser-schema-id: <anonymous-schema-297>
+                              x-parser-schema-id: <anonymous-schema-317>
                             toAisle:
                               type: string
                               example: A08
-                              x-parser-schema-id: <anonymous-schema-298>
+                              x-parser-schema-id: <anonymous-schema-318>
                             atBay:
                               type: string
                               example: '02'
-                              x-parser-schema-id: <anonymous-schema-299>
-                          x-parser-schema-id: <anonymous-schema-295>
-                      x-parser-schema-id: <anonymous-schema-294>
-                  x-parser-schema-id: <anonymous-schema-291>
-              x-parser-schema-id: <anonymous-schema-290>
+                              x-parser-schema-id: <anonymous-schema-319>
+                          x-parser-schema-id: <anonymous-schema-315>
+                      x-parser-schema-id: <anonymous-schema-314>
+                  x-parser-schema-id: <anonymous-schema-311>
+              x-parser-schema-id: <anonymous-schema-310>
             messageId: CrossAisleRegisteredAnalytics
 components:
   schemas:
@@ -5635,11 +5977,180 @@ components:
                       maxVolumeM3:
                         type: number
                         x-parser-schema-id: <anonymous-schema-94>
+                      handlingUnit:
+                        type: string
+                        enum:
+                          - EACH
+                          - CASE
+                          - PALLET
+                        description: >
+                          OPTIONAL (ADR-0040). The unit of handling the slot
+                          accepts. Omitted when none was recorded at
+                          registration (every slot registered before the field
+                          existed); a later value arrives as
+                          `LocationSlotHandlingUnitDeclared`.
+                        example: CASE
+                        x-parser-schema-id: <anonymous-schema-95>
                     x-parser-schema-id: <anonymous-schema-84>
                 x-parser-schema-id: <anonymous-schema-83>
             x-parser-schema-id: <anonymous-schema-80>
         x-parser-schema-id: <anonymous-schema-79>
       messageId: LocationSlotRegistered
+    locationSlotHandlingUnitDeclared:
+      name: LocationSlotHandlingUnitDeclared
+      contentType: application/cloudevents+json
+      title: Location slot handling unit declared
+      tags:
+        - name: locationslot
+      summary: A slot's handling unit (EACH, CASE or PALLET) was set or changed.
+      description: >
+        Raised by `DeclareLocationHandlingUnit` (ADR-0040), i.e. `PUT
+        /locations/{locationCode}/handling-unit`. The slot is identified by
+        `locationCode`, exactly as in `LocationSlotRegistered`. CloudEvents
+        `subject` and Kafka key: `locationCode` (same partition as that
+        location's `LocationSlotRegistered`). **Consumed live** by
+        inventory-storage's facility cache, which uses the handling unit to
+        decide whether a sealed case may be stowed in the bin. Last write wins
+        per `locationCode` (same partition, so ordered).
+      payload:
+        allOf:
+          - type: object
+            description: >
+              CloudEvents 1.0 structured-mode envelope (ADR-0024). Every
+              attribute below is REQUIRED in this fleet. `data` carries the
+              domain event's own JSON verbatim.
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            additionalProperties: false
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-2>
+              id:
+                type: string
+                format: uuid
+                description: >
+                  Minted once per domain event and persisted with the outbox
+                  row, so a redelivery carries the same id. `(source, id)` is
+                  the consumer idempotency key.
+                x-parser-schema-id: <anonymous-schema-3>
+              source:
+                type: string
+                format: uri-reference
+                const: /warehouse/facility-layout
+                x-parser-schema-id: <anonymous-schema-4>
+              type:
+                type: string
+                description: >
+                  `com.warehouse.wms.facility-layout.<entity>.<EventName>`.
+                  Consumers dispatch on the full string.
+                x-parser-schema-id: <anonymous-schema-5>
+              subject:
+                type: string
+                minLength: 1
+                description: Id of the aggregate instance the event is about.
+                x-parser-schema-id: <anonymous-schema-6>
+              time:
+                type: string
+                format: date-time
+                description: >-
+                  When the domain fact occurred (not when it was published),
+                  UTC.
+                x-parser-schema-id: <anonymous-schema-7>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-8>
+              dataschema:
+                type: string
+                format: uri
+                description: >
+                  `urn:warehouse:facility-layout:events:<EventName>:v<N>` on
+                  this channel (`...:analytics:...` on
+                  warehouse.facility.analytics).
+                x-parser-schema-id: <anonymous-schema-9>
+              data:
+                type: object
+                description: The domain event's own JSON payload.
+                x-parser-schema-id: <anonymous-schema-10>
+            x-parser-schema-id: cloudEvent
+          - type: object
+            properties:
+              type:
+                const: >-
+                  com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared
+                x-parser-schema-id: <anonymous-schema-114>
+              dataschema:
+                const: >-
+                  urn:warehouse:facility-layout:events:LocationSlotHandlingUnitDeclared:v1
+                x-parser-schema-id: <anonymous-schema-115>
+              data:
+                allOf:
+                  - type: object
+                    description: >
+                      Fields present in every event's `data` payload — the
+                      domain event base struct's own serialization.
+                    required:
+                      - eventName
+                      - eventType
+                      - occurredAt
+                    properties:
+                      eventName:
+                        type: string
+                        description: The bare PascalCase event name.
+                        x-parser-schema-id: <anonymous-schema-15>
+                      eventType:
+                        type: string
+                        description: >-
+                          Same reverse-DNS type as the CloudEvents `type`
+                          attribute.
+                        x-parser-schema-id: <anonymous-schema-16>
+                      occurredAt:
+                        type: string
+                        format: date-time
+                        x-parser-schema-id: <anonymous-schema-17>
+                    x-parser-schema-id: eventDataBase
+                  - type: object
+                    required:
+                      - locationCode
+                      - handlingUnit
+                      - declaredAt
+                    properties:
+                      locationCode:
+                        type: string
+                        description: >
+                          The full coded location, e.g.
+                          `WH1-STOR-AMB-A07-03-02-B`.
+                        example: WH1-STOR-AMB-A07-03-02-B
+                        x-parser-schema-id: <anonymous-schema-118>
+                      handlingUnit:
+                        type: string
+                        enum:
+                          - EACH
+                          - CASE
+                          - PALLET
+                        example: CASE
+                        x-parser-schema-id: <anonymous-schema-119>
+                      declaredAt:
+                        type: string
+                        format: date-time
+                        description: When the unit was declared (equals `occurredAt`).
+                        example: '2026-10-24T12:00:00Z'
+                        x-parser-schema-id: <anonymous-schema-120>
+                    x-parser-schema-id: <anonymous-schema-117>
+                x-parser-schema-id: <anonymous-schema-116>
+            x-parser-schema-id: <anonymous-schema-113>
+        x-parser-schema-id: <anonymous-schema-112>
+      messageId: LocationSlotHandlingUnitDeclared
     locationSlotDecommissioned:
       name: LocationSlotDecommissioned
       contentType: application/cloudevents+json
@@ -5729,11 +6240,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
-                x-parser-schema-id: <anonymous-schema-97>
+                x-parser-schema-id: <anonymous-schema-98>
               dataschema:
                 const: >-
                   urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
-                x-parser-schema-id: <anonymous-schema-98>
+                x-parser-schema-id: <anonymous-schema-99>
               data:
                 allOf:
                   - type: object
@@ -5766,11 +6277,11 @@ components:
                     properties:
                       locationCode:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-101>
-                    x-parser-schema-id: <anonymous-schema-100>
-                x-parser-schema-id: <anonymous-schema-99>
-            x-parser-schema-id: <anonymous-schema-96>
-        x-parser-schema-id: <anonymous-schema-95>
+                        x-parser-schema-id: <anonymous-schema-102>
+                    x-parser-schema-id: <anonymous-schema-101>
+                x-parser-schema-id: <anonymous-schema-100>
+            x-parser-schema-id: <anonymous-schema-97>
+        x-parser-schema-id: <anonymous-schema-96>
       messageId: LocationSlotDecommissioned
     facilityLayoutImported:
       name: FacilityLayoutImported
@@ -5863,10 +6374,10 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.FacilityLayoutImported
-                x-parser-schema-id: <anonymous-schema-104>
+                x-parser-schema-id: <anonymous-schema-105>
               dataschema:
                 const: urn:warehouse:facility-layout:events:FacilityLayoutImported:v1
-                x-parser-schema-id: <anonymous-schema-105>
+                x-parser-schema-id: <anonymous-schema-106>
               data:
                 allOf:
                   - type: object
@@ -5901,17 +6412,17 @@ components:
                     properties:
                       rowsSubmitted:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-108>
+                        x-parser-schema-id: <anonymous-schema-109>
                       slotsImported:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-109>
+                        x-parser-schema-id: <anonymous-schema-110>
                       rowsRejected:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-110>
-                    x-parser-schema-id: <anonymous-schema-107>
-                x-parser-schema-id: <anonymous-schema-106>
-            x-parser-schema-id: <anonymous-schema-103>
-        x-parser-schema-id: <anonymous-schema-102>
+                        x-parser-schema-id: <anonymous-schema-111>
+                    x-parser-schema-id: <anonymous-schema-108>
+                x-parser-schema-id: <anonymous-schema-107>
+            x-parser-schema-id: <anonymous-schema-104>
+        x-parser-schema-id: <anonymous-schema-103>
       messageId: FacilityLayoutImported
     locationGeometryUpdated:
       name: LocationGeometryUpdated
@@ -6000,11 +6511,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.LocationGeometryUpdated
-                x-parser-schema-id: <anonymous-schema-113>
+                x-parser-schema-id: <anonymous-schema-123>
               dataschema:
                 const: >-
                   urn:warehouse:facility-layout:events:LocationGeometryUpdated:v1
-                x-parser-schema-id: <anonymous-schema-114>
+                x-parser-schema-id: <anonymous-schema-124>
               data:
                 allOf:
                   - type: object
@@ -6046,40 +6557,40 @@ components:
                         description: >
                           The full coded location, e.g.
                           `WH1-STOR-AMB-A07-03-02-B`.
-                        x-parser-schema-id: <anonymous-schema-117>
+                        x-parser-schema-id: <anonymous-schema-127>
                       xM:
                         type: number
                         description: >-
                           Position in the site's local coordinate frame, in
                           metres.
-                        x-parser-schema-id: <anonymous-schema-118>
+                        x-parser-schema-id: <anonymous-schema-128>
                       yM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-119>
+                        x-parser-schema-id: <anonymous-schema-129>
                       zM:
                         type: number
                         description: Height above floor level, in metres. Never negative.
-                        x-parser-schema-id: <anonymous-schema-120>
+                        x-parser-schema-id: <anonymous-schema-130>
                       widthM:
                         type: number
                         description: Footprint extent, in metres. Always strictly positive.
-                        x-parser-schema-id: <anonymous-schema-121>
+                        x-parser-schema-id: <anonymous-schema-131>
                       depthM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-122>
+                        x-parser-schema-id: <anonymous-schema-132>
                       heightM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-123>
+                        x-parser-schema-id: <anonymous-schema-133>
                       pickSequence:
                         type: integer
                         description: >
                           Optional explicit pick-path override for this slot.
                           Absent when no override was given.
-                        x-parser-schema-id: <anonymous-schema-124>
-                    x-parser-schema-id: <anonymous-schema-116>
-                x-parser-schema-id: <anonymous-schema-115>
-            x-parser-schema-id: <anonymous-schema-112>
-        x-parser-schema-id: <anonymous-schema-111>
+                        x-parser-schema-id: <anonymous-schema-134>
+                    x-parser-schema-id: <anonymous-schema-126>
+                x-parser-schema-id: <anonymous-schema-125>
+            x-parser-schema-id: <anonymous-schema-122>
+        x-parser-schema-id: <anonymous-schema-121>
       messageId: LocationGeometryUpdated
     aisleGeometryUpdated:
       name: AisleGeometryUpdated
@@ -6168,10 +6679,10 @@ components:
             properties:
               type:
                 const: com.warehouse.wms.facility-layout.aisle.AisleGeometryUpdated
-                x-parser-schema-id: <anonymous-schema-127>
+                x-parser-schema-id: <anonymous-schema-137>
               dataschema:
                 const: urn:warehouse:facility-layout:events:AisleGeometryUpdated:v1
-                x-parser-schema-id: <anonymous-schema-128>
+                x-parser-schema-id: <anonymous-schema-138>
               data:
                 allOf:
                   - type: object
@@ -6212,33 +6723,33 @@ components:
                       aisleId:
                         type: string
                         example: WH1-STOR-AMB-A07
-                        x-parser-schema-id: <anonymous-schema-131>
+                        x-parser-schema-id: <anonymous-schema-141>
                       startXM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-132>
+                        x-parser-schema-id: <anonymous-schema-142>
                       startYM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-133>
+                        x-parser-schema-id: <anonymous-schema-143>
                       startZM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-134>
+                        x-parser-schema-id: <anonymous-schema-144>
                       endXM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-135>
+                        x-parser-schema-id: <anonymous-schema-145>
                       endYM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-136>
+                        x-parser-schema-id: <anonymous-schema-146>
                       endZM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-137>
+                        x-parser-schema-id: <anonymous-schema-147>
                       lengthM:
                         type: number
                         description: The centreline's straight-line length, in metres.
-                        x-parser-schema-id: <anonymous-schema-138>
-                    x-parser-schema-id: <anonymous-schema-130>
-                x-parser-schema-id: <anonymous-schema-129>
-            x-parser-schema-id: <anonymous-schema-126>
-        x-parser-schema-id: <anonymous-schema-125>
+                        x-parser-schema-id: <anonymous-schema-148>
+                    x-parser-schema-id: <anonymous-schema-140>
+                x-parser-schema-id: <anonymous-schema-139>
+            x-parser-schema-id: <anonymous-schema-136>
+        x-parser-schema-id: <anonymous-schema-135>
       messageId: AisleGeometryUpdated
     fixedStructureRegistered:
       name: FixedStructureRegistered
@@ -6328,11 +6839,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.structure.FixedStructureRegistered
-                x-parser-schema-id: <anonymous-schema-141>
+                x-parser-schema-id: <anonymous-schema-151>
               dataschema:
                 const: >-
                   urn:warehouse:facility-layout:events:FixedStructureRegistered:v1
-                x-parser-schema-id: <anonymous-schema-142>
+                x-parser-schema-id: <anonymous-schema-152>
               data:
                 allOf:
                   - type: object
@@ -6375,44 +6886,44 @@ components:
                       structureId:
                         type: string
                         example: STR-1
-                        x-parser-schema-id: <anonymous-schema-145>
+                        x-parser-schema-id: <anonymous-schema-155>
                       siteCode:
                         type: string
                         example: WH1
-                        x-parser-schema-id: <anonymous-schema-146>
+                        x-parser-schema-id: <anonymous-schema-156>
                       kind:
                         type: string
                         description: Wall, Column, Office, Conveyor, or Other.
-                        x-parser-schema-id: <anonymous-schema-147>
+                        x-parser-schema-id: <anonymous-schema-157>
                       xM:
                         type: number
                         description: >-
                           Footprint origin, in the site's local coordinate
                           frame, in metres.
-                        x-parser-schema-id: <anonymous-schema-148>
+                        x-parser-schema-id: <anonymous-schema-158>
                       yM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-149>
+                        x-parser-schema-id: <anonymous-schema-159>
                       zM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-150>
+                        x-parser-schema-id: <anonymous-schema-160>
                       widthM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-151>
+                        x-parser-schema-id: <anonymous-schema-161>
                       depthM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-152>
+                        x-parser-schema-id: <anonymous-schema-162>
                       heightM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-153>
+                        x-parser-schema-id: <anonymous-schema-163>
                       label:
                         type: string
                         example: North wall
-                        x-parser-schema-id: <anonymous-schema-154>
-                    x-parser-schema-id: <anonymous-schema-144>
-                x-parser-schema-id: <anonymous-schema-143>
-            x-parser-schema-id: <anonymous-schema-140>
-        x-parser-schema-id: <anonymous-schema-139>
+                        x-parser-schema-id: <anonymous-schema-164>
+                    x-parser-schema-id: <anonymous-schema-154>
+                x-parser-schema-id: <anonymous-schema-153>
+            x-parser-schema-id: <anonymous-schema-150>
+        x-parser-schema-id: <anonymous-schema-149>
       messageId: FixedStructureRegistered
     crossAisleRegistered:
       name: CrossAisleRegistered
@@ -6504,10 +7015,10 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.crossaisle.CrossAisleRegistered
-                x-parser-schema-id: <anonymous-schema-157>
+                x-parser-schema-id: <anonymous-schema-167>
               dataschema:
                 const: urn:warehouse:facility-layout:events:CrossAisleRegistered:v1
-                x-parser-schema-id: <anonymous-schema-158>
+                x-parser-schema-id: <anonymous-schema-168>
               data:
                 allOf:
                   - type: object
@@ -6544,23 +7055,23 @@ components:
                       zoneId:
                         type: string
                         example: WH1-STOR-AMB
-                        x-parser-schema-id: <anonymous-schema-161>
+                        x-parser-schema-id: <anonymous-schema-171>
                       fromAisle:
                         type: string
                         example: A07
-                        x-parser-schema-id: <anonymous-schema-162>
+                        x-parser-schema-id: <anonymous-schema-172>
                       toAisle:
                         type: string
                         example: A08
-                        x-parser-schema-id: <anonymous-schema-163>
+                        x-parser-schema-id: <anonymous-schema-173>
                       atBay:
                         type: string
                         example: '02'
-                        x-parser-schema-id: <anonymous-schema-164>
-                    x-parser-schema-id: <anonymous-schema-160>
-                x-parser-schema-id: <anonymous-schema-159>
-            x-parser-schema-id: <anonymous-schema-156>
-        x-parser-schema-id: <anonymous-schema-155>
+                        x-parser-schema-id: <anonymous-schema-174>
+                    x-parser-schema-id: <anonymous-schema-170>
+                x-parser-schema-id: <anonymous-schema-169>
+            x-parser-schema-id: <anonymous-schema-166>
+        x-parser-schema-id: <anonymous-schema-165>
       messageId: CrossAisleRegistered
     siteRegisteredAnalytics:
       name: SiteRegistered
@@ -6649,10 +7160,10 @@ components:
             properties:
               type:
                 const: com.warehouse.wms.facility-layout.site.SiteRegistered
-                x-parser-schema-id: <anonymous-schema-167>
+                x-parser-schema-id: <anonymous-schema-177>
               dataschema:
                 const: urn:warehouse:facility-layout:events:SiteRegistered:v1
-                x-parser-schema-id: <anonymous-schema-168>
+                x-parser-schema-id: <anonymous-schema-178>
               data:
                 allOf:
                   - type: object
@@ -6687,10 +7198,10 @@ components:
                       siteCode:
                         type: string
                         description: Uppercase alphanumeric, unique. e.g. `WH1`.
-                        x-parser-schema-id: <anonymous-schema-171>
+                        x-parser-schema-id: <anonymous-schema-181>
                       siteName:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-172>
+                        x-parser-schema-id: <anonymous-schema-182>
                       siteRole:
                         type: string
                         description: >
@@ -6714,10 +7225,10 @@ components:
                           - DELIVERY_STATION
                           - AIR_HUB_GATEWAY
                         x-parser-schema-id: siteRole
-                    x-parser-schema-id: <anonymous-schema-170>
-                x-parser-schema-id: <anonymous-schema-169>
-            x-parser-schema-id: <anonymous-schema-166>
-        x-parser-schema-id: <anonymous-schema-165>
+                    x-parser-schema-id: <anonymous-schema-180>
+                x-parser-schema-id: <anonymous-schema-179>
+            x-parser-schema-id: <anonymous-schema-176>
+        x-parser-schema-id: <anonymous-schema-175>
       messageId: SiteRegisteredAnalytics
     zoneRegisteredAnalytics:
       name: ZoneRegistered
@@ -6806,10 +7317,10 @@ components:
             properties:
               type:
                 const: com.warehouse.wms.facility-layout.zone.ZoneRegistered
-                x-parser-schema-id: <anonymous-schema-175>
+                x-parser-schema-id: <anonymous-schema-185>
               dataschema:
                 const: urn:warehouse:facility-layout:events:ZoneRegistered:v1
-                x-parser-schema-id: <anonymous-schema-176>
+                x-parser-schema-id: <anonymous-schema-186>
               data:
                 allOf:
                   - type: object
@@ -6847,16 +7358,16 @@ components:
                     properties:
                       zoneId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-179>
+                        x-parser-schema-id: <anonymous-schema-189>
                       siteCode:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-180>
+                        x-parser-schema-id: <anonymous-schema-190>
                       areaCode:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-181>
+                        x-parser-schema-id: <anonymous-schema-191>
                       zoneCode:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-182>
+                        x-parser-schema-id: <anonymous-schema-192>
                       temperatureClass:
                         type: string
                         enum:
@@ -6867,11 +7378,11 @@ components:
                         x-parser-schema-id: temperatureClass
                       hazmat:
                         type: boolean
-                        x-parser-schema-id: <anonymous-schema-183>
-                    x-parser-schema-id: <anonymous-schema-178>
-                x-parser-schema-id: <anonymous-schema-177>
-            x-parser-schema-id: <anonymous-schema-174>
-        x-parser-schema-id: <anonymous-schema-173>
+                        x-parser-schema-id: <anonymous-schema-193>
+                    x-parser-schema-id: <anonymous-schema-188>
+                x-parser-schema-id: <anonymous-schema-187>
+            x-parser-schema-id: <anonymous-schema-184>
+        x-parser-schema-id: <anonymous-schema-183>
       messageId: ZoneRegisteredAnalytics
     aisleRegisteredAnalytics:
       name: AisleRegistered
@@ -6958,10 +7469,10 @@ components:
             properties:
               type:
                 const: com.warehouse.wms.facility-layout.aisle.AisleRegistered
-                x-parser-schema-id: <anonymous-schema-186>
+                x-parser-schema-id: <anonymous-schema-196>
               dataschema:
                 const: urn:warehouse:facility-layout:events:AisleRegistered:v1
-                x-parser-schema-id: <anonymous-schema-187>
+                x-parser-schema-id: <anonymous-schema-197>
               data:
                 allOf:
                   - type: object
@@ -6998,17 +7509,17 @@ components:
                     properties:
                       aisleId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-190>
+                        x-parser-schema-id: <anonymous-schema-200>
                       zoneId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-191>
+                        x-parser-schema-id: <anonymous-schema-201>
                       aisleCode:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-192>
+                        x-parser-schema-id: <anonymous-schema-202>
                       sequenceHint:
                         type: integer
                         description: Walk-order position within the zone.
-                        x-parser-schema-id: <anonymous-schema-193>
+                        x-parser-schema-id: <anonymous-schema-203>
                       direction:
                         type: string
                         enum:
@@ -7016,10 +7527,10 @@ components:
                           - TwoWay
                         description: How an aisle may be traversed.
                         x-parser-schema-id: direction
-                    x-parser-schema-id: <anonymous-schema-189>
-                x-parser-schema-id: <anonymous-schema-188>
-            x-parser-schema-id: <anonymous-schema-185>
-        x-parser-schema-id: <anonymous-schema-184>
+                    x-parser-schema-id: <anonymous-schema-199>
+                x-parser-schema-id: <anonymous-schema-198>
+            x-parser-schema-id: <anonymous-schema-195>
+        x-parser-schema-id: <anonymous-schema-194>
       messageId: AisleRegisteredAnalytics
     locationTypeRegisteredAnalytics:
       name: LocationTypeRegistered
@@ -7107,10 +7618,10 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationtype.LocationTypeRegistered
-                x-parser-schema-id: <anonymous-schema-196>
+                x-parser-schema-id: <anonymous-schema-206>
               dataschema:
                 const: urn:warehouse:facility-layout:events:LocationTypeRegistered:v1
-                x-parser-schema-id: <anonymous-schema-197>
+                x-parser-schema-id: <anonymous-schema-207>
               data:
                 allOf:
                   - type: object
@@ -7146,7 +7657,7 @@ components:
                       locationType:
                         type: string
                         description: e.g. `PalletRack`, `ShelfBin`.
-                        x-parser-schema-id: <anonymous-schema-200>
+                        x-parser-schema-id: <anonymous-schema-210>
                       role:
                         type: string
                         description: >
@@ -7155,20 +7666,20 @@ components:
                           Shipping. Added additively; absent on events emitted
                           before this field existed, which consumers should
                           treat as `Storage`.
-                        x-parser-schema-id: <anonymous-schema-201>
+                        x-parser-schema-id: <anonymous-schema-211>
                       maxWeightKg:
                         type: number
                         description: >
                           0/absent for a role that does not require capacity
                           (Dock, Yard, WorkCenter, QC, Shipping).
-                        x-parser-schema-id: <anonymous-schema-202>
+                        x-parser-schema-id: <anonymous-schema-212>
                       maxVolumeM3:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-203>
-                    x-parser-schema-id: <anonymous-schema-199>
-                x-parser-schema-id: <anonymous-schema-198>
-            x-parser-schema-id: <anonymous-schema-195>
-        x-parser-schema-id: <anonymous-schema-194>
+                        x-parser-schema-id: <anonymous-schema-213>
+                    x-parser-schema-id: <anonymous-schema-209>
+                x-parser-schema-id: <anonymous-schema-208>
+            x-parser-schema-id: <anonymous-schema-205>
+        x-parser-schema-id: <anonymous-schema-204>
       messageId: LocationTypeRegisteredAnalytics
     placementRuleDefinedAnalytics:
       name: PlacementRuleDefined
@@ -7258,10 +7769,10 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.placementrule.PlacementRuleDefined
-                x-parser-schema-id: <anonymous-schema-206>
+                x-parser-schema-id: <anonymous-schema-216>
               dataschema:
                 const: urn:warehouse:facility-layout:events:PlacementRuleDefined:v1
-                x-parser-schema-id: <anonymous-schema-207>
+                x-parser-schema-id: <anonymous-schema-217>
               data:
                 allOf:
                   - type: object
@@ -7297,22 +7808,22 @@ components:
                     properties:
                       ruleId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-210>
+                        x-parser-schema-id: <anonymous-schema-220>
                       locationType:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-211>
+                        x-parser-schema-id: <anonymous-schema-221>
                       effect:
                         type: string
                         description: Allow or deny.
-                        x-parser-schema-id: <anonymous-schema-212>
+                        x-parser-schema-id: <anonymous-schema-222>
                       predicate:
                         type: string
                         description: The zone-matching predicate expression.
-                        x-parser-schema-id: <anonymous-schema-213>
-                    x-parser-schema-id: <anonymous-schema-209>
-                x-parser-schema-id: <anonymous-schema-208>
-            x-parser-schema-id: <anonymous-schema-205>
-        x-parser-schema-id: <anonymous-schema-204>
+                        x-parser-schema-id: <anonymous-schema-223>
+                    x-parser-schema-id: <anonymous-schema-219>
+                x-parser-schema-id: <anonymous-schema-218>
+            x-parser-schema-id: <anonymous-schema-215>
+        x-parser-schema-id: <anonymous-schema-214>
       messageId: PlacementRuleDefinedAnalytics
     locationSlotRegisteredAnalytics:
       name: LocationSlotRegistered
@@ -7402,10 +7913,10 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered
-                x-parser-schema-id: <anonymous-schema-216>
+                x-parser-schema-id: <anonymous-schema-226>
               dataschema:
                 const: urn:warehouse:facility-layout:events:LocationSlotRegistered:v1
-                x-parser-schema-id: <anonymous-schema-217>
+                x-parser-schema-id: <anonymous-schema-227>
               data:
                 allOf:
                   - type: object
@@ -7446,51 +7957,65 @@ components:
                         description: >
                           The full coded location, e.g.
                           `WH1-STOR-AMB-A07-03-02-B`.
-                        x-parser-schema-id: <anonymous-schema-220>
+                        x-parser-schema-id: <anonymous-schema-230>
                       aisleId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-221>
+                        x-parser-schema-id: <anonymous-schema-231>
                       zoneId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-222>
+                        x-parser-schema-id: <anonymous-schema-232>
                       locationType:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-223>
+                        x-parser-schema-id: <anonymous-schema-233>
                       role:
                         type: string
                         description: >
                           The LocationRole (ADR-0016). Added additively; absent
                           on events emitted before this field existed, which
                           consumers should treat as `Storage`.
-                        x-parser-schema-id: <anonymous-schema-224>
+                        x-parser-schema-id: <anonymous-schema-234>
                       dockFlow:
                         type: string
                         description: >
                           Inbound, Outbound, or Both. Present only when role is
                           Dock (ADR-0016).
-                        x-parser-schema-id: <anonymous-schema-225>
+                        x-parser-schema-id: <anonymous-schema-235>
                       activities:
                         type: array
                         items:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-227>
+                          x-parser-schema-id: <anonymous-schema-237>
                         description: >
                           Pack, Sort, QC, VAS, Deconsolidate, Receive and/or
                           Kit. Present only when role is WorkCenter (ADR-0016).
-                        x-parser-schema-id: <anonymous-schema-226>
+                        x-parser-schema-id: <anonymous-schema-236>
                       maxWeightKg:
                         type: number
                         description: >
                           0/absent for a role that does not require capacity
                           (Dock, Yard, WorkCenter, QC, Shipping).
-                        x-parser-schema-id: <anonymous-schema-228>
+                        x-parser-schema-id: <anonymous-schema-238>
                       maxVolumeM3:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-229>
-                    x-parser-schema-id: <anonymous-schema-219>
-                x-parser-schema-id: <anonymous-schema-218>
-            x-parser-schema-id: <anonymous-schema-215>
-        x-parser-schema-id: <anonymous-schema-214>
+                        x-parser-schema-id: <anonymous-schema-239>
+                      handlingUnit:
+                        type: string
+                        enum:
+                          - EACH
+                          - CASE
+                          - PALLET
+                        description: >
+                          OPTIONAL (ADR-0040). The unit of handling the slot
+                          accepts. Omitted when none was recorded at
+                          registration (every slot registered before the field
+                          existed); a later value arrives as
+                          `LocationSlotHandlingUnitDeclared`.
+                        example: CASE
+                        x-parser-schema-id: <anonymous-schema-240>
+                    x-parser-schema-id: <anonymous-schema-229>
+                x-parser-schema-id: <anonymous-schema-228>
+            x-parser-schema-id: <anonymous-schema-225>
+        x-parser-schema-id: <anonymous-schema-224>
       messageId: LocationSlotRegisteredAnalytics
     locationSlotDecommissionedAnalytics:
       name: LocationSlotDecommissioned
@@ -7581,11 +8106,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
-                x-parser-schema-id: <anonymous-schema-232>
+                x-parser-schema-id: <anonymous-schema-243>
               dataschema:
                 const: >-
                   urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
-                x-parser-schema-id: <anonymous-schema-233>
+                x-parser-schema-id: <anonymous-schema-244>
               data:
                 allOf:
                   - type: object
@@ -7618,11 +8143,11 @@ components:
                     properties:
                       locationCode:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-236>
-                    x-parser-schema-id: <anonymous-schema-235>
-                x-parser-schema-id: <anonymous-schema-234>
-            x-parser-schema-id: <anonymous-schema-231>
-        x-parser-schema-id: <anonymous-schema-230>
+                        x-parser-schema-id: <anonymous-schema-247>
+                    x-parser-schema-id: <anonymous-schema-246>
+                x-parser-schema-id: <anonymous-schema-245>
+            x-parser-schema-id: <anonymous-schema-242>
+        x-parser-schema-id: <anonymous-schema-241>
       messageId: LocationSlotDecommissionedAnalytics
     facilityLayoutImportedAnalytics:
       name: FacilityLayoutImported
@@ -7715,10 +8240,10 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.FacilityLayoutImported
-                x-parser-schema-id: <anonymous-schema-239>
+                x-parser-schema-id: <anonymous-schema-250>
               dataschema:
                 const: urn:warehouse:facility-layout:events:FacilityLayoutImported:v1
-                x-parser-schema-id: <anonymous-schema-240>
+                x-parser-schema-id: <anonymous-schema-251>
               data:
                 allOf:
                   - type: object
@@ -7753,18 +8278,173 @@ components:
                     properties:
                       rowsSubmitted:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-243>
+                        x-parser-schema-id: <anonymous-schema-254>
                       slotsImported:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-244>
+                        x-parser-schema-id: <anonymous-schema-255>
                       rowsRejected:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-245>
-                    x-parser-schema-id: <anonymous-schema-242>
-                x-parser-schema-id: <anonymous-schema-241>
-            x-parser-schema-id: <anonymous-schema-238>
-        x-parser-schema-id: <anonymous-schema-237>
+                        x-parser-schema-id: <anonymous-schema-256>
+                    x-parser-schema-id: <anonymous-schema-253>
+                x-parser-schema-id: <anonymous-schema-252>
+            x-parser-schema-id: <anonymous-schema-249>
+        x-parser-schema-id: <anonymous-schema-248>
       messageId: FacilityLayoutImportedAnalytics
+    locationSlotHandlingUnitDeclaredAnalytics:
+      name: LocationSlotHandlingUnitDeclared
+      contentType: application/cloudevents+json
+      title: Location slot handling unit declared
+      tags:
+        - name: locationslot
+      summary: A slot's handling unit (EACH, CASE or PALLET) was set or changed.
+      description: >
+        Raised by `DeclareLocationHandlingUnit` (ADR-0040), i.e. `PUT
+        /locations/{locationCode}/handling-unit`. The slot is identified by
+        `locationCode`, exactly as in `LocationSlotRegistered`. CloudEvents
+        `subject` and Kafka key: `locationCode` (same partition as that
+        location's `LocationSlotRegistered`). **Consumed live** by
+        inventory-storage's facility cache, which uses the handling unit to
+        decide whether a sealed case may be stowed in the bin. Last write wins
+        per `locationCode` (same partition, so ordered).
+      payload:
+        allOf:
+          - type: object
+            description: >
+              CloudEvents 1.0 structured-mode envelope (ADR-0024). Every
+              attribute below is REQUIRED in this fleet. `data` carries the
+              domain event's own JSON verbatim.
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            additionalProperties: false
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-2>
+              id:
+                type: string
+                format: uuid
+                description: >
+                  Minted once per domain event and persisted with the outbox
+                  row, so a redelivery carries the same id. `(source, id)` is
+                  the consumer idempotency key.
+                x-parser-schema-id: <anonymous-schema-3>
+              source:
+                type: string
+                format: uri-reference
+                const: /warehouse/facility-layout
+                x-parser-schema-id: <anonymous-schema-4>
+              type:
+                type: string
+                description: >
+                  `com.warehouse.wms.facility-layout.<entity>.<EventName>`.
+                  Consumers dispatch on the full string.
+                x-parser-schema-id: <anonymous-schema-5>
+              subject:
+                type: string
+                minLength: 1
+                description: Id of the aggregate instance the event is about.
+                x-parser-schema-id: <anonymous-schema-6>
+              time:
+                type: string
+                format: date-time
+                description: >-
+                  When the domain fact occurred (not when it was published),
+                  UTC.
+                x-parser-schema-id: <anonymous-schema-7>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-8>
+              dataschema:
+                type: string
+                format: uri
+                description: >
+                  `urn:warehouse:facility-layout:events:<EventName>:v<N>` on
+                  this channel (`...:analytics:...` on
+                  warehouse.facility.analytics).
+                x-parser-schema-id: <anonymous-schema-9>
+              data:
+                type: object
+                description: The domain event's own JSON payload.
+                x-parser-schema-id: <anonymous-schema-10>
+            x-parser-schema-id: cloudEvent
+          - type: object
+            properties:
+              type:
+                const: >-
+                  com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared
+                x-parser-schema-id: <anonymous-schema-259>
+              dataschema:
+                const: >-
+                  urn:warehouse:facility-layout:events:LocationSlotHandlingUnitDeclared:v1
+                x-parser-schema-id: <anonymous-schema-260>
+              data:
+                allOf:
+                  - type: object
+                    description: >
+                      Fields present in every event's `data` payload — the
+                      domain event base struct's own serialization.
+                    required:
+                      - eventName
+                      - eventType
+                      - occurredAt
+                    properties:
+                      eventName:
+                        type: string
+                        description: The bare PascalCase event name.
+                        x-parser-schema-id: <anonymous-schema-15>
+                      eventType:
+                        type: string
+                        description: >-
+                          Same reverse-DNS type as the CloudEvents `type`
+                          attribute.
+                        x-parser-schema-id: <anonymous-schema-16>
+                      occurredAt:
+                        type: string
+                        format: date-time
+                        x-parser-schema-id: <anonymous-schema-17>
+                    x-parser-schema-id: eventDataBase
+                  - type: object
+                    required:
+                      - locationCode
+                      - handlingUnit
+                      - declaredAt
+                    properties:
+                      locationCode:
+                        type: string
+                        description: >
+                          The full coded location, e.g.
+                          `WH1-STOR-AMB-A07-03-02-B`.
+                        example: WH1-STOR-AMB-A07-03-02-B
+                        x-parser-schema-id: <anonymous-schema-263>
+                      handlingUnit:
+                        type: string
+                        enum:
+                          - EACH
+                          - CASE
+                          - PALLET
+                        example: CASE
+                        x-parser-schema-id: <anonymous-schema-264>
+                      declaredAt:
+                        type: string
+                        format: date-time
+                        description: When the unit was declared (equals `occurredAt`).
+                        example: '2026-10-24T12:00:00Z'
+                        x-parser-schema-id: <anonymous-schema-265>
+                    x-parser-schema-id: <anonymous-schema-262>
+                x-parser-schema-id: <anonymous-schema-261>
+            x-parser-schema-id: <anonymous-schema-258>
+        x-parser-schema-id: <anonymous-schema-257>
+      messageId: LocationSlotHandlingUnitDeclaredAnalytics
     locationGeometryUpdatedAnalytics:
       name: LocationGeometryUpdated
       contentType: application/cloudevents+json
@@ -7852,11 +8532,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.LocationGeometryUpdated
-                x-parser-schema-id: <anonymous-schema-248>
+                x-parser-schema-id: <anonymous-schema-268>
               dataschema:
                 const: >-
                   urn:warehouse:facility-layout:events:LocationGeometryUpdated:v1
-                x-parser-schema-id: <anonymous-schema-249>
+                x-parser-schema-id: <anonymous-schema-269>
               data:
                 allOf:
                   - type: object
@@ -7898,40 +8578,40 @@ components:
                         description: >
                           The full coded location, e.g.
                           `WH1-STOR-AMB-A07-03-02-B`.
-                        x-parser-schema-id: <anonymous-schema-252>
+                        x-parser-schema-id: <anonymous-schema-272>
                       xM:
                         type: number
                         description: >-
                           Position in the site's local coordinate frame, in
                           metres.
-                        x-parser-schema-id: <anonymous-schema-253>
+                        x-parser-schema-id: <anonymous-schema-273>
                       yM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-254>
+                        x-parser-schema-id: <anonymous-schema-274>
                       zM:
                         type: number
                         description: Height above floor level, in metres. Never negative.
-                        x-parser-schema-id: <anonymous-schema-255>
+                        x-parser-schema-id: <anonymous-schema-275>
                       widthM:
                         type: number
                         description: Footprint extent, in metres. Always strictly positive.
-                        x-parser-schema-id: <anonymous-schema-256>
+                        x-parser-schema-id: <anonymous-schema-276>
                       depthM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-257>
+                        x-parser-schema-id: <anonymous-schema-277>
                       heightM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-258>
+                        x-parser-schema-id: <anonymous-schema-278>
                       pickSequence:
                         type: integer
                         description: >
                           Optional explicit pick-path override for this slot.
                           Absent when no override was given.
-                        x-parser-schema-id: <anonymous-schema-259>
-                    x-parser-schema-id: <anonymous-schema-251>
-                x-parser-schema-id: <anonymous-schema-250>
-            x-parser-schema-id: <anonymous-schema-247>
-        x-parser-schema-id: <anonymous-schema-246>
+                        x-parser-schema-id: <anonymous-schema-279>
+                    x-parser-schema-id: <anonymous-schema-271>
+                x-parser-schema-id: <anonymous-schema-270>
+            x-parser-schema-id: <anonymous-schema-267>
+        x-parser-schema-id: <anonymous-schema-266>
       messageId: LocationGeometryUpdatedAnalytics
     aisleGeometryUpdatedAnalytics:
       name: AisleGeometryUpdated
@@ -8020,10 +8700,10 @@ components:
             properties:
               type:
                 const: com.warehouse.wms.facility-layout.aisle.AisleGeometryUpdated
-                x-parser-schema-id: <anonymous-schema-262>
+                x-parser-schema-id: <anonymous-schema-282>
               dataschema:
                 const: urn:warehouse:facility-layout:events:AisleGeometryUpdated:v1
-                x-parser-schema-id: <anonymous-schema-263>
+                x-parser-schema-id: <anonymous-schema-283>
               data:
                 allOf:
                   - type: object
@@ -8064,33 +8744,33 @@ components:
                       aisleId:
                         type: string
                         example: WH1-STOR-AMB-A07
-                        x-parser-schema-id: <anonymous-schema-266>
+                        x-parser-schema-id: <anonymous-schema-286>
                       startXM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-267>
+                        x-parser-schema-id: <anonymous-schema-287>
                       startYM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-268>
+                        x-parser-schema-id: <anonymous-schema-288>
                       startZM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-269>
+                        x-parser-schema-id: <anonymous-schema-289>
                       endXM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-270>
+                        x-parser-schema-id: <anonymous-schema-290>
                       endYM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-271>
+                        x-parser-schema-id: <anonymous-schema-291>
                       endZM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-272>
+                        x-parser-schema-id: <anonymous-schema-292>
                       lengthM:
                         type: number
                         description: The centreline's straight-line length, in metres.
-                        x-parser-schema-id: <anonymous-schema-273>
-                    x-parser-schema-id: <anonymous-schema-265>
-                x-parser-schema-id: <anonymous-schema-264>
-            x-parser-schema-id: <anonymous-schema-261>
-        x-parser-schema-id: <anonymous-schema-260>
+                        x-parser-schema-id: <anonymous-schema-293>
+                    x-parser-schema-id: <anonymous-schema-285>
+                x-parser-schema-id: <anonymous-schema-284>
+            x-parser-schema-id: <anonymous-schema-281>
+        x-parser-schema-id: <anonymous-schema-280>
       messageId: AisleGeometryUpdatedAnalytics
     fixedStructureRegisteredAnalytics:
       name: FixedStructureRegistered
@@ -8180,11 +8860,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.structure.FixedStructureRegistered
-                x-parser-schema-id: <anonymous-schema-276>
+                x-parser-schema-id: <anonymous-schema-296>
               dataschema:
                 const: >-
                   urn:warehouse:facility-layout:events:FixedStructureRegistered:v1
-                x-parser-schema-id: <anonymous-schema-277>
+                x-parser-schema-id: <anonymous-schema-297>
               data:
                 allOf:
                   - type: object
@@ -8227,44 +8907,44 @@ components:
                       structureId:
                         type: string
                         example: STR-1
-                        x-parser-schema-id: <anonymous-schema-280>
+                        x-parser-schema-id: <anonymous-schema-300>
                       siteCode:
                         type: string
                         example: WH1
-                        x-parser-schema-id: <anonymous-schema-281>
+                        x-parser-schema-id: <anonymous-schema-301>
                       kind:
                         type: string
                         description: Wall, Column, Office, Conveyor, or Other.
-                        x-parser-schema-id: <anonymous-schema-282>
+                        x-parser-schema-id: <anonymous-schema-302>
                       xM:
                         type: number
                         description: >-
                           Footprint origin, in the site's local coordinate
                           frame, in metres.
-                        x-parser-schema-id: <anonymous-schema-283>
+                        x-parser-schema-id: <anonymous-schema-303>
                       yM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-284>
+                        x-parser-schema-id: <anonymous-schema-304>
                       zM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-285>
+                        x-parser-schema-id: <anonymous-schema-305>
                       widthM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-286>
+                        x-parser-schema-id: <anonymous-schema-306>
                       depthM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-287>
+                        x-parser-schema-id: <anonymous-schema-307>
                       heightM:
                         type: number
-                        x-parser-schema-id: <anonymous-schema-288>
+                        x-parser-schema-id: <anonymous-schema-308>
                       label:
                         type: string
                         example: North wall
-                        x-parser-schema-id: <anonymous-schema-289>
-                    x-parser-schema-id: <anonymous-schema-279>
-                x-parser-schema-id: <anonymous-schema-278>
-            x-parser-schema-id: <anonymous-schema-275>
-        x-parser-schema-id: <anonymous-schema-274>
+                        x-parser-schema-id: <anonymous-schema-309>
+                    x-parser-schema-id: <anonymous-schema-299>
+                x-parser-schema-id: <anonymous-schema-298>
+            x-parser-schema-id: <anonymous-schema-295>
+        x-parser-schema-id: <anonymous-schema-294>
       messageId: FixedStructureRegisteredAnalytics
     crossAisleRegisteredAnalytics:
       name: CrossAisleRegistered
@@ -8356,10 +9036,10 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.crossaisle.CrossAisleRegistered
-                x-parser-schema-id: <anonymous-schema-292>
+                x-parser-schema-id: <anonymous-schema-312>
               dataschema:
                 const: urn:warehouse:facility-layout:events:CrossAisleRegistered:v1
-                x-parser-schema-id: <anonymous-schema-293>
+                x-parser-schema-id: <anonymous-schema-313>
               data:
                 allOf:
                   - type: object
@@ -8396,23 +9076,23 @@ components:
                       zoneId:
                         type: string
                         example: WH1-STOR-AMB
-                        x-parser-schema-id: <anonymous-schema-296>
+                        x-parser-schema-id: <anonymous-schema-316>
                       fromAisle:
                         type: string
                         example: A07
-                        x-parser-schema-id: <anonymous-schema-297>
+                        x-parser-schema-id: <anonymous-schema-317>
                       toAisle:
                         type: string
                         example: A08
-                        x-parser-schema-id: <anonymous-schema-298>
+                        x-parser-schema-id: <anonymous-schema-318>
                       atBay:
                         type: string
                         example: '02'
-                        x-parser-schema-id: <anonymous-schema-299>
-                    x-parser-schema-id: <anonymous-schema-295>
-                x-parser-schema-id: <anonymous-schema-294>
-            x-parser-schema-id: <anonymous-schema-291>
-        x-parser-schema-id: <anonymous-schema-290>
+                        x-parser-schema-id: <anonymous-schema-319>
+                    x-parser-schema-id: <anonymous-schema-315>
+                x-parser-schema-id: <anonymous-schema-314>
+            x-parser-schema-id: <anonymous-schema-311>
+        x-parser-schema-id: <anonymous-schema-310>
       messageId: CrossAisleRegisteredAnalytics
 x-parser-spec-parsed: true
 x-parser-api-version: 3

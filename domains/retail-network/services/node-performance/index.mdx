@@ -1,0 +1,165 @@
+---
+id: node-performance
+name: Node Performance (events)
+version: 1.0.0
+summary: >-
+  Measures every node against what it declared and what was asked of it:
+  acknowledgement latency, rejections, on-time handover against requiredShipBy,
+  promise-kept rate and inventory feed freshness, over rolling windows, and
+  grades the node.
+badges:
+  - content: node-performance
+    textColor: blue
+    backgroundColor: blue
+  - content: scorecard
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: NodeScorecardUpdated
+    version: 1.0.0
+    to:
+      - id: nodePerformanceEvents
+        version: 1.0.0
+  - id: NodeThresholdBreached
+    version: 1.0.0
+    to:
+      - id: nodePerformanceAnalytics
+        version: 1.0.0
+receives:
+  - id: VendorOnboarded
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PurchaseOrderIssued
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PurchaseOrderAccepted
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PurchaseOrderRejected
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PurchaseOrderExpired
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: VendorShipmentConfirmed
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: SubmissionProcessed
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PackageHandedOver
+    version: 1.0.0
+    from:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: PromiseKept
+    version: 1.0.0
+    from:
+      - id: deliveryPromiseEvents
+        version: 1.0.0
+  - id: PromiseBroken
+    version: 1.0.0
+    from:
+      - id: deliveryPromiseEvents
+        version: 1.0.0
+  - id: InventoryFeedApplied
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: NodeRegistered
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeOperationalProfileDeclared
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Measures every node against what it declared and what was asked of it: acknowledgement latency, rejections, on-time handover against requiredShipBy, promise-kept rate and inventory feed freshness, over rolling windows, and grades the node.
+
+| | |
+|---|---|
+| Bounded context | `node-performance` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, partner tier |
+| Publishes (Kafka) | `retailnetwork.node-performance.events`<br/>`retailnetwork.node-performance.analytics` |
+| Consumes (Kafka) | `nodePerformanceEvents`<br/>`nodePerformanceAnalytics`<br/>`vendorConnectivityEvents`<br/>`shippingAndTrackingEvents`<br/>`deliveryPromiseEvents`<br/>`offerAvailabilityEvents`<br/>`nodeTopologyEvents` |
+| CloudEvents type prefix | `com.retailnetwork.partner.node-performance.` |
+| Event source | `/retailnetwork/node-performance` |
+| Repository | [IQVO/node-performance](https://github.com/IQVO/node-performance) |
+| REST API | [node-performance-api](/docs/services/node-performance-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **node-performance** bounded context of the retail
+network (partner tier): it measures every node against what it declared and
+what was asked of it (acknowledgement latency, rejections, on-time handover
+against requiredShipBy, promise-kept rate, inventory feed freshness) over
+7-day and 30-day rolling windows and grades the node (ADR 0001, ADR 0002).
+
+**Published.** Two events through a **transactional outbox**: the scorecard
+row and its already-encoded events are written in ONE database transaction
+and an always-on relay drains them to Kafka (at-least-once; the CloudEvents
+`id` is stored with the outbox row, so a retry republishes the same `id`).
+`NodeScorecardUpdated` is an integration event on
+`retailnetwork.node-performance.events` (consumers: delivery-promise,
+order-sourcing). `NodeThresholdBreached` is analytics-only and goes ONLY to
+`retailnetwork.node-performance.analytics`. Both types are catalogued in
+ADR 0004.
+
+**Consumed.** Thirteen events from five producers, each topic under its own stable
+consumer group named by a mandatory environment variable (ADR 0003); every message is
+deduplicated on the CloudEvents `id` in the `processed_events` inbox, in the
+same transaction as its effect. The consumed messages below are tolerant
+local copies: only the fields this service relies on are required, unknown
+fields and unknown types are ignored, dispatch is on the full `type`.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`.
+`specversion`, `id`, `source` (`/retailnetwork/node-performance`), `type`,
+`subject` (the scorecardId, `nodeId:window`), `time`, `datacontenttype`
+(`application/json`) and `dataschema`
+(`urn:retailnetwork:node-performance:<stream>:<EventName>:v1`) are all
+required. Kafka key = the subject, so one scorecard's events stay ordered on
+one partition. Type = `com.retailnetwork.partner.node-performance.scorecard.<EventName>`.
+A breaking payload change is a new `.v2` type, never a mutation.
+
+**Conventions.** `data` is camelCase; ids are strings; instants are RFC 3339
+UTC; durations are integers named `...Minutes`; optional fields are omitted
+when absent (never null); evolution is additive only.
+
+
+## Architecture diagram
+<NodeGraph />
