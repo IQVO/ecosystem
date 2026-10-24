@@ -16,9 +16,12 @@
 //                 the generator derives sends/receives from it. Topic ownership
 //                 (catalog.contexts.mjs) is the reliable signal: a context sends on topics it
 //                 owns and receives on all others.
-//  4. v3 ids      AsyncAPI 3 files (network-inventory-planning) key messages in camelCase while
-//                 every 2.6 file yields PascalCase ids; the catalog keys on the id, so
-//                 camelCase keys are renamed (and their $refs rewritten) to line up cross-context.
+//  4. v3 ids     AsyncAPI 3 files (network-inventory-planning, retail network) key
+//                 messages in camelCase while every 2.6 file yields PascalCase ids;
+//                 the catalog keys on the id, so camelCase keys are renamed (and
+//                 their $refs rewritten) to line up cross-context. Retail-network
+//                 consumer declarations named `Consumed<X>` are renamed to the
+//                 owner's `<X>` for the same reason: one message id per event.
 //  6. openapi     Path-level `parameters` are copied into each operation (and removed from the
 //                 path item): the generator otherwise lists them as a bogus "PARAMETERS" endpoint.
 //  5. channels    Several contracts re-declare channels they only consume. The generator
@@ -45,11 +48,15 @@ for (const ctx of specDirs) {
   docs[ctx] = load(fs.readFileSync(path.join(SRC, ctx, 'asyncapi.yaml'), 'utf8'));
 }
 
-// topic -> { description, version } from the owning context
+// topic -> { description, version } from the owning context. 2.6 files key
+// channels by their topic; AsyncAPI 3 files may key them by any name and carry
+// the topic in `address` — resolve both.
+const channelByAddress = (doc, topic) =>
+  doc?.channels?.[topic] ?? Object.values(doc?.channels ?? {}).find((c) => c?.address === topic);
 const topicOwner = {};
 for (const [ctx, { topics }] of Object.entries(CONTEXTS)) {
   for (const t of topics) {
-    const ch = docs[ctx]?.channels?.[t];
+    const ch = channelByAddress(docs[ctx], t);
     if (ch) topicOwner[t] = { ctx, description: ch.description, version: String(docs[ctx].info.version) };
   }
 }
@@ -75,8 +82,10 @@ function renameV3MessageKeys(doc) {
   const rename = (obj, base) => {
     if (!obj) return;
     for (const key of Object.keys(obj)) {
-      const next = pascal(key);
-      if (next === key) continue;
+      // PascalCase ids fleet-wide; strip a `Consumed` prefix (retail-network
+      // consumer declarations) so the id equals the owner's message id.
+      const next = pascal(key).replace(/^Consumed(?=[A-Z])/, '');
+      if (next === key || Object.hasOwn(obj, next)) continue;
       obj[next] = obj[key];
       delete obj[key];
       renames.set(`${base}/${key}`, `${base}/${next}`);
@@ -96,9 +105,11 @@ function renameV3MessageKeys(doc) {
 function normalise(ctx, doc) {
   const owned = new Set(CONTEXTS[ctx]?.topics ?? []);
 
-  // (4) channel metadata aligned to the owner
+  // (4) channel metadata aligned to the owner. AsyncAPI 3 channels may be keyed
+  // by any name with the topic in `address` — resolve the topic first.
   for (const [channel, def] of Object.entries(doc.channels ?? {})) {
-    const owner = topicOwner[channel];
+    const chan = typeof def?.address === 'string' ? def.address : channel;
+    const owner = topicOwner[chan];
     if (!owner) continue;
     if (owner.description) def.description = owner.description;
     def['x-eventcatalog-channel-version'] = owner.version;

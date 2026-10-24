@@ -41,11 +41,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SPECS = path.join(ROOT, 'specs');
 const ALLOWLIST_FILE = path.join(SPECS, 'no-consumer-reasons.yaml');
 
-const TYPE_RE = /^com\.warehouse\.(wms|wes)\.([a-z-]+)\.([a-zA-Z]+)\.([A-Z][A-Za-z0-9]+)$/;
+const TYPE_RE = /^com\.(warehouse|retailnetwork)\.([a-z-]+)\.([a-z-]+)\.([a-zA-Z]+)\.([A-Z][A-Za-z0-9]+)$/;
 const REASON_KEY = 'x-no-consumer-reason';
 
-// com.warehouse.<sub>.<segment> -> context key. Type segments equal the context
-// key except wes-work-planning, whose types use `work-planning`.
+// com.<org>.<sub>.<segment> -> context key. Type segments equal the context
+// key except wes-work-planning, whose types use `work-planning`. The sub group
+// is the warehouse subdomain (wms|wes) or the retail-network tier
+// (commerce|logistics|partner) — only the segment identifies the context.
 const SEGMENT_TO_CTX = Object.fromEntries(Object.keys(CONTEXTS).map((ctx) => [ctx, ctx]));
 SEGMENT_TO_CTX['work-planning'] = 'wes-work-planning';
 
@@ -135,12 +137,16 @@ export function derive() {
     if (!CONTEXTS[ctx]) warn(`specs/${ctx} is not a context in catalog.contexts.mjs`);
     const doc = load(fs.readFileSync(specFile, 'utf8'));
     const owned = new Set(CONTEXTS[ctx]?.topics ?? []);
-    for (const [channel, body] of Object.entries(doc.channels ?? {})) {
+    for (const [key, body] of Object.entries(doc.channels ?? {})) {
+      // 2.6 files key channels by their topic; AsyncAPI 3 files may key them by
+      // any name with the topic in `address`. Resolve to the topic address so
+      // ownership and the `.events`/`.analytics` suffix tests see the real topic.
+      const channel = typeof body?.address === 'string' ? body.address : key;
       const isOwned = owned.has(channel);
       const channelReason = body?.[REASON_KEY];
       for (const message of channelMessages(body, doc)) {
         for (const type of structuralTypes(message, doc)) {
-          const segment = TYPE_RE.exec(type)?.[2];
+          const segment = TYPE_RE.exec(type)?.[3];
           if (isOwned) {
             if (SEGMENT_TO_CTX[segment] !== ctx) {
               // Foreign type quoted on an owned channel: not this context's

@@ -47,7 +47,7 @@ const openapiGenerators = Object.entries(SUBDOMAINS).map(([id, sd]) => [
 export default {
   title: 'Warehouse Systems Ecosystem',
   tagline:
-    'Event-driven architecture of the warehouse-systems ecosystem: WMS and WES domains, their bounded-context services, REST contracts and CloudEvents 1.0 messages on Kafka.',
+    'Event-driven architecture of the warehouse-systems ecosystem: the WMS and WES domains of the warehouse fleet plus the separate Retail Network (commerce, logistics and partner tiers), their bounded-context services, REST contracts and CloudEvents 1.0 messages on Kafka.',
   organizationName: 'Warehouse Systems',
   theme: 'sunset',
   homepageLink: 'https://github.com/IQVO',

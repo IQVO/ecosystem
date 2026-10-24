@@ -36,6 +36,12 @@ export function escapeMdx(text = '') {
 
 const table = (rows) => rows.map(([k, v]) => `| ${k} | ${v} |`).join('\n');
 
+// CloudEvents naming per organization: warehouse types are
+// com.warehouse.<subdomain>.<ctx>…, retail-network types are
+// com.retailnetwork.<tier>.<ctx>… (the tier is the type segment, not the domain).
+const ceOrg = (c) => SUBDOMAINS[c.subdomain]?.typeOrg ?? 'warehouse';
+const ceSegment = (c) => c.ceSegment ?? c.subdomain;
+
 const consumedTopics = (ctx, document) => {
   const own = new Set(CONTEXTS[ctx].topics);
   return [...document.channels().all()].map((c) => c.id()).filter((id) => !own.has(id));
@@ -49,7 +55,7 @@ export function domainMarkdown(id) {
   return `## Overview
 ${sd.description}
 
-CloudEvents types in this domain follow \`com.warehouse.${id}.<bounded-context>.<entity>.<EventName>\`.
+CloudEvents types in this domain follow \`${sd.typePattern ?? `com.warehouse.${id}.<bounded-context>.<entity>.<EventName>`}\`.
 Each bounded context below is documented twice: as an **events** service (the Kafka contract, from its
 AsyncAPI file) and as a **REST API** service (\`<context>-api\`, from its OpenAPI files, including the
 separate \`*-reports\` analytics binary where one exists).
@@ -80,8 +86,8 @@ ${table([
   ['Tier', c.tier],
   ['Publishes (Kafka)', c.topics.map(code).join('<br/>')],
   ['Consumes (Kafka)', consumed.length ? consumed.map(code).join('<br/>') : 'nothing: this context is a pure publisher'],
-  ['CloudEvents type prefix', code(`com.warehouse.${c.subdomain}.${ctx}.`)],
-  ['Event source', code(`/warehouse/${ctx}`)],
+  ['CloudEvents type prefix', code(`com.${ceOrg(c)}.${ceSegment(c)}.${ctx}.`)],
+  ['Event source', code(`/${ceOrg(c)}/${ctx}`)],
   ['Repository', `[IQVO/${ctx}](${REPO(ctx)})`],
   ['REST API', `[${ctx}-api](/docs/services/${ctx}-api)`],
 ])}
