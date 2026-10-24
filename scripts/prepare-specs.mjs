@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { load, dump } from 'js-yaml';
 import { CONTEXTS } from '../catalog.contexts.mjs';
+import { escapeMdx } from '../catalog.markdown.mjs';
 
 const SRC = 'specs';
 const OUT = '.generated-specs';
@@ -47,6 +48,9 @@ const specDirs = fs
 for (const ctx of specDirs) {
   docs[ctx] = load(fs.readFileSync(path.join(SRC, ctx, 'asyncapi.yaml'), 'utf8'));
 }
+// (7) escape spec prose before any cross-doc copying, so channel descriptions
+// handed from owner to consumer are already MDX-safe.
+for (const ctx of specDirs) escapeAsyncApiProse(docs[ctx]);
 
 // topic -> { description, version } from the owning context. 2.6 files key
 // channels by their topic; AsyncAPI 3 files may key them by any name and carry
@@ -74,6 +78,60 @@ function hoistPathParameters(api) {
       const have = new Set(own.map(key));
       item[m].parameters = [...shared.filter((p) => !have.has(key(p))), ...own];
     }
+  }
+}
+
+//  7. mdx         The EventCatalog generators escape braces in most spec prose
+//                 themselves (`\{` works in this MDX toolchain), but their `<`
+//                 escape (`\<`) does NOT suppress inline-JSX parsing — a raw
+//                 `<slug>` in prose breaks the Astro build even backslashed.
+//                 Split responsibilities:
+//                 • fields the generator brace-escapes (OpenAPI path prose,
+//                   AsyncAPI info/channel): we pre-convert `<` to `&lt;` only,
+//                   leaving braces for the generator;
+//                 • fields that reach .mdx UNescaped (OpenAPI info, AsyncAPI
+//                   message descriptions): full escapeMdx (braces + `&lt;`).
+//                 Payload/response SCHEMAS are never touched: they render as JSON.
+function mdxEscape(v) {
+  return typeof v === 'string' ? escapeMdx(v) : v;
+}
+function escapeLt(v) {
+  if (typeof v !== 'string') return v;
+  const kept = [];
+  const masked = v.replace(/```[\s\S]*?```|`[^`\n]*`/g, (m) => {
+    kept.push(m);
+    return `__LT_${kept.length - 1}__`;
+  });
+  return masked.replace(/</g, '&lt;').replace(/__LT_(\d+)__/g, (_, i) => kept[Number(i)]);
+}
+function escapeOpenApiProse(api) {
+  if (api.info) {
+    api.info.description = mdxEscape(api.info.description);
+    api.info.summary = mdxEscape(api.info.summary);
+  }
+  for (const item of Object.values(api.paths ?? {})) {
+    const params = [...(item.parameters ?? [])];
+    for (const m of HTTP) {
+      const op = item[m];
+      if (!op) continue;
+      op.description = escapeLt(op.description);
+      op.summary = escapeLt(op.summary);
+      params.push(...(op.parameters ?? []));
+      if (op.requestBody) op.requestBody.description = escapeLt(op.requestBody.description);
+      for (const resp of Object.values(op.responses ?? {})) resp.description = escapeLt(resp.description);
+    }
+    params.forEach((p) => (p.description = escapeLt(p.description)));
+  }
+}
+function escapeAsyncApiProse(doc) {
+  if (doc.info) {
+    doc.info.description = escapeLt(doc.info.description);
+    doc.info.summary = escapeLt(doc.info.summary);
+  }
+  for (const ch of Object.values(doc.channels ?? {})) ch.description = escapeLt(ch.description);
+  for (const msg of Object.values(doc.components?.messages ?? {})) {
+    msg.description = mdxEscape(msg.description);
+    msg.summary = mdxEscape(msg.summary);
   }
 }
 
@@ -167,6 +225,7 @@ for (const ctx of specDirs) {
     if (!file.startsWith('openapi')) { fs.copyFileSync(path.join(SRC, ctx, file), target); continue; }
     const api = load(fs.readFileSync(path.join(SRC, ctx, file), 'utf8'));
     hoistPathParameters(api);
+    escapeOpenApiProse(api);
     fs.writeFileSync(target, dump(api, { lineWidth: -1, noRefs: true }));
   }
   normalise(ctx, docs[ctx]);

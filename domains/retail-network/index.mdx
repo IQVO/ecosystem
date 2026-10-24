@@ -1,0 +1,72 @@
+---
+id: retail-network
+name: Retail Network
+version: 1.0.0
+owners:
+  - claudioed
+services:
+  - id: node-topology
+    version: 1.0.0
+  - id: offer-availability
+    version: 1.0.0
+  - id: delivery-promise
+    version: 1.0.0
+  - id: customer-ordering
+    version: 1.0.0
+  - id: order-sourcing
+    version: 1.0.0
+  - id: vendor-connectivity
+    version: 1.0.0
+  - id: linehaul-transportation
+    version: 1.0.0
+  - id: last-mile-delivery
+    version: 1.0.0
+  - id: shipping-and-tracking
+    version: 1.0.0
+  - id: node-performance
+    version: 1.0.0
+  - id: node-topology-api
+    version: 0.1.0
+  - id: offer-availability-api
+    version: 0.1.0
+  - id: delivery-promise-api
+    version: 0.1.0
+  - id: customer-ordering-api
+    version: 0.1.0
+  - id: order-sourcing-api
+    version: 0.1.0
+  - id: vendor-connectivity-api
+    version: 1.0.0
+  - id: linehaul-transportation-api
+    version: 0.1.0
+  - id: last-mile-delivery-api
+    version: 0.1.0
+  - id: shipping-and-tracking-api
+    version: 0.1.0
+  - id: node-performance-api
+    version: 0.1.0
+---
+## Overview
+The Retail Network is a separate organization from the warehouse-systems fleet. It owns the shopper-facing commerce tier (offer, promise, order, sourcing), the parcel logistics tier (topology, linehaul, last mile, tracking) and the partner tier (the Vendor API and node performance). Fulfillment nodes are operated by vendors; the warehouse-systems fleet is one of them (vendor V-WS). The boundary is hard: no retail-network context consumes a warehouse.* topic or calls a warehouse-systems service, and the fleet never consumes a retailnetwork.* topic — the only bridge is vendor-connectivity's Vendor API (Open Host Service + Published Language), called by the fleet's network-fulfillment context.
+
+CloudEvents types in this domain follow `com.retailnetwork.<tier>.<bounded-context>.<entity>.<EventName> (tier = commerce | logistics | partner)`.
+Each bounded context below is documented twice: as an **events** service (the Kafka contract, from its
+AsyncAPI file) and as a **REST API** service (`<context>-api`, from its OpenAPI files, including the
+separate `*-reports` analytics binary where one exists).
+
+## Bounded contexts
+| Context | Classification | Tier | Purpose |
+|---|---|---|---|
+| [node-topology](/docs/services/node-topology) | Supporting | Retail Network, logistics tier | The authoritative registry of the network's physical shape: every node (vendor fulfillment centres, cross-docks, returns centres, and the network's own sortation centres, delivery stations and air hubs), its declared operational profile, the directed lanes between nodes, the regions, and which delivery station serves which postal area. |
+| [offer-availability](/docs/services/offer-availability) | Supporting | Retail Network, commerce tier | Knows what the network can sell and from which node: the catalogue item, one listing per (catalogue item, node), and the quantity each node currently claims it can ship, with the basis the vendor gave for that number (physical stock or throughput-constrained). |
+| [delivery-promise](/docs/services/delivery-promise) | Core | Retail Network, commerce tier | Tells a shopper, before and at purchase, the date a package will arrive, and makes that date true by construction: a delivery offer is quoted only from a feasible witness path (node cutoff, scheduled departures, delivery wave) that has remaining capacity, and a promise holds that capacity until the order is placed or the hold expires. Judges every promise kept or broken. |
+| [customer-ordering](/docs/services/customer-ordering) | Generic | Retail Network, commerce tier | Turns a shopper's cart into a customer order: obtains a promise for every shipment group at checkout, records the order with the shopper and ship-to address (synthetic PII, held only here), shows status and tracking, and handles customer cancellation. |
+| [order-sourcing](/docs/services/order-sourcing) | Core | Retail Network, commerce tier | Decides, as late as the promise allows, which node and path will actually fulfil each shipment group. Keeps assignments in a virtual queue, re-optimises them against current capacity and cost until the release point, sends the group to the node, reassigns on rejection or expiry, and locks the assignment once the node commits. |
+| [vendor-connectivity](/docs/services/vendor-connectivity) | Supporting | Retail Network, partner tier | The network's Open Host Service for vendors that operate fulfillment nodes. Publishes the Vendor API and its Published Language: vendors register nodes, declare their operational profile, send inventory feeds, poll purchase orders, acknowledge them in full inside the acknowledgement window, request labels and confirm shipment. Every write is an asynchronous transaction a vendor reconciles. |
+| [linehaul-transportation](/docs/services/linehaul-transportation) | Supporting | Retail Network, logistics tier | Runs the middle mile: turns lanes into scheduled departures (including a pickup departure at every vendor node cutoff), keeps each departure's remaining capacity, builds loads of packages onto departures, and reports when loads depart and arrive. |
+| [last-mile-delivery](/docs/services/last-mile-delivery) | Supporting | Retail Network, logistics tier | Runs each delivery station: publishes delivery waves (induct cutoff, delivery window, stop capacity) that the promise relies on, plans routes for delivery service partners, and records every delivery attempt. |
+| [shipping-and-tracking](/docs/services/shipping-and-tracking) | Generic | Retail Network, logistics tier | Issues shipping labels (the only place outside customer-ordering that ever sees a ship-to address) and owns each package's journey: one customer-visible timeline consolidated from vendor handover, load and delivery facts, ending in delivered, returned or lost. |
+| [node-performance](/docs/services/node-performance) | Supporting | Retail Network, partner tier | Measures every node against what it declared and what was asked of it: acknowledgement latency, rejections, on-time handover against requiredShipBy, promise-kept rate and inventory feed freshness, over rolling windows, and grades the node. |
+
+## Architecture diagram
+<NodeGraph />

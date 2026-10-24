@@ -28,9 +28,9 @@ export function escapeMdx(text = '') {
     return `__CODE_${kept.length - 1}__`;
   });
   return masked
-    .replace(/{/g, '\\{')
+    .replace(/\{/g, '\\{')
     .replace(/}/g, '\\}')
-    .replace(/</g, '\\<')
+    .replace(/</g, '&lt;')
     .replace(/__CODE_(\d+)__/g, (_, i) => kept[Number(i)]);
 }
 
@@ -124,7 +124,9 @@ ${markdown}`;
 }
 
 export function messageMarkdown({ message, markdown }) {
-  const description = message.hasDescription() ? escapeMdx(message.description()) : '';
+  // Description arrives pre-escaped from scripts/prepare-specs.mjs (step 7);
+  // escaping here again would double the backslashes.
+  const description = message.hasDescription() ? message.description() : '';
   const example = message.examples().all()[0];
   const payload = example?.payload?.();
   const type = payload?.type;
@@ -134,8 +136,11 @@ export function messageMarkdown({ message, markdown }) {
   const tags = (message.tags().all() || []).map((t) => t.name());
   // The notice states a fact about the type's INTEGRATION publication: only
   // the `.events` channel page carries it. The `.analytics` mirror has its own
-  // consumer (the context's projector) and must not show it.
-  const noConsumer = channelIds.some((id) => id.endsWith('.events')) ? noConsumerReasonFor(type) : undefined;
+  // consumer (the context's projector) and must not show it. AsyncAPI 3 channel
+  // ids are friendly keys — fall back to the channel address for the suffix test.
+  const chans = message.channels().all();
+  const onEventsChannel = chans.some((ch) => ch.id().endsWith('.events') || String(ch.address?.() ?? '').endsWith('.events'));
+  const noConsumer = onEventsChannel ? noConsumerReasonFor(type) : undefined;
   const rows = [
     type && ['CloudEvents `type`', code(type)],
     payload?.source && ['CloudEvents `source`', code(payload.source)],

@@ -1,0 +1,60 @@
+---
+id: offer-availability-api-applyInventoryFeed
+version: 0.1.0
+name: applyInventoryFeed
+summary: Apply an inventory feed for one node (ApplyInventoryFeed)
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Inventory feeds'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /inventory-feeds
+  statusCodes:
+    - '201'
+    - '409'
+    - '422'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+In-org call from vendor-connectivity. The feed is applied in ONE transaction (at most 10000 lines per node; larger feeds are split by the vendor). Outcomes (Gap Register G23): APPLIED when every line names a listing of the node and no quantity is negative (a line whose asOf is not after the listing's current asOf is skipped and counted as stale, it does not fail the feed; one ListingAvailabilityChanged per applied line and one InventoryFeedApplied); SUPERSEDED when the feed's asOf is older than the last applied feed of that node (nothing applied, no event); FAILED when a line breaks an invariant (listing-not-on-node or negative-availability: nothing applied, no event, the feed row is kept and the request is answered 422). A full feed (fullUpdate true) sets availableQty 0, keeping the basis and stamping the feed's asOf, on every listing of the node it omits. A FAILED feedId may be sent again; an APPLIED or SUPERSEDED feedId is refused with feed-already-applied.
+
+
+
+
+## POST `(/inventory-feeds)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Client-chosen key. A repeat on the same route with the same key and the same request replays the first response; the same key with another body is 422 idempotency-key-reused. Keys are kept for 24 hours.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+
+
+## Architecture
+
+<NodeGraph />
