@@ -8,43 +8,79 @@ info:
     email: exception-management@iqvo.example.com
   license:
     name: UNLICENSED
-  description: |
+  description: >
     Event catalog for the **exception-management** bounded context (WES
+
     subdomain): the Problem Solve lifecycle (ADR 0001, ADR 0002). Every case
+
     is opened by a fact another context published; this service owns the
+
     triage, assignment, SLA and resolution of that case, never the producer's
+
     own state.
 
+
     **Published.** The `ExceptionCase` aggregate raises six events and the
+
     `ExceptionPolicy` aggregate one, all published to
+
     `warehouse.exception-management.events` through a **transactional
+
     outbox**: the aggregate row and its already-encoded events are written in
+
     ONE database transaction and a relay drains them to Kafka (at-least-once;
+
     the CloudEvents `id` is stored with the outbox row, so a retry republishes
+
     the same `id`). Kafka key = case id (source type for the policy event), so
+
     one case's history stays ordered on one partition.
 
-    **Consumed (ADR 0003).** Exception facts from six sibling contexts:
+
+    **Consumed (ADR 0003, 0006).** Exception facts from seven sibling contexts:
+
     fulfillment-execution (`TaskCPTMissed`, `PackageDiverted`,
+
     `WeightDiscrepancyDetected`), wes-work-planning
+
     (`BacklogThresholdBreached`), network-fulfillment
+
     (`AcknowledgementDeadlineAtRisk`, `OrphanedHoldCancelled`),
+
     order-management (`OrderRepromised`, correlation for auto-resolve only),
-    returns-processing (`UnexpectedReturnReceived`) and inventory-storage
+
+    returns-processing (`UnexpectedReturnReceived`), inbound-receiving
+
+    (`CartonDiscrepancyRaised`, routed by `kind`, ADR 0006) and
+    inventory-storage
+
     (`DiscrepancyDetected`, `ItemUnlocated`). Each consumed message opens or
+
     touches exactly one open case per dedup key (source type, source subject,
+
     site); the source payload is frozen on the case, never re-fetched. The
+
     consumed messages below are the producers' own contracts, restated here
+
     and never imported.
 
+
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+
     header `content-type: application/cloudevents+json; charset=UTF-8`.
+
     `specversion`, `id`, `source` (`/warehouse/exception-management`), `type`,
+
     `subject` (the case id; the source type for the policy event), `time`,
+
     `datacontenttype` (`application/json`) and `dataschema`
+
     (`urn:warehouse:exception-management:events:<EventName>:v1`) are all
+
     required. Kafka key = the subject. Type =
+
     `com.warehouse.wes.exception-management.<entity>.<EventName>`. A breaking
+
     payload change is a new `.v2` type, never a mutation.
 servers:
   production:
@@ -62,6 +98,10 @@ tags:
     description: Events raised by the ExceptionCase aggregate.
   - name: exceptionpolicy
     description: Events raised by the ExceptionPolicy aggregate.
+  - name: analytics
+    description: >-
+      The analytics read side of this context (ADR 0006): the analytics topic,
+      its projector and the reports binary.
   - name: consumed
     description: Events produced by sibling contexts that this service consumes (ADR 0003).
 channels:
@@ -1002,6 +1042,900 @@ channels:
                       on_type: com.warehouse.wes.order-management.order.OrderRepromised
                       within_minutes: 60
             messageId: ExceptionPolicyDeclared
+  warehouse.exception-management.analytics:
+    description: |
+      This service's own analytics stream (ADR 0006), written by the SAME
+      transactional outbox relay as the integration topic: every published
+      fact appears here too, under the SAME CloudEvents id and `type`, with
+      only the `dataschema` stream segment different
+      (urn:warehouse:exception-management:analytics:<EventName>:v1). It is NOT
+      an integration contract: the only consumer is this service's
+      cmd/exceptions-projector (fixed group from `ANALYTICS_CONSUMER_GROUP`,
+      starting at the earliest retained offset), which folds the events into
+      the analytical database; its deterministic poison goes to
+      warehouse.exception-management.analytics.dlq. Other contexts keep
+      reading warehouse.exception-management.events.
+    subscribe:
+      operationId: receiveExceptionAnalytics
+      summary: Receive the analytics twin of every published fact.
+      description: |
+        Payloads are byte-for-byte the integration payloads (ADR 0006); only
+        the dataschema names the analytics stream. The projector answers the
+        root-cause-frequency, mean-time-to-resolve, sla-breach-rate and
+        freshness reports from the folded facts.
+      tags:
+        - name: analytics
+      message:
+        oneOf:
+          - name: ExceptionOpened
+            title: Exception opened (analytics twin)
+            summary: The analytics-stream twin of ExceptionOpened (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:exception-management:analytics:ExceptionOpened:v1`.
+              Consumed only by cmd/exceptions-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the case id for case events;
+                        the source type for the policy event).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - case_id
+                        - source_type
+                        - source_subject
+                        - site_id
+                        - severity
+                        - queue
+                        - opened_at
+                        - sla_due_at
+                        - source_event_id
+                        - source_payload
+                      properties:
+                        case_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-11>
+                        source_type:
+                          type: string
+                          description: >-
+                            The full CloudEvents type of the consumed source
+                            fact.
+                          x-parser-schema-id: <anonymous-schema-12>
+                        source_subject:
+                          type: string
+                          description: >-
+                            The subject of the consumed source fact (its
+                            aggregate id).
+                          x-parser-schema-id: <anonymous-schema-13>
+                        site_id:
+                          type: string
+                          nullable: true
+                          description: >-
+                            The site carried by the source fact; null when it
+                            has none.
+                          x-parser-schema-id: <anonymous-schema-14>
+                        severity:
+                          type: string
+                          enum:
+                            - LOW
+                            - MEDIUM
+                            - HIGH
+                            - CRITICAL
+                          description: The policy default at open.
+                          x-parser-schema-id: <anonymous-schema-15>
+                        queue:
+                          type: string
+                          description: >-
+                            The problem-solve queue the policy routes the case
+                            to.
+                          x-parser-schema-id: <anonymous-schema-16>
+                        opened_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-17>
+                        sla_due_at:
+                          type: string
+                          format: date-time
+                          description: opened_at + the policy's sla_minutes.
+                          x-parser-schema-id: <anonymous-schema-18>
+                        source_event_id:
+                          type: string
+                          description: >-
+                            The CloudEvents id of the source fact that opened
+                            the case.
+                          x-parser-schema-id: <anonymous-schema-19>
+                        source_payload:
+                          type: object
+                          description: >-
+                            Frozen copy of the source fact's data; never changes
+                            after open.
+                          x-parser-schema-id: <anonymous-schema-20>
+                      x-parser-schema-id: <anonymous-schema-10>
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: ExceptionOpenedEvent
+            examples:
+              - name: opened
+                summary: A TaskCPTMissed fact opened the case for task task-8a1f.
+                payload:
+                  specversion: '1.0'
+                  id: 3f2a9c1e-6b48-4d17-9a0f-8e5d2c7b4a11
+                  source: /warehouse/exception-management
+                  type: >-
+                    com.warehouse.wes.exception-management.exceptioncase.ExceptionOpened
+                  subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                  time: '2026-10-21T09:00:05Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:exception-management:analytics:ExceptionOpened:v1
+                  data:
+                    case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                    source_type: com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed
+                    source_subject: task-8a1f
+                    site_id: null
+                    severity: HIGH
+                    queue: cps-front
+                    opened_at: '2026-10-21T09:00:05Z'
+                    sla_due_at: '2026-10-21T09:30:05Z'
+                    source_event_id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+                    source_payload:
+                      task_id: task-8a1f
+                      order_ref: wu-8a1f
+                      task_type: PICK
+                      cpt: '2026-09-30T14:55:00Z'
+            messageId: ExceptionOpenedAnalytics
+          - name: ExceptionTriaged
+            title: Exception triaged (analytics twin)
+            summary: The analytics-stream twin of ExceptionTriaged (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:exception-management:analytics:ExceptionTriaged:v1`.
+              Consumed only by cmd/exceptions-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the case id for case events;
+                        the source type for the policy event).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - case_id
+                        - severity
+                        - queue
+                        - actor
+                        - at
+                      properties:
+                        case_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-23>
+                        severity:
+                          type: string
+                          enum:
+                            - LOW
+                            - MEDIUM
+                            - HIGH
+                            - CRITICAL
+                          x-parser-schema-id: <anonymous-schema-24>
+                        queue:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-25>
+                        actor:
+                          type: string
+                          description: The operator id or `system`.
+                          x-parser-schema-id: <anonymous-schema-26>
+                        at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-27>
+                      x-parser-schema-id: <anonymous-schema-22>
+                  x-parser-schema-id: <anonymous-schema-21>
+              x-parser-schema-id: ExceptionTriagedEvent
+            examples:
+              - name: triaged
+                summary: >-
+                  An operator moved the case to the inbound queue at high
+                  severity.
+                payload:
+                  specversion: '1.0'
+                  id: 5c4b2d8f-1a39-4e60-8b2d-7f6e5a4b3c22
+                  source: /warehouse/exception-management
+                  type: >-
+                    com.warehouse.wes.exception-management.exceptioncase.ExceptionTriaged
+                  subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                  time: '2026-10-21T09:05:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:exception-management:analytics:ExceptionTriaged:v1
+                  data:
+                    case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                    severity: CRITICAL
+                    queue: cps-inbound
+                    actor: op-jane
+                    at: '2026-10-21T09:05:00Z'
+            messageId: ExceptionTriagedAnalytics
+          - name: ExceptionAssigned
+            title: Exception assigned (analytics twin)
+            summary: The analytics-stream twin of ExceptionAssigned (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:exception-management:analytics:ExceptionAssigned:v1`.
+              Consumed only by cmd/exceptions-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the case id for case events;
+                        the source type for the policy event).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - case_id
+                        - assignee
+                        - actor
+                        - at
+                      properties:
+                        case_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-30>
+                        assignee:
+                          type: string
+                          description: The operator id now owning the case.
+                          x-parser-schema-id: <anonymous-schema-31>
+                        actor:
+                          type: string
+                          description: >-
+                            The operator id or `system` that performed the
+                            assignment.
+                          x-parser-schema-id: <anonymous-schema-32>
+                        at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-33>
+                      x-parser-schema-id: <anonymous-schema-29>
+                  x-parser-schema-id: <anonymous-schema-28>
+              x-parser-schema-id: ExceptionAssignedEvent
+            examples:
+              - name: assigned
+                summary: op-marc took the case.
+                payload:
+                  specversion: '1.0'
+                  id: 7e8f9a0b-2c4d-4e5f-8a9b-0c1d2e3f4a33
+                  source: /warehouse/exception-management
+                  type: >-
+                    com.warehouse.wes.exception-management.exceptioncase.ExceptionAssigned
+                  subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                  time: '2026-10-21T09:10:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:exception-management:analytics:ExceptionAssigned:v1
+                  data:
+                    case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                    assignee: op-marc
+                    actor: op-jane
+                    at: '2026-10-21T09:10:00Z'
+            messageId: ExceptionAssignedAnalytics
+          - name: ExceptionEscalated
+            title: Exception escalated (analytics twin)
+            summary: The analytics-stream twin of ExceptionEscalated (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:exception-management:analytics:ExceptionEscalated:v1`.
+              Consumed only by cmd/exceptions-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the case id for case events;
+                        the source type for the policy event).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - case_id
+                        - sla_due_at
+                        - at
+                      properties:
+                        case_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-36>
+                        sla_due_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-37>
+                        at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-38>
+                      x-parser-schema-id: <anonymous-schema-35>
+                  x-parser-schema-id: <anonymous-schema-34>
+              x-parser-schema-id: ExceptionEscalatedEvent
+            examples:
+              - name: escalated
+                summary: The case breached its 30-minute SLA.
+                payload:
+                  specversion: '1.0'
+                  id: 9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c44
+                  source: /warehouse/exception-management
+                  type: >-
+                    com.warehouse.wes.exception-management.exceptioncase.ExceptionEscalated
+                  subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                  time: '2026-10-21T09:30:06Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:exception-management:analytics:ExceptionEscalated:v1
+                  data:
+                    case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                    sla_due_at: '2026-10-21T09:30:05Z'
+                    at: '2026-10-21T09:30:06Z'
+            messageId: ExceptionEscalatedAnalytics
+          - name: ExceptionResolved
+            title: Exception resolved (analytics twin)
+            summary: The analytics-stream twin of ExceptionResolved (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:exception-management:analytics:ExceptionResolved:v1`.
+              Consumed only by cmd/exceptions-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the case id for case events;
+                        the source type for the policy event).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - case_id
+                        - resolution_code
+                        - root_cause
+                        - note
+                        - actor
+                        - at
+                      properties:
+                        case_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-41>
+                        resolution_code:
+                          type: string
+                          description: What was done about the case (a code
+                          not prose).: null
+                          x-parser-schema-id: <anonymous-schema-42>
+                        root_cause:
+                          type: string
+                          description: Why it happened (a code
+                          not prose).: null
+                          x-parser-schema-id: <anonymous-schema-43>
+                        note:
+                          type: string
+                          nullable: true
+                          description: Free-form remark; null when none.
+                          x-parser-schema-id: <anonymous-schema-44>
+                        actor:
+                          type: string
+                          description: The operator id that resolved the case.
+                          x-parser-schema-id: <anonymous-schema-45>
+                        at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-46>
+                      x-parser-schema-id: <anonymous-schema-40>
+                  x-parser-schema-id: <anonymous-schema-39>
+              x-parser-schema-id: ExceptionResolvedEvent
+            examples:
+              - name: resolved
+                summary: The task was re-run and the promise restored.
+                payload:
+                  specversion: '1.0'
+                  id: 1f2e3d4c-5b6a-4789-9abc-def012345678
+                  source: /warehouse/exception-management
+                  type: >-
+                    com.warehouse.wes.exception-management.exceptioncase.ExceptionResolved
+                  subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                  time: '2026-10-21T09:25:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:exception-management:analytics:ExceptionResolved:v1
+                  data:
+                    case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                    resolution_code: WORK_COMPLETED
+                    root_cause: OPERATOR_UNAVAILABLE
+                    note: null
+                    actor: op-marc
+                    at: '2026-10-21T09:25:00Z'
+            messageId: ExceptionResolvedAnalytics
+          - name: ExceptionAutoResolved
+            title: Exception auto-resolved (analytics twin)
+            summary: The analytics-stream twin of ExceptionAutoResolved (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:exception-management:analytics:ExceptionAutoResolved:v1`.
+              Consumed only by cmd/exceptions-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the case id for case events;
+                        the source type for the policy event).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - case_id
+                        - rule_id
+                        - correlated_type
+                        - correlated_event_id
+                        - at
+                      properties:
+                        case_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-49>
+                        rule_id:
+                          type: string
+                          description: The policy's auto-resolve rule that fired.
+                          x-parser-schema-id: <anonymous-schema-50>
+                        correlated_type:
+                          type: string
+                          description: The full CloudEvents type of the correlated fact.
+                          x-parser-schema-id: <anonymous-schema-51>
+                        correlated_event_id:
+                          type: string
+                          description: The CloudEvents id of the correlated fact.
+                          x-parser-schema-id: <anonymous-schema-52>
+                        at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-53>
+                      x-parser-schema-id: <anonymous-schema-48>
+                  x-parser-schema-id: <anonymous-schema-47>
+              x-parser-schema-id: ExceptionAutoResolvedEvent
+            examples:
+              - name: autoResolved
+                summary: The repromised order closed the CPT-miss case.
+                payload:
+                  specversion: '1.0'
+                  id: 2e3f4a5b-6c7d-4899-a0bc-def012345678
+                  source: /warehouse/exception-management
+                  type: >-
+                    com.warehouse.wes.exception-management.exceptioncase.ExceptionAutoResolved
+                  subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                  time: '2026-10-21T09:20:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:exception-management:analytics:ExceptionAutoResolved:v1
+                  data:
+                    case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+                    rule_id: cpt-missed-repromised-v1
+                    correlated_type: com.warehouse.wes.order-management.order.OrderRepromised
+                    correlated_event_id: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+                    at: '2026-10-21T09:20:00Z'
+            messageId: ExceptionAutoResolvedAnalytics
+          - name: ExceptionPolicyDeclared
+            title: Exception policy declared (analytics twin)
+            summary: The analytics-stream twin of ExceptionPolicyDeclared (ADR 0006).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:exception-management:analytics:ExceptionPolicyDeclared:v1`.
+              Consumed only by cmd/exceptions-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the case id for case events;
+                        the source type for the policy event).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - source_type
+                        - version
+                        - severity
+                        - queue
+                        - sla_minutes
+                        - auto_resolve
+                      properties:
+                        source_type:
+                          type: string
+                          description: >-
+                            The full CloudEvents type of the governed source
+                            fact.
+                          x-parser-schema-id: <anonymous-schema-56>
+                        version:
+                          type: integer
+                          minimum: 1
+                          description: >-
+                            Append-only: 1 for the first declaration, +1 per
+                            accepted change.
+                          x-parser-schema-id: <anonymous-schema-57>
+                        severity:
+                          type: string
+                          enum:
+                            - LOW
+                            - MEDIUM
+                            - HIGH
+                            - CRITICAL
+                          x-parser-schema-id: <anonymous-schema-58>
+                        queue:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-59>
+                        sla_minutes:
+                          type: integer
+                          minimum: 1
+                          description: The SLA budget of cases opened under this policy.
+                          x-parser-schema-id: <anonymous-schema-60>
+                        auto_resolve:
+                          type: object
+                          nullable: true
+                          allOf:
+                            - type: object
+                              required:
+                                - on_type
+                                - within_minutes
+                              properties:
+                                on_type:
+                                  type: string
+                                  description: >-
+                                    The full CloudEvents type of the correlated
+                                    fact that closes the case (e.g.
+                                    OrderRepromised).
+                                  x-parser-schema-id: <anonymous-schema-62>
+                                within_minutes:
+                                  type: integer
+                                  minimum: 1
+                                  description: >-
+                                    The correlated fact counts only within this
+                                    many minutes of the case's last occurrence.
+                                  x-parser-schema-id: <anonymous-schema-63>
+                              x-parser-schema-id: AutoResolveRule
+                          x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-54>
+              x-parser-schema-id: ExceptionPolicyDeclaredEvent
+            examples:
+              - name: declared
+                summary: >-
+                  TaskCPTMissed defaults to HIGH, cps-front, 30-minute SLA,
+                  repromise auto-resolve.
+                payload:
+                  specversion: '1.0'
+                  id: 4a5b6c7d-8e9f-4a0b-8c1d-2e3f4a5b6c55
+                  source: /warehouse/exception-management
+                  type: >-
+                    com.warehouse.wes.exception-management.exceptionpolicy.ExceptionPolicyDeclared
+                  subject: com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed
+                  time: '2026-10-21T08:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:exception-management:analytics:ExceptionPolicyDeclared:v1
+                  data:
+                    source_type: com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed
+                    version: 1
+                    severity: HIGH
+                    queue: cps-front
+                    sla_minutes: 30
+                    auto_resolve:
+                      on_type: com.warehouse.wes.order-management.order.OrderRepromised
+                      within_minutes: 60
+            messageId: ExceptionPolicyDeclaredAnalytics
   warehouse.fulfillment.events:
     description: >-
       Integration events published by Fulfillment Execution, keyed by aggregate
@@ -2032,6 +2966,150 @@ channels:
                 site_id: site-1
                 received_at: '2026-10-21T10:12:00Z'
         messageId: UnexpectedReturnReceived
+  warehouse.inbound-receiving.events:
+    description: |
+      This service's integration topic. Written by the outbox relay; every
+      message carries the CloudEvents content-type header (plus the optional
+      W3C `traceparent` of the writing request). Key = `asn_number`
+      for ASN and receipt events, `appointment_id` for appointment events.
+      Dispatch on the full `type`, ignore unknown types, dedupe on `id`. The
+      first consumer is inventory-storage (`ReceiptLineReceived`).
+    x-eventcatalog-channel-version: 1.0.0
+    subscribe:
+      operationId: consumeInboundReceivingEvents
+      summary: Consume carton discrepancies as routed cases.
+      description: |
+        One case per (receipt_id, sscc or "-", kind). Missing, Duplicate,
+        Unexpected, CaseQtyMismatch, MixedCaseDeclaredAsCasePack,
+        MixedCartonContentMismatch, UnknownGtin and any unknown kind route to
+        the problem-solve policy; UnlabelledCarton and CartonOverLimit to the
+        receiving-lead policy (informational). The CloudEvents `id` claim and
+        the effect commit in one transaction.
+      tags:
+        - name: consumed
+      message:
+        name: CartonDiscrepancyRaised
+        title: CartonDiscrepancyRaised (consumed, inbound-receiving)
+        summary: A carton did not match its ASN or failed a receiving check.
+        description: >
+          `type` =
+
+          `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised`,
+
+          source `/warehouse/inbound-receiving`, subject and Kafka key = the
+
+          receipt id. `kind` is an open string (UnexpectedCarton, MissingCarton,
+
+          DuplicateSscc, UnknownGtin, CaseQtyMismatch,
+          MixedCaseDeclaredAsCasePack,
+
+          UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, ...).
+        contentType: application/cloudevents+json
+        tags:
+          - name: consumed
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-1>
+                id:
+                  type: string
+                  format: uuid
+                  x-parser-schema-id: <anonymous-schema-2>
+                source:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-3>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-4>
+                subject:
+                  type: string
+                  description: >-
+                    The aggregate instance id (the case id for case events; the
+                    source type for the policy event).
+                  x-parser-schema-id: <anonymous-schema-5>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-6>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-7>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-8>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - receipt_id
+                    - kind
+                    - at
+                  properties:
+                    receipt_id:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-111>
+                    sscc:
+                      type: string
+                      description: >-
+                        The carton's SSCC-18; absent when the discrepancy is not
+                        about one carton.
+                      x-parser-schema-id: <anonymous-schema-112>
+                    kind:
+                      type: string
+                      description: Open string; unknown kinds route to problem-solve.
+                      x-parser-schema-id: <anonymous-schema-113>
+                    expected:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-114>
+                    actual:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-115>
+                    at:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-116>
+                  x-parser-schema-id: <anonymous-schema-110>
+              x-parser-schema-id: <anonymous-schema-109>
+          x-parser-schema-id: CartonDiscrepancyRaisedEvent
+        examples:
+          - name: caseQtyMismatch
+            summary: A case declared 12 units but 10 were counted.
+            payload:
+              specversion: '1.0'
+              id: 5b2f0c1e-7a44-4b58-8f5d-2f6c1a9d3e10
+              source: /warehouse/inbound-receiving
+              type: >-
+                com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised
+              subject: rcpt-77
+              time: '2026-10-24T09:00:00Z'
+              datacontenttype: application/json
+              dataschema: >-
+                urn:warehouse:inbound-receiving:events:CartonDiscrepancyRaised:v1
+              data:
+                receipt_id: rcpt-77
+                sscc: '340123450000000013'
+                kind: CaseQtyMismatch
+                expected: '12'
+                actual: '10'
+                at: '2026-10-24T09:00:00Z'
+        messageId: CartonDiscrepancyRaised
   warehouse.inventory.events:
     description: >
       The outbound integration topic for this bounded context (the `Topic`
@@ -2042,7 +3120,9 @@ channels:
       `BinStockLevelChanged` (keyed by `<bin>:<sku>`, ADR 0040) and the promoted
       exception facts `DiscrepancyDetected`, `ItemUnlocated` and `ItemStowed`
       (ADR 0043 — byte-identical copies of the analytics feed, consumed by
-      exception-management and returns-processing). The legacy
+      exception-management and returns-processing) and the container events
+      `ContainerRegistered`, `ContainerStowed`, `CaseBroken` and
+      `ContainerEmptied` (keyed by LPN, ADR 0045/0046). The legacy
       `ProductClassified` was retired at product-master ADR 0003 stage E
       (2026-10-17). The primary downstream consumer is wes-work-planning, which
       dispatches on their full `type` strings and projects them into its
@@ -2138,19 +3218,19 @@ channels:
                         bin_id:
                           type: string
                           description: The bin whose count did not match system records.
-                          x-parser-schema-id: <anonymous-schema-111>
+                          x-parser-schema-id: <anonymous-schema-119>
                         counted:
                           type: integer
                           minimum: 0
                           description: Quantity physically counted in the bin.
-                          x-parser-schema-id: <anonymous-schema-112>
+                          x-parser-schema-id: <anonymous-schema-120>
                         system:
                           type: integer
                           minimum: 0
                           description: Quantity the system believed was in the bin.
-                          x-parser-schema-id: <anonymous-schema-113>
-                      x-parser-schema-id: <anonymous-schema-110>
-                  x-parser-schema-id: <anonymous-schema-109>
+                          x-parser-schema-id: <anonymous-schema-121>
+                      x-parser-schema-id: <anonymous-schema-118>
+                  x-parser-schema-id: <anonymous-schema-117>
               x-parser-schema-id: DiscrepancyDetectedEvent
             examples:
               - name: binCountShort
@@ -2251,21 +3331,21 @@ channels:
                         stock_unit_id:
                           type: string
                           description: The StockUnit flagged Unlocated.
-                          x-parser-schema-id: <anonymous-schema-116>
+                          x-parser-schema-id: <anonymous-schema-124>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-117>
+                          x-parser-schema-id: <anonymous-schema-125>
                         bin_id:
                           type: string
                           description: The bin the stock was believed to be in.
-                          x-parser-schema-id: <anonymous-schema-118>
+                          x-parser-schema-id: <anonymous-schema-126>
                         quantity:
                           type: integer
                           minimum: 1
                           description: Quantity that could not be accounted for.
-                          x-parser-schema-id: <anonymous-schema-119>
-                      x-parser-schema-id: <anonymous-schema-115>
-                  x-parser-schema-id: <anonymous-schema-114>
+                          x-parser-schema-id: <anonymous-schema-127>
+                      x-parser-schema-id: <anonymous-schema-123>
+                  x-parser-schema-id: <anonymous-schema-122>
               x-parser-schema-id: ItemUnlocatedEvent
             examples:
               - name: shortCountUnlocatedStock
@@ -4067,6 +5147,128 @@ components:
               site_id: site-1
               received_at: '2026-10-21T10:12:00Z'
       messageId: UnexpectedReturnReceived
+    CartonDiscrepancyRaised:
+      name: CartonDiscrepancyRaised
+      title: CartonDiscrepancyRaised (consumed, inbound-receiving)
+      summary: A carton did not match its ASN or failed a receiving check.
+      description: >
+        `type` =
+
+        `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised`,
+
+        source `/warehouse/inbound-receiving`, subject and Kafka key = the
+
+        receipt id. `kind` is an open string (UnexpectedCarton, MissingCarton,
+
+        DuplicateSscc, UnknownGtin, CaseQtyMismatch,
+        MixedCaseDeclaredAsCasePack,
+
+        UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, ...).
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: >-
+                  The aggregate instance id (the case id for case events; the
+                  source type for the policy event).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - receipt_id
+                  - kind
+                  - at
+                properties:
+                  receipt_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-111>
+                  sscc:
+                    type: string
+                    description: >-
+                      The carton's SSCC-18; absent when the discrepancy is not
+                      about one carton.
+                    x-parser-schema-id: <anonymous-schema-112>
+                  kind:
+                    type: string
+                    description: Open string; unknown kinds route to problem-solve.
+                    x-parser-schema-id: <anonymous-schema-113>
+                  expected:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-114>
+                  actual:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-115>
+                  at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-116>
+                x-parser-schema-id: <anonymous-schema-110>
+            x-parser-schema-id: <anonymous-schema-109>
+        x-parser-schema-id: CartonDiscrepancyRaisedEvent
+      examples:
+        - name: caseQtyMismatch
+          summary: A case declared 12 units but 10 were counted.
+          payload:
+            specversion: '1.0'
+            id: 5b2f0c1e-7a44-4b58-8f5d-2f6c1a9d3e10
+            source: /warehouse/inbound-receiving
+            type: >-
+              com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised
+            subject: rcpt-77
+            time: '2026-10-24T09:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inbound-receiving:events:CartonDiscrepancyRaised:v1
+            data:
+              receipt_id: rcpt-77
+              sscc: '340123450000000013'
+              kind: CaseQtyMismatch
+              expected: '12'
+              actual: '10'
+              at: '2026-10-24T09:00:00Z'
+      messageId: CartonDiscrepancyRaised
     DiscrepancyDetected:
       name: DiscrepancyDetected
       title: DiscrepancyDetected (consumed, inventory-storage)
@@ -4139,19 +5341,19 @@ components:
                   bin_id:
                     type: string
                     description: The bin whose count did not match system records.
-                    x-parser-schema-id: <anonymous-schema-111>
+                    x-parser-schema-id: <anonymous-schema-119>
                   counted:
                     type: integer
                     minimum: 0
                     description: Quantity physically counted in the bin.
-                    x-parser-schema-id: <anonymous-schema-112>
+                    x-parser-schema-id: <anonymous-schema-120>
                   system:
                     type: integer
                     minimum: 0
                     description: Quantity the system believed was in the bin.
-                    x-parser-schema-id: <anonymous-schema-113>
-                x-parser-schema-id: <anonymous-schema-110>
-            x-parser-schema-id: <anonymous-schema-109>
+                    x-parser-schema-id: <anonymous-schema-121>
+                x-parser-schema-id: <anonymous-schema-118>
+            x-parser-schema-id: <anonymous-schema-117>
         x-parser-schema-id: DiscrepancyDetectedEvent
       examples:
         - name: binCountShort
@@ -4244,21 +5446,21 @@ components:
                   stock_unit_id:
                     type: string
                     description: The StockUnit flagged Unlocated.
-                    x-parser-schema-id: <anonymous-schema-116>
+                    x-parser-schema-id: <anonymous-schema-124>
                   sku:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-117>
+                    x-parser-schema-id: <anonymous-schema-125>
                   bin_id:
                     type: string
                     description: The bin the stock was believed to be in.
-                    x-parser-schema-id: <anonymous-schema-118>
+                    x-parser-schema-id: <anonymous-schema-126>
                   quantity:
                     type: integer
                     minimum: 1
                     description: Quantity that could not be accounted for.
-                    x-parser-schema-id: <anonymous-schema-119>
-                x-parser-schema-id: <anonymous-schema-115>
-            x-parser-schema-id: <anonymous-schema-114>
+                    x-parser-schema-id: <anonymous-schema-127>
+                x-parser-schema-id: <anonymous-schema-123>
+            x-parser-schema-id: <anonymous-schema-122>
         x-parser-schema-id: ItemUnlocatedEvent
       examples:
         - name: shortCountUnlocatedStock
@@ -4278,6 +5480,866 @@ components:
               bin_id: A-12-3
               quantity: 3
       messageId: ItemUnlocated
+    ExceptionOpenedAnalytics:
+      name: ExceptionOpened
+      title: Exception opened (analytics twin)
+      summary: The analytics-stream twin of ExceptionOpened (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:exception-management:analytics:ExceptionOpened:v1`.
+        Consumed only by cmd/exceptions-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: >-
+                  The aggregate instance id (the case id for case events; the
+                  source type for the policy event).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - case_id
+                  - source_type
+                  - source_subject
+                  - site_id
+                  - severity
+                  - queue
+                  - opened_at
+                  - sla_due_at
+                  - source_event_id
+                  - source_payload
+                properties:
+                  case_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-11>
+                  source_type:
+                    type: string
+                    description: The full CloudEvents type of the consumed source fact.
+                    x-parser-schema-id: <anonymous-schema-12>
+                  source_subject:
+                    type: string
+                    description: >-
+                      The subject of the consumed source fact (its aggregate
+                      id).
+                    x-parser-schema-id: <anonymous-schema-13>
+                  site_id:
+                    type: string
+                    nullable: true
+                    description: >-
+                      The site carried by the source fact; null when it has
+                      none.
+                    x-parser-schema-id: <anonymous-schema-14>
+                  severity:
+                    type: string
+                    enum:
+                      - LOW
+                      - MEDIUM
+                      - HIGH
+                      - CRITICAL
+                    description: The policy default at open.
+                    x-parser-schema-id: <anonymous-schema-15>
+                  queue:
+                    type: string
+                    description: The problem-solve queue the policy routes the case to.
+                    x-parser-schema-id: <anonymous-schema-16>
+                  opened_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-17>
+                  sla_due_at:
+                    type: string
+                    format: date-time
+                    description: opened_at + the policy's sla_minutes.
+                    x-parser-schema-id: <anonymous-schema-18>
+                  source_event_id:
+                    type: string
+                    description: >-
+                      The CloudEvents id of the source fact that opened the
+                      case.
+                    x-parser-schema-id: <anonymous-schema-19>
+                  source_payload:
+                    type: object
+                    description: >-
+                      Frozen copy of the source fact's data; never changes after
+                      open.
+                    x-parser-schema-id: <anonymous-schema-20>
+                x-parser-schema-id: <anonymous-schema-10>
+            x-parser-schema-id: <anonymous-schema-9>
+        x-parser-schema-id: ExceptionOpenedEvent
+      examples:
+        - name: opened
+          summary: A TaskCPTMissed fact opened the case for task task-8a1f.
+          payload:
+            specversion: '1.0'
+            id: 3f2a9c1e-6b48-4d17-9a0f-8e5d2c7b4a11
+            source: /warehouse/exception-management
+            type: >-
+              com.warehouse.wes.exception-management.exceptioncase.ExceptionOpened
+            subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+            time: '2026-10-21T09:00:05Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:exception-management:analytics:ExceptionOpened:v1
+            data:
+              case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+              source_type: com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed
+              source_subject: task-8a1f
+              site_id: null
+              severity: HIGH
+              queue: cps-front
+              opened_at: '2026-10-21T09:00:05Z'
+              sla_due_at: '2026-10-21T09:30:05Z'
+              source_event_id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+              source_payload:
+                task_id: task-8a1f
+                order_ref: wu-8a1f
+                task_type: PICK
+                cpt: '2026-09-30T14:55:00Z'
+      messageId: ExceptionOpenedAnalytics
+    ExceptionTriagedAnalytics:
+      name: ExceptionTriaged
+      title: Exception triaged (analytics twin)
+      summary: The analytics-stream twin of ExceptionTriaged (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:exception-management:analytics:ExceptionTriaged:v1`.
+        Consumed only by cmd/exceptions-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: >-
+                  The aggregate instance id (the case id for case events; the
+                  source type for the policy event).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - case_id
+                  - severity
+                  - queue
+                  - actor
+                  - at
+                properties:
+                  case_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-23>
+                  severity:
+                    type: string
+                    enum:
+                      - LOW
+                      - MEDIUM
+                      - HIGH
+                      - CRITICAL
+                    x-parser-schema-id: <anonymous-schema-24>
+                  queue:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-25>
+                  actor:
+                    type: string
+                    description: The operator id or `system`.
+                    x-parser-schema-id: <anonymous-schema-26>
+                  at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-27>
+                x-parser-schema-id: <anonymous-schema-22>
+            x-parser-schema-id: <anonymous-schema-21>
+        x-parser-schema-id: ExceptionTriagedEvent
+      examples:
+        - name: triaged
+          summary: An operator moved the case to the inbound queue at high severity.
+          payload:
+            specversion: '1.0'
+            id: 5c4b2d8f-1a39-4e60-8b2d-7f6e5a4b3c22
+            source: /warehouse/exception-management
+            type: >-
+              com.warehouse.wes.exception-management.exceptioncase.ExceptionTriaged
+            subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+            time: '2026-10-21T09:05:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:exception-management:analytics:ExceptionTriaged:v1
+            data:
+              case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+              severity: CRITICAL
+              queue: cps-inbound
+              actor: op-jane
+              at: '2026-10-21T09:05:00Z'
+      messageId: ExceptionTriagedAnalytics
+    ExceptionAssignedAnalytics:
+      name: ExceptionAssigned
+      title: Exception assigned (analytics twin)
+      summary: The analytics-stream twin of ExceptionAssigned (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:exception-management:analytics:ExceptionAssigned:v1`.
+        Consumed only by cmd/exceptions-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: >-
+                  The aggregate instance id (the case id for case events; the
+                  source type for the policy event).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - case_id
+                  - assignee
+                  - actor
+                  - at
+                properties:
+                  case_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-30>
+                  assignee:
+                    type: string
+                    description: The operator id now owning the case.
+                    x-parser-schema-id: <anonymous-schema-31>
+                  actor:
+                    type: string
+                    description: The operator id or `system` that performed the assignment.
+                    x-parser-schema-id: <anonymous-schema-32>
+                  at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-33>
+                x-parser-schema-id: <anonymous-schema-29>
+            x-parser-schema-id: <anonymous-schema-28>
+        x-parser-schema-id: ExceptionAssignedEvent
+      examples:
+        - name: assigned
+          summary: op-marc took the case.
+          payload:
+            specversion: '1.0'
+            id: 7e8f9a0b-2c4d-4e5f-8a9b-0c1d2e3f4a33
+            source: /warehouse/exception-management
+            type: >-
+              com.warehouse.wes.exception-management.exceptioncase.ExceptionAssigned
+            subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+            time: '2026-10-21T09:10:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:exception-management:analytics:ExceptionAssigned:v1
+            data:
+              case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+              assignee: op-marc
+              actor: op-jane
+              at: '2026-10-21T09:10:00Z'
+      messageId: ExceptionAssignedAnalytics
+    ExceptionEscalatedAnalytics:
+      name: ExceptionEscalated
+      title: Exception escalated (analytics twin)
+      summary: The analytics-stream twin of ExceptionEscalated (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:exception-management:analytics:ExceptionEscalated:v1`.
+        Consumed only by cmd/exceptions-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: >-
+                  The aggregate instance id (the case id for case events; the
+                  source type for the policy event).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - case_id
+                  - sla_due_at
+                  - at
+                properties:
+                  case_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-36>
+                  sla_due_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-37>
+                  at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-38>
+                x-parser-schema-id: <anonymous-schema-35>
+            x-parser-schema-id: <anonymous-schema-34>
+        x-parser-schema-id: ExceptionEscalatedEvent
+      examples:
+        - name: escalated
+          summary: The case breached its 30-minute SLA.
+          payload:
+            specversion: '1.0'
+            id: 9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c44
+            source: /warehouse/exception-management
+            type: >-
+              com.warehouse.wes.exception-management.exceptioncase.ExceptionEscalated
+            subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+            time: '2026-10-21T09:30:06Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:exception-management:analytics:ExceptionEscalated:v1
+            data:
+              case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+              sla_due_at: '2026-10-21T09:30:05Z'
+              at: '2026-10-21T09:30:06Z'
+      messageId: ExceptionEscalatedAnalytics
+    ExceptionResolvedAnalytics:
+      name: ExceptionResolved
+      title: Exception resolved (analytics twin)
+      summary: The analytics-stream twin of ExceptionResolved (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:exception-management:analytics:ExceptionResolved:v1`.
+        Consumed only by cmd/exceptions-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: >-
+                  The aggregate instance id (the case id for case events; the
+                  source type for the policy event).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - case_id
+                  - resolution_code
+                  - root_cause
+                  - note
+                  - actor
+                  - at
+                properties:
+                  case_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-41>
+                  resolution_code:
+                    type: string
+                    description: What was done about the case (a code
+                    not prose).: null
+                    x-parser-schema-id: <anonymous-schema-42>
+                  root_cause:
+                    type: string
+                    description: Why it happened (a code
+                    not prose).: null
+                    x-parser-schema-id: <anonymous-schema-43>
+                  note:
+                    type: string
+                    nullable: true
+                    description: Free-form remark; null when none.
+                    x-parser-schema-id: <anonymous-schema-44>
+                  actor:
+                    type: string
+                    description: The operator id that resolved the case.
+                    x-parser-schema-id: <anonymous-schema-45>
+                  at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-46>
+                x-parser-schema-id: <anonymous-schema-40>
+            x-parser-schema-id: <anonymous-schema-39>
+        x-parser-schema-id: ExceptionResolvedEvent
+      examples:
+        - name: resolved
+          summary: The task was re-run and the promise restored.
+          payload:
+            specversion: '1.0'
+            id: 1f2e3d4c-5b6a-4789-9abc-def012345678
+            source: /warehouse/exception-management
+            type: >-
+              com.warehouse.wes.exception-management.exceptioncase.ExceptionResolved
+            subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+            time: '2026-10-21T09:25:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:exception-management:analytics:ExceptionResolved:v1
+            data:
+              case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+              resolution_code: WORK_COMPLETED
+              root_cause: OPERATOR_UNAVAILABLE
+              note: null
+              actor: op-marc
+              at: '2026-10-21T09:25:00Z'
+      messageId: ExceptionResolvedAnalytics
+    ExceptionAutoResolvedAnalytics:
+      name: ExceptionAutoResolved
+      title: Exception auto-resolved (analytics twin)
+      summary: The analytics-stream twin of ExceptionAutoResolved (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:exception-management:analytics:ExceptionAutoResolved:v1`.
+        Consumed only by cmd/exceptions-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: >-
+                  The aggregate instance id (the case id for case events; the
+                  source type for the policy event).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - case_id
+                  - rule_id
+                  - correlated_type
+                  - correlated_event_id
+                  - at
+                properties:
+                  case_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-49>
+                  rule_id:
+                    type: string
+                    description: The policy's auto-resolve rule that fired.
+                    x-parser-schema-id: <anonymous-schema-50>
+                  correlated_type:
+                    type: string
+                    description: The full CloudEvents type of the correlated fact.
+                    x-parser-schema-id: <anonymous-schema-51>
+                  correlated_event_id:
+                    type: string
+                    description: The CloudEvents id of the correlated fact.
+                    x-parser-schema-id: <anonymous-schema-52>
+                  at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-53>
+                x-parser-schema-id: <anonymous-schema-48>
+            x-parser-schema-id: <anonymous-schema-47>
+        x-parser-schema-id: ExceptionAutoResolvedEvent
+      examples:
+        - name: autoResolved
+          summary: The repromised order closed the CPT-miss case.
+          payload:
+            specversion: '1.0'
+            id: 2e3f4a5b-6c7d-4899-a0bc-def012345678
+            source: /warehouse/exception-management
+            type: >-
+              com.warehouse.wes.exception-management.exceptioncase.ExceptionAutoResolved
+            subject: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+            time: '2026-10-21T09:20:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:warehouse:exception-management:analytics:ExceptionAutoResolved:v1
+            data:
+              case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
+              rule_id: cpt-missed-repromised-v1
+              correlated_type: com.warehouse.wes.order-management.order.OrderRepromised
+              correlated_event_id: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+              at: '2026-10-21T09:20:00Z'
+      messageId: ExceptionAutoResolvedAnalytics
+    ExceptionPolicyDeclaredAnalytics:
+      name: ExceptionPolicyDeclared
+      title: Exception policy declared (analytics twin)
+      summary: The analytics-stream twin of ExceptionPolicyDeclared (ADR 0006).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:exception-management:analytics:ExceptionPolicyDeclared:v1`.
+        Consumed only by cmd/exceptions-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: >-
+                  The aggregate instance id (the case id for case events; the
+                  source type for the policy event).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - source_type
+                  - version
+                  - severity
+                  - queue
+                  - sla_minutes
+                  - auto_resolve
+                properties:
+                  source_type:
+                    type: string
+                    description: The full CloudEvents type of the governed source fact.
+                    x-parser-schema-id: <anonymous-schema-56>
+                  version:
+                    type: integer
+                    minimum: 1
+                    description: >-
+                      Append-only: 1 for the first declaration, +1 per accepted
+                      change.
+                    x-parser-schema-id: <anonymous-schema-57>
+                  severity:
+                    type: string
+                    enum:
+                      - LOW
+                      - MEDIUM
+                      - HIGH
+                      - CRITICAL
+                    x-parser-schema-id: <anonymous-schema-58>
+                  queue:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-59>
+                  sla_minutes:
+                    type: integer
+                    minimum: 1
+                    description: The SLA budget of cases opened under this policy.
+                    x-parser-schema-id: <anonymous-schema-60>
+                  auto_resolve:
+                    type: object
+                    nullable: true
+                    allOf:
+                      - type: object
+                        required:
+                          - on_type
+                          - within_minutes
+                        properties:
+                          on_type:
+                            type: string
+                            description: >-
+                              The full CloudEvents type of the correlated fact
+                              that closes the case (e.g. OrderRepromised).
+                            x-parser-schema-id: <anonymous-schema-62>
+                          within_minutes:
+                            type: integer
+                            minimum: 1
+                            description: >-
+                              The correlated fact counts only within this many
+                              minutes of the case's last occurrence.
+                            x-parser-schema-id: <anonymous-schema-63>
+                        x-parser-schema-id: AutoResolveRule
+                    x-parser-schema-id: <anonymous-schema-61>
+                x-parser-schema-id: <anonymous-schema-55>
+            x-parser-schema-id: <anonymous-schema-54>
+        x-parser-schema-id: ExceptionPolicyDeclaredEvent
+      examples:
+        - name: declared
+          summary: >-
+            TaskCPTMissed defaults to HIGH, cps-front, 30-minute SLA, repromise
+            auto-resolve.
+          payload:
+            specversion: '1.0'
+            id: 4a5b6c7d-8e9f-4a0b-8c1d-2e3f4a5b6c55
+            source: /warehouse/exception-management
+            type: >-
+              com.warehouse.wes.exception-management.exceptionpolicy.ExceptionPolicyDeclared
+            subject: com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed
+            time: '2026-10-21T08:00:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:warehouse:exception-management:analytics:ExceptionPolicyDeclared:v1
+            data:
+              source_type: com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed
+              version: 1
+              severity: HIGH
+              queue: cps-front
+              sla_minutes: 30
+              auto_resolve:
+                on_type: com.warehouse.wes.order-management.order.OrderRepromised
+                within_minutes: 60
+      messageId: ExceptionPolicyDeclaredAnalytics
   schemas:
     CloudEventEnvelope:
       type: object
@@ -5540,6 +7602,87 @@ components:
               x-parser-schema-id: <anonymous-schema-102>
           x-parser-schema-id: <anonymous-schema-101>
       x-parser-schema-id: UnexpectedReturnReceivedEvent
+    CartonDiscrepancyRaisedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: >-
+                The aggregate instance id (the case id for case events; the
+                source type for the policy event).
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - receipt_id
+                - kind
+                - at
+              properties:
+                receipt_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-111>
+                sscc:
+                  type: string
+                  description: >-
+                    The carton's SSCC-18; absent when the discrepancy is not
+                    about one carton.
+                  x-parser-schema-id: <anonymous-schema-112>
+                kind:
+                  type: string
+                  description: Open string; unknown kinds route to problem-solve.
+                  x-parser-schema-id: <anonymous-schema-113>
+                expected:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-114>
+                actual:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-115>
+                at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-116>
+              x-parser-schema-id: <anonymous-schema-110>
+          x-parser-schema-id: <anonymous-schema-109>
+      x-parser-schema-id: CartonDiscrepancyRaisedEvent
     DiscrepancyDetectedEvent:
       allOf:
         - type: object
@@ -5598,19 +7741,19 @@ components:
                 bin_id:
                   type: string
                   description: The bin whose count did not match system records.
-                  x-parser-schema-id: <anonymous-schema-111>
+                  x-parser-schema-id: <anonymous-schema-119>
                 counted:
                   type: integer
                   minimum: 0
                   description: Quantity physically counted in the bin.
-                  x-parser-schema-id: <anonymous-schema-112>
+                  x-parser-schema-id: <anonymous-schema-120>
                 system:
                   type: integer
                   minimum: 0
                   description: Quantity the system believed was in the bin.
-                  x-parser-schema-id: <anonymous-schema-113>
-              x-parser-schema-id: <anonymous-schema-110>
-          x-parser-schema-id: <anonymous-schema-109>
+                  x-parser-schema-id: <anonymous-schema-121>
+              x-parser-schema-id: <anonymous-schema-118>
+          x-parser-schema-id: <anonymous-schema-117>
       x-parser-schema-id: DiscrepancyDetectedEvent
     ItemUnlocatedEvent:
       allOf:
@@ -5671,21 +7814,21 @@ components:
                 stock_unit_id:
                   type: string
                   description: The StockUnit flagged Unlocated.
-                  x-parser-schema-id: <anonymous-schema-116>
+                  x-parser-schema-id: <anonymous-schema-124>
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-117>
+                  x-parser-schema-id: <anonymous-schema-125>
                 bin_id:
                   type: string
                   description: The bin the stock was believed to be in.
-                  x-parser-schema-id: <anonymous-schema-118>
+                  x-parser-schema-id: <anonymous-schema-126>
                 quantity:
                   type: integer
                   minimum: 1
                   description: Quantity that could not be accounted for.
-                  x-parser-schema-id: <anonymous-schema-119>
-              x-parser-schema-id: <anonymous-schema-115>
-          x-parser-schema-id: <anonymous-schema-114>
+                  x-parser-schema-id: <anonymous-schema-127>
+              x-parser-schema-id: <anonymous-schema-123>
+          x-parser-schema-id: <anonymous-schema-122>
       x-parser-schema-id: ItemUnlocatedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

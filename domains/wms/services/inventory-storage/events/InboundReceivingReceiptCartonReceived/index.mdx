@@ -1,0 +1,38 @@
+---
+id: InboundReceivingReceiptCartonReceived
+version: 1.0.0
+name: 'Receipt Carton Received (from inbound-receiving, consumed)'
+summary: >-
+  A sealed carton was received on a receipt line; it becomes a Container once
+  the line is booked.
+badges:
+  - content: inbound-receiving
+    textColor: blue
+    backgroundColor: blue
+schemaPath: schema.json
+owners:
+  - claudioed
+---
+## Description
+CONSUMED, not produced (ADR 0045, 0046; contract section 2 with R6/R7 applied): type `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived`, `source=/warehouse/inbound-receiving`. `data` is snake_case: `{receipt_id, asn_number, sscc, parent_sscc, sealed, lpn, owner_ref, contents[{line_no, sku, gtin, qty, lot, expiry, condition}], received_at}`. It carries NO site (R6): the container's site is derived at StowContainer from the bin. Unknown fields are ignored.
+
+Only a sealed, single-content, `Good` carton whose `qty` equals the case's units per pack in the PackagingView gets a Container (mixed, unsealed and damaged cartons keep their eaches as ordinary staged stock and get none). The carton is recorded keyed by (`receipt_id`, `line_no`, `lpn`) and settles idempotently in either arrival order relative to `ReceiptLineReceived`: the container exists only when the sum of container quantities of the line stays within the eaches `ReceiptLineReceived` booked, and when `gtin` is known to the PackagingView (otherwise it waits in the pending table). This message books NO quantity. The CloudEvents `id` is claimed in `processed_events` (consumer `inbound-carton`) in the same transaction.
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived` |
+| CloudEvents `source` | `/warehouse/inbound-receiving` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `rcpt-223e4567-e89b-12d3-a456-426614174000`) |
+| CloudEvents `dataschema` | `urn:warehouse:inbound-receiving:events:ReceiptCartonReceived:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inbound-receiving.events` |
+| Entity / aggregate | `inbound-receiving` |
+
+
+## Architecture
+<NodeGraph />
+
+
+## Schema
+<SchemaViewer file="schema.json" title="Message Schema" maxHeight="500" />

@@ -1,0 +1,194 @@
+{
+  "type": "object",
+  "required": [
+    "kind",
+    "accepted",
+    "lines",
+    "cartons",
+    "discrepancies",
+    "version"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "description": "What a scan resolves to. `qty` counts cases for `CASE_GTIN` and eaches for `EACH_GTIN`.",
+      "enum": [
+        "SSCC",
+        "CASE_GTIN",
+        "EACH_GTIN"
+      ]
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "lines": {
+      "type": "array",
+      "description": "The receipt's lines after the scan.",
+      "items": {
+        "type": "object",
+        "required": [
+          "lineNo",
+          "sku",
+          "expectedQty",
+          "receivedGood",
+          "receivedDamaged"
+        ],
+        "properties": {
+          "lineNo": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sku": {
+            "type": "string"
+          },
+          "expectedQty": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "receivedGood": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "receivedDamaged": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "cartons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "lpn",
+          "kind",
+          "status",
+          "sealed",
+          "contents"
+        ],
+        "properties": {
+          "lpn": {
+            "type": "string",
+            "description": "The SSCC, or an internal `LPN-<ulid>` for a carton received without one."
+          },
+          "sscc": {
+            "type": "string"
+          },
+          "parentSscc": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`HOMOGENEOUS_CASE` = one SKU in a case pack; `MIXED` = several SKUs, a\nlogistic unit only (no pack GTIN).\n",
+            "enum": [
+              "HOMOGENEOUS_CASE",
+              "MIXED"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "Expected",
+              "Accepted"
+            ]
+          },
+          "sealed": {
+            "type": "boolean"
+          },
+          "contents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "lineNo",
+                "sku",
+                "gtin",
+                "qty",
+                "condition"
+              ],
+              "properties": {
+                "lineNo": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 1
+                },
+                "sku": {
+                  "type": "string"
+                },
+                "gtin": {
+                  "type": "string"
+                },
+                "qty": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Eaches."
+                },
+                "lot": {
+                  "type": "string"
+                },
+                "expiry": {
+                  "type": "string"
+                },
+                "condition": {
+                  "type": "string",
+                  "description": "Whether received units are fit to stock. Only `Good` is handed to inventory-storage.",
+                  "enum": [
+                    "Good",
+                    "Damaged"
+                  ]
+                }
+              }
+            }
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "discrepancies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Raised on `CartonDiscrepancyRaised`, never on `ReceiptClosed`.\n`UnexpectedCarton` = an SSCC not on the manifest; `MissingCarton` = a\nmanifest carton never accepted (raised at close); `DuplicateSscc` =\nscanned twice or already received; `UnknownGtin` = a GTIN the\nPackagingView does not know; `CaseQtyMismatch` = quantity differs from\nthe active CASE units per pack or the label count;\n`MixedCaseDeclaredAsCasePack` = the label's content contradicts the\nmanifest SKU; `UnlabelledCarton` = a case with no SSCC against a carton\nASN (it gets an internal LPN, see the label endpoint);\n`CartonOverLimit` = the carton's DECLARED `grossWeightG` or longest\n`dims` side is above `CARTON_MAX_GROSS_WEIGHT_G` /\n`CARTON_MAX_LONGEST_SIDE_MM` (the carton is still ACCEPTED;\n`expected` holds the breached limits and `actual` the declared values,\nas `grossWeightG:<n>` / `longestSideMm:<n>` joined by commas);\n`MixedCartonContentMismatch` = the `countedContents` of a MIXED carton\ndiffer from its manifest for a SKU (`expected` and `actual` are\n`<sku>:<qty>`, one finding per SKU).\n",
+            "enum": [
+              "UnexpectedCarton",
+              "MissingCarton",
+              "DuplicateSscc",
+              "UnknownGtin",
+              "CaseQtyMismatch",
+              "MixedCaseDeclaredAsCasePack",
+              "UnlabelledCarton",
+              "CartonOverLimit",
+              "MixedCartonContentMismatch"
+            ]
+          },
+          "sscc": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "actual": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "version": {
+      "type": "integer",
+      "format": "int64"
+    }
+  },
+  "isSchema": true
+}

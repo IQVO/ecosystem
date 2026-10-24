@@ -1,50 +1,110 @@
 asyncapi: 2.6.0
 info:
   title: product-master Domain Events
-  version: 1.0.0
+  version: 1.1.0
   contact:
     name: product-master maintainers
     url: https://github.com/IQVO/product-master
     email: product-master@iqvo.example.com
   license:
     name: UNLICENSED
-  description: |
+  description: >
     Event catalog for the **product-master** bounded context (WMS subdomain):
-    SKU-level product master data, i.e. handling classification and the
-    physical profile (ADR 0001, ADR 0002).
 
-    **Published.** The `Product` aggregate raises five events, published to
+    SKU-level product master data, i.e. handling classification, the
+
+    physical profile and the packaging hierarchy with GS1 GTINs (ADR 0001,
+
+    ADR 0002, ADR 0011).
+
+
+    **Published.** The `Product` aggregate raises eight events, published to
+
     `warehouse.product-master.events` through a **transactional outbox**: the
+
     product row and its already-encoded events are written in ONE database
+
     transaction and a relay drains them to Kafka (at-least-once; the CloudEvents
+
     `id` is stored with the outbox row, so a retry republishes the same `id`).
+
     A change that alters nothing raises no event.
 
+
+    **Packaging hierarchy (ADR 0011).** Three events carry the pack levels
+
+    (`EACH | INNER | CASE | PALLET`) of a SKU. They are additive and
+
+    integration-only (NOT written to the analytics stream). A GTIN is always
+
+    the 14-digit zero-left-padded string. Eaches are the ledger unit:
+    `qty_of_child`
+
+    and `units_per_pack` are the only pack quantities, a bare quantity never
+
+    changes meaning. `units_per_pack` is the direct factor to eaches. Once a
+
+    level is active its quantities never change: a new content quantity is a
+
+    new GTIN at that level (declaring it end-dates the old level with a
+
+    `ProductPackLevelRetired`, reason `superseded`, in the same transaction,
+
+    one `version` apart). An end-dated level is kept: resolve a GTIN of an
+
+    in-flight ASN from your local copy, which must keep retired levels.
+
+    Dates and timestamps are RFC 3339 UTC.
+
+
     **Local copies, not lookups.** Sibling contexts (inventory-storage,
+
     order-management, wes-work-planning, fulfillment-execution) keep a local
+
     copy keyed by SKU. Every payload carries the aggregate `version` after the
+
     change; apply a message only when its `version` is greater than the stored
+
     one. Payloads are full-state per concern (classification, physical profile),
+
     so a consumer overwrites, it never merges.
 
+
     **Analytics (ADR 0006).** The same five events are ALSO written, in the
+
     same transaction, to `warehouse.product-master.analytics` with the same
+
     `type` and the same `id` per occurrence, `dataschema`
+
     `urn:warehouse:product-master:analytics:<EventName>:v1` and payloads equal
+
     to the integration payloads. Only this service's `product-projector`
+
     consumes it; it is not an integration contract.
 
+
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+
     header `content-type: application/cloudevents+json; charset=UTF-8`.
+
     Optional W3C trace-context headers (`traceparent`, and `tracestate` /
+
     `baggage` when present) carry the trace of the request that wrote the
+
     outbox row (ADR 0009); consumers may extract them, and must not require
+
     them.
+
     `specversion`, `id`, `source` (`/warehouse/product-master`), `type`,
+
     `subject` (the SKU), `time`, `datacontenttype` (`application/json`) and
+
     `dataschema` (`urn:warehouse:product-master:events:<EventName>:v1`) are all
+
     required. Kafka key = the SKU. Type =
+
     `com.warehouse.wms.product-master.product.<EventName>`. A breaking payload
+
     change is a new `.v2` type, never a mutation.
 servers:
   production:
@@ -71,7 +131,7 @@ channels:
       every message carries the CloudEvents content-type header (plus the
       optional W3C `traceparent` of the writing request). Dispatch on the
       full `type`, ignore unknown types, dedupe on `id`, apply by `version`.
-    x-eventcatalog-channel-version: 1.0.0
+    x-eventcatalog-channel-version: 1.1.0
     publish:
       operationId: receiveProductEvents
       summary: Receive Product events.
@@ -886,6 +946,500 @@ channels:
                     discrepancy: true
                     version: 5
             messageId: ProductMeasured
+          - name: ProductPackLevelDeclared
+            title: Product pack level declared
+            summary: >-
+              A pack level (EACH, INNER, CASE or PALLET) of a SKU was declared,
+              or one of its mutable attributes changed.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductPackLevelDeclared`;
+
+              subject and key = the SKU. Carries the FULL level after the change
+
+              (ADR 0011). `child_gtin` and `qty_of_child` are absent for EACH;
+
+              `units_per_pack` is 1 for EACH. `dims` are the DECLARED dimensions
+
+              (omitted when none); measurements arrive as
+              `ProductPackLevelMeasured`.
+
+              Only `dims`, `is_orderable` and `is_despatch_unit` can change for
+              a
+
+              GTIN already announced (the event is then re-sent in full); a new
+
+              content quantity is a new `gtin`.
+            contentType: application/cloudevents+json
+            tags:
+              - name: product
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - level
+                        - gtin
+                        - units_per_pack
+                        - is_orderable
+                        - is_despatch_unit
+                        - effective_from
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-43>
+                        level:
+                          type: string
+                          enum:
+                            - EACH
+                            - INNER
+                            - CASE
+                            - PALLET
+                          x-parser-schema-id: PackLevel
+                        gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          description: >-
+                            A GTIN, always the 14-digit zero-left-padded string
+                            with a valid mod-10 check digit.
+                          x-parser-schema-id: Gtin
+                        child_gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          description: >-
+                            A GTIN, always the 14-digit zero-left-padded string
+                            with a valid mod-10 check digit.
+                          x-parser-schema-id: Gtin
+                        qty_of_child:
+                          type: integer
+                          minimum: 2
+                          maximum: 1000000
+                          description: Absent for EACH.
+                          x-parser-schema-id: <anonymous-schema-44>
+                        units_per_pack:
+                          type: integer
+                          minimum: 1
+                          maximum: 1000000
+                          description: Direct factor to eaches; 1 for EACH.
+                          x-parser-schema-id: <anonymous-schema-45>
+                        dims:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-46>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-47>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-48>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-49>
+                          x-parser-schema-id: PackDimensions
+                        is_orderable:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-50>
+                        is_despatch_unit:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-51>
+                        effective_from:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-52>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-53>
+                      x-parser-schema-id: <anonymous-schema-42>
+                  x-parser-schema-id: <anonymous-schema-41>
+              x-parser-schema-id: ProductPackLevelDeclaredEvent
+            examples:
+              - name: caseOf12
+                summary: SKU-1 declares a case of 12 eaches.
+                payload:
+                  specversion: '1.0'
+                  id: 3c2b1a09-8f7e-4d6c-9b5a-4a3b2c1d0e9f
+                  source: /warehouse/product-master
+                  type: >-
+                    com.warehouse.wms.product-master.product.ProductPackLevelDeclared
+                  subject: SKU-1
+                  time: '2026-10-06T21:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:product-master:events:ProductPackLevelDeclared:v1
+                  data:
+                    sku: SKU-1
+                    level: CASE
+                    gtin: '24006381333935'
+                    child_gtin: '04006381333931'
+                    qty_of_child: 12
+                    units_per_pack: 12
+                    dims:
+                      length_mm: 400
+                      width_mm: 300
+                      height_mm: 200
+                      weight_g: 6500
+                    is_orderable: true
+                    is_despatch_unit: true
+                    effective_from: '2026-10-06T20:00:00Z'
+                    version: 3
+            messageId: ProductPackLevelDeclared
+          - name: ProductPackLevelRetired
+            title: Product pack level retired
+            summary: A pack level was end-dated; its GTIN stays resolvable.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductPackLevelRetired`;
+
+              subject and key = the SKU. `reason` is `superseded` when a new
+              GTIN was
+
+              declared at the same level (the matching
+              `ProductPackLevelDeclared`
+
+              follows with the next `version`), else the reason given to the
+              retire
+
+              command. The GTIN is never reused. The levels above it are NOT
+              retired
+
+              by this event: re-declare them.
+            contentType: application/cloudevents+json
+            tags:
+              - name: product
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - level
+                        - gtin
+                        - effective_to
+                        - reason
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-56>
+                        level:
+                          type: string
+                          enum:
+                            - EACH
+                            - INNER
+                            - CASE
+                            - PALLET
+                          x-parser-schema-id: PackLevel
+                        gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          description: >-
+                            A GTIN, always the 14-digit zero-left-padded string
+                            with a valid mod-10 check digit.
+                          x-parser-schema-id: Gtin
+                        effective_to:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-57>
+                        reason:
+                          type: string
+                          minLength: 1
+                          maxLength: 200
+                          x-parser-schema-id: <anonymous-schema-58>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-59>
+                      x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-54>
+              x-parser-schema-id: ProductPackLevelRetiredEvent
+            examples:
+              - name: superseded
+                summary: The case GTIN was superseded by a new one.
+                payload:
+                  specversion: '1.0'
+                  id: 7b6a5948-3726-4150-8f9e-0d1c2b3a4958
+                  source: /warehouse/product-master
+                  type: >-
+                    com.warehouse.wms.product-master.product.ProductPackLevelRetired
+                  subject: SKU-1
+                  time: '2026-10-06T21:01:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:product-master:events:ProductPackLevelRetired:v1
+                  data:
+                    sku: SKU-1
+                    level: CASE
+                    gtin: '24006381333935'
+                    effective_to: '2026-10-06T21:01:00Z'
+                    reason: superseded
+                    version: 4
+            messageId: ProductPackLevelRetired
+          - name: ProductPackLevelMeasured
+            title: Product pack level measured
+            summary: A measurement of one pack of an active level was recorded.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductPackLevelMeasured`;
+
+              subject and key = the SKU. The measurement of the
+              declared-versus-measured
+
+              split (ADR 0002) per level; `device_id` is omitted for a manual
+              one.
+            contentType: application/cloudevents+json
+            tags:
+              - name: product
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - level
+                        - gtin
+                        - dims
+                        - measured_at
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-62>
+                        level:
+                          type: string
+                          enum:
+                            - EACH
+                            - INNER
+                            - CASE
+                            - PALLET
+                          x-parser-schema-id: PackLevel
+                        gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          description: >-
+                            A GTIN, always the 14-digit zero-left-padded string
+                            with a valid mod-10 check digit.
+                          x-parser-schema-id: Gtin
+                        dims:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-46>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-47>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-48>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-49>
+                          x-parser-schema-id: PackDimensions
+                        measured_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-63>
+                        device_id:
+                          type: string
+                          description: Omitted for a manual measurement.
+                          x-parser-schema-id: <anonymous-schema-64>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-65>
+                      x-parser-schema-id: <anonymous-schema-61>
+                  x-parser-schema-id: <anonymous-schema-60>
+              x-parser-schema-id: ProductPackLevelMeasuredEvent
+            examples:
+              - name: cubiscan
+                summary: A cubiscan measured the case.
+                payload:
+                  specversion: '1.0'
+                  id: a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
+                  source: /warehouse/product-master
+                  type: >-
+                    com.warehouse.wms.product-master.product.ProductPackLevelMeasured
+                  subject: SKU-1
+                  time: '2026-10-06T21:02:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:product-master:events:ProductPackLevelMeasured:v1
+                  data:
+                    sku: SKU-1
+                    level: CASE
+                    gtin: '24006381333935'
+                    dims:
+                      length_mm: 410
+                      width_mm: 310
+                      height_mm: 210
+                      weight_g: 6900
+                    measured_at: '2026-10-06T14:05:00Z'
+                    device_id: CUBISCAN-03
+                    version: 5
+            messageId: ProductPackLevelMeasured
   warehouse.product-master.analytics:
     description: |
       This service's analytics topic (`AnalyticsTopic` in
@@ -902,7 +1456,7 @@ channels:
       `warehouse.product-master.analytics.dlq` (raw bytes plus `x-dlq-*`
       headers). Not an integration contract: other contexts consume
       `warehouse.product-master.events`.
-    x-eventcatalog-channel-version: 1.0.0
+    x-eventcatalog-channel-version: 1.1.0
     publish:
       operationId: receiveProductAnalyticsEvents
       summary: Receive the Product analytics events.
@@ -2507,6 +3061,490 @@ components:
               discrepancy: true
               version: 5
       messageId: ProductMeasured
+    ProductPackLevelDeclared:
+      name: ProductPackLevelDeclared
+      title: Product pack level declared
+      summary: >-
+        A pack level (EACH, INNER, CASE or PALLET) of a SKU was declared, or one
+        of its mutable attributes changed.
+      description: >
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductPackLevelDeclared`;
+
+        subject and key = the SKU. Carries the FULL level after the change
+
+        (ADR 0011). `child_gtin` and `qty_of_child` are absent for EACH;
+
+        `units_per_pack` is 1 for EACH. `dims` are the DECLARED dimensions
+
+        (omitted when none); measurements arrive as `ProductPackLevelMeasured`.
+
+        Only `dims`, `is_orderable` and `is_despatch_unit` can change for a
+
+        GTIN already announced (the event is then re-sent in full); a new
+
+        content quantity is a new `gtin`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - level
+                  - gtin
+                  - units_per_pack
+                  - is_orderable
+                  - is_despatch_unit
+                  - effective_from
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-43>
+                  level:
+                    type: string
+                    enum:
+                      - EACH
+                      - INNER
+                      - CASE
+                      - PALLET
+                    x-parser-schema-id: PackLevel
+                  gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    description: >-
+                      A GTIN, always the 14-digit zero-left-padded string with a
+                      valid mod-10 check digit.
+                    x-parser-schema-id: Gtin
+                  child_gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    description: >-
+                      A GTIN, always the 14-digit zero-left-padded string with a
+                      valid mod-10 check digit.
+                    x-parser-schema-id: Gtin
+                  qty_of_child:
+                    type: integer
+                    minimum: 2
+                    maximum: 1000000
+                    description: Absent for EACH.
+                    x-parser-schema-id: <anonymous-schema-44>
+                  units_per_pack:
+                    type: integer
+                    minimum: 1
+                    maximum: 1000000
+                    description: Direct factor to eaches; 1 for EACH.
+                    x-parser-schema-id: <anonymous-schema-45>
+                  dims:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-46>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-47>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-48>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: PackDimensions
+                  is_orderable:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-50>
+                  is_despatch_unit:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-51>
+                  effective_from:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-52>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-53>
+                x-parser-schema-id: <anonymous-schema-42>
+            x-parser-schema-id: <anonymous-schema-41>
+        x-parser-schema-id: ProductPackLevelDeclaredEvent
+      examples:
+        - name: caseOf12
+          summary: SKU-1 declares a case of 12 eaches.
+          payload:
+            specversion: '1.0'
+            id: 3c2b1a09-8f7e-4d6c-9b5a-4a3b2c1d0e9f
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductPackLevelDeclared
+            subject: SKU-1
+            time: '2026-10-06T21:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductPackLevelDeclared:v1
+            data:
+              sku: SKU-1
+              level: CASE
+              gtin: '24006381333935'
+              child_gtin: '04006381333931'
+              qty_of_child: 12
+              units_per_pack: 12
+              dims:
+                length_mm: 400
+                width_mm: 300
+                height_mm: 200
+                weight_g: 6500
+              is_orderable: true
+              is_despatch_unit: true
+              effective_from: '2026-10-06T20:00:00Z'
+              version: 3
+      messageId: ProductPackLevelDeclared
+    ProductPackLevelRetired:
+      name: ProductPackLevelRetired
+      title: Product pack level retired
+      summary: A pack level was end-dated; its GTIN stays resolvable.
+      description: >
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductPackLevelRetired`;
+
+        subject and key = the SKU. `reason` is `superseded` when a new GTIN was
+
+        declared at the same level (the matching `ProductPackLevelDeclared`
+
+        follows with the next `version`), else the reason given to the retire
+
+        command. The GTIN is never reused. The levels above it are NOT retired
+
+        by this event: re-declare them.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - level
+                  - gtin
+                  - effective_to
+                  - reason
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-56>
+                  level:
+                    type: string
+                    enum:
+                      - EACH
+                      - INNER
+                      - CASE
+                      - PALLET
+                    x-parser-schema-id: PackLevel
+                  gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    description: >-
+                      A GTIN, always the 14-digit zero-left-padded string with a
+                      valid mod-10 check digit.
+                    x-parser-schema-id: Gtin
+                  effective_to:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-57>
+                  reason:
+                    type: string
+                    minLength: 1
+                    maxLength: 200
+                    x-parser-schema-id: <anonymous-schema-58>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-59>
+                x-parser-schema-id: <anonymous-schema-55>
+            x-parser-schema-id: <anonymous-schema-54>
+        x-parser-schema-id: ProductPackLevelRetiredEvent
+      examples:
+        - name: superseded
+          summary: The case GTIN was superseded by a new one.
+          payload:
+            specversion: '1.0'
+            id: 7b6a5948-3726-4150-8f9e-0d1c2b3a4958
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductPackLevelRetired
+            subject: SKU-1
+            time: '2026-10-06T21:01:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductPackLevelRetired:v1
+            data:
+              sku: SKU-1
+              level: CASE
+              gtin: '24006381333935'
+              effective_to: '2026-10-06T21:01:00Z'
+              reason: superseded
+              version: 4
+      messageId: ProductPackLevelRetired
+    ProductPackLevelMeasured:
+      name: ProductPackLevelMeasured
+      title: Product pack level measured
+      summary: A measurement of one pack of an active level was recorded.
+      description: >
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductPackLevelMeasured`;
+
+        subject and key = the SKU. The measurement of the
+        declared-versus-measured
+
+        split (ADR 0002) per level; `device_id` is omitted for a manual one.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - level
+                  - gtin
+                  - dims
+                  - measured_at
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-62>
+                  level:
+                    type: string
+                    enum:
+                      - EACH
+                      - INNER
+                      - CASE
+                      - PALLET
+                    x-parser-schema-id: PackLevel
+                  gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    description: >-
+                      A GTIN, always the 14-digit zero-left-padded string with a
+                      valid mod-10 check digit.
+                    x-parser-schema-id: Gtin
+                  dims:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-46>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-47>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-48>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: PackDimensions
+                  measured_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-63>
+                  device_id:
+                    type: string
+                    description: Omitted for a manual measurement.
+                    x-parser-schema-id: <anonymous-schema-64>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-65>
+                x-parser-schema-id: <anonymous-schema-61>
+            x-parser-schema-id: <anonymous-schema-60>
+        x-parser-schema-id: ProductPackLevelMeasuredEvent
+      examples:
+        - name: cubiscan
+          summary: A cubiscan measured the case.
+          payload:
+            specversion: '1.0'
+            id: a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductPackLevelMeasured
+            subject: SKU-1
+            time: '2026-10-06T21:02:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductPackLevelMeasured:v1
+            data:
+              sku: SKU-1
+              level: CASE
+              gtin: '24006381333935'
+              dims:
+                length_mm: 410
+                width_mm: 310
+                height_mm: 210
+                weight_g: 6900
+              measured_at: '2026-10-06T14:05:00Z'
+              device_id: CUBISCAN-03
+              version: 5
+      messageId: ProductPackLevelMeasured
     ProductRegisteredAnalytics:
       name: ProductRegistered
       title: Product registered (analytics)
@@ -3858,5 +4896,398 @@ components:
               x-parser-schema-id: <anonymous-schema-28>
           x-parser-schema-id: <anonymous-schema-27>
       x-parser-schema-id: PhysicalProfileEvent
+    PackLevel:
+      type: string
+      enum:
+        - EACH
+        - INNER
+        - CASE
+        - PALLET
+      x-parser-schema-id: PackLevel
+    Gtin:
+      type: string
+      pattern: ^[0-9]{14}$
+      description: >-
+        A GTIN, always the 14-digit zero-left-padded string with a valid mod-10
+        check digit.
+      x-parser-schema-id: Gtin
+    PackDimensions:
+      type: object
+      required:
+        - length_mm
+        - width_mm
+        - height_mm
+        - weight_g
+      properties:
+        length_mm:
+          type: integer
+          minimum: 1
+          maximum: 20000
+          x-parser-schema-id: <anonymous-schema-46>
+        width_mm:
+          type: integer
+          minimum: 1
+          maximum: 20000
+          x-parser-schema-id: <anonymous-schema-47>
+        height_mm:
+          type: integer
+          minimum: 1
+          maximum: 20000
+          x-parser-schema-id: <anonymous-schema-48>
+        weight_g:
+          type: integer
+          minimum: 1
+          maximum: 2000000
+          x-parser-schema-id: <anonymous-schema-49>
+      x-parser-schema-id: PackDimensions
+    ProductPackLevelDeclaredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The SKU.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - units_per_pack
+                - is_orderable
+                - is_despatch_unit
+                - effective_from
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-43>
+                level:
+                  type: string
+                  enum:
+                    - EACH
+                    - INNER
+                    - CASE
+                    - PALLET
+                  x-parser-schema-id: PackLevel
+                gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  description: >-
+                    A GTIN, always the 14-digit zero-left-padded string with a
+                    valid mod-10 check digit.
+                  x-parser-schema-id: Gtin
+                child_gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  description: >-
+                    A GTIN, always the 14-digit zero-left-padded string with a
+                    valid mod-10 check digit.
+                  x-parser-schema-id: Gtin
+                qty_of_child:
+                  type: integer
+                  minimum: 2
+                  maximum: 1000000
+                  description: Absent for EACH.
+                  x-parser-schema-id: <anonymous-schema-44>
+                units_per_pack:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000000
+                  description: Direct factor to eaches; 1 for EACH.
+                  x-parser-schema-id: <anonymous-schema-45>
+                dims:
+                  type: object
+                  required:
+                    - length_mm
+                    - width_mm
+                    - height_mm
+                    - weight_g
+                  properties:
+                    length_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-46>
+                    width_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-47>
+                    height_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-48>
+                    weight_g:
+                      type: integer
+                      minimum: 1
+                      maximum: 2000000
+                      x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: PackDimensions
+                is_orderable:
+                  type: boolean
+                  x-parser-schema-id: <anonymous-schema-50>
+                is_despatch_unit:
+                  type: boolean
+                  x-parser-schema-id: <anonymous-schema-51>
+                effective_from:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-52>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-53>
+              x-parser-schema-id: <anonymous-schema-42>
+          x-parser-schema-id: <anonymous-schema-41>
+      x-parser-schema-id: ProductPackLevelDeclaredEvent
+    ProductPackLevelRetiredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The SKU.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - effective_to
+                - reason
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-56>
+                level:
+                  type: string
+                  enum:
+                    - EACH
+                    - INNER
+                    - CASE
+                    - PALLET
+                  x-parser-schema-id: PackLevel
+                gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  description: >-
+                    A GTIN, always the 14-digit zero-left-padded string with a
+                    valid mod-10 check digit.
+                  x-parser-schema-id: Gtin
+                effective_to:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-57>
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  x-parser-schema-id: <anonymous-schema-58>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-59>
+              x-parser-schema-id: <anonymous-schema-55>
+          x-parser-schema-id: <anonymous-schema-54>
+      x-parser-schema-id: ProductPackLevelRetiredEvent
+    ProductPackLevelMeasuredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The SKU.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - dims
+                - measured_at
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-62>
+                level:
+                  type: string
+                  enum:
+                    - EACH
+                    - INNER
+                    - CASE
+                    - PALLET
+                  x-parser-schema-id: PackLevel
+                gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  description: >-
+                    A GTIN, always the 14-digit zero-left-padded string with a
+                    valid mod-10 check digit.
+                  x-parser-schema-id: Gtin
+                dims:
+                  type: object
+                  required:
+                    - length_mm
+                    - width_mm
+                    - height_mm
+                    - weight_g
+                  properties:
+                    length_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-46>
+                    width_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-47>
+                    height_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-48>
+                    weight_g:
+                      type: integer
+                      minimum: 1
+                      maximum: 2000000
+                      x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: PackDimensions
+                measured_at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-63>
+                device_id:
+                  type: string
+                  description: Omitted for a manual measurement.
+                  x-parser-schema-id: <anonymous-schema-64>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-65>
+              x-parser-schema-id: <anonymous-schema-61>
+          x-parser-schema-id: <anonymous-schema-60>
+      x-parser-schema-id: ProductPackLevelMeasuredEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

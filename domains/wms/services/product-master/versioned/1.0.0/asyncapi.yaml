@@ -1,0 +1,3862 @@
+asyncapi: 2.6.0
+info:
+  title: product-master Domain Events
+  version: 1.0.0
+  contact:
+    name: product-master maintainers
+    url: https://github.com/IQVO/product-master
+    email: product-master@iqvo.example.com
+  license:
+    name: UNLICENSED
+  description: |
+    Event catalog for the **product-master** bounded context (WMS subdomain):
+    SKU-level product master data, i.e. handling classification and the
+    physical profile (ADR 0001, ADR 0002).
+
+    **Published.** The `Product` aggregate raises five events, published to
+    `warehouse.product-master.events` through a **transactional outbox**: the
+    product row and its already-encoded events are written in ONE database
+    transaction and a relay drains them to Kafka (at-least-once; the CloudEvents
+    `id` is stored with the outbox row, so a retry republishes the same `id`).
+    A change that alters nothing raises no event.
+
+    **Local copies, not lookups.** Sibling contexts (inventory-storage,
+    order-management, wes-work-planning, fulfillment-execution) keep a local
+    copy keyed by SKU. Every payload carries the aggregate `version` after the
+    change; apply a message only when its `version` is greater than the stored
+    one. Payloads are full-state per concern (classification, physical profile),
+    so a consumer overwrites, it never merges.
+
+    **Analytics (ADR 0006).** The same five events are ALSO written, in the
+    same transaction, to `warehouse.product-master.analytics` with the same
+    `type` and the same `id` per occurrence, `dataschema`
+    `urn:warehouse:product-master:analytics:<EventName>:v1` and payloads equal
+    to the integration payloads. Only this service's `product-projector`
+    consumes it; it is not an integration contract.
+
+    **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+    header `content-type: application/cloudevents+json; charset=UTF-8`.
+    Optional W3C trace-context headers (`traceparent`, and `tracestate` /
+    `baggage` when present) carry the trace of the request that wrote the
+    outbox row (ADR 0009); consumers may extract them, and must not require
+    them.
+    `specversion`, `id`, `source` (`/warehouse/product-master`), `type`,
+    `subject` (the SKU), `time`, `datacontenttype` (`application/json`) and
+    `dataschema` (`urn:warehouse:product-master:events:<EventName>:v1`) are all
+    required. Kafka key = the SKU. Type =
+    `com.warehouse.wms.product-master.product.<EventName>`. A breaking payload
+    change is a new `.v2` type, never a mutation.
+servers:
+  production:
+    url: '{brokers}'
+    protocol: kafka
+    description: Fleet-shared Kafka broker (host supplied by the deployment environment).
+    variables:
+      brokers:
+        default: kafka.warehouse-systems.internal:9092
+defaultContentType: application/cloudevents+json
+tags:
+  - name: product-master
+    description: The product-master bounded context (WMS subdomain).
+  - name: product
+    description: Events raised by the Product aggregate.
+  - name: analytics
+    description: >-
+      This service's own analytics stream, consumed only by its projector (ADR
+      0006).
+channels:
+  warehouse.product-master.events:
+    description: |
+      This service's integration topic. Written by the outbox relay; key = SKU;
+      every message carries the CloudEvents content-type header (plus the
+      optional W3C `traceparent` of the writing request). Dispatch on the
+      full `type`, ignore unknown types, dedupe on `id`, apply by `version`.
+    x-eventcatalog-channel-version: 1.0.0
+    publish:
+      operationId: receiveProductEvents
+      summary: Receive Product events.
+      description: |
+        Subscribe to the product master data stream. Route on the full `type`
+        (`com.warehouse.wms.product-master.product.<EventName>`).
+      tags:
+        - name: product
+      message:
+        oneOf:
+          - name: ProductRegistered
+            title: Product registered
+            summary: A SKU was registered as a product.
+            description: >-
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductRegistered`;
+              subject and key = the SKU.
+            contentType: application/cloudevents+json
+            tags:
+              - name: product
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - description
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-11>
+                        description:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-12>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-13>
+                      x-parser-schema-id: <anonymous-schema-10>
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: ProductRegisteredEvent
+            examples:
+              - name: registered
+                summary: SKU-1 registered.
+                payload:
+                  specversion: '1.0'
+                  id: 1b0c9a4e-2f7d-4a63-9d1e-5a7c3e2b9f10
+                  source: /warehouse/product-master
+                  type: com.warehouse.wms.product-master.product.ProductRegistered
+                  subject: SKU-1
+                  time: '2026-10-06T21:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:product-master:events:ProductRegistered:v1
+                  data:
+                    sku: SKU-1
+                    description: Lithium battery pack 12V
+                    version: 1
+            messageId: ProductRegistered
+          - name: ProductDescriptionChanged
+            title: Product description changed
+            summary: A registered product's description changed.
+            description: >-
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductDescriptionChanged`;
+              subject and key = the SKU.
+            contentType: application/cloudevents+json
+            tags:
+              - name: product
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - description
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-16>
+                        description:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-17>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-18>
+                      x-parser-schema-id: <anonymous-schema-15>
+                  x-parser-schema-id: <anonymous-schema-14>
+              x-parser-schema-id: ProductDescriptionChangedEvent
+            examples:
+              - name: described
+                summary: SKU-1's description changed.
+                payload:
+                  specversion: '1.0'
+                  id: 8d3f2c1a-6b5e-4f7a-9c0d-1e2f3a4b5c6d
+                  source: /warehouse/product-master
+                  type: >-
+                    com.warehouse.wms.product-master.product.ProductDescriptionChanged
+                  subject: SKU-1
+                  time: '2026-10-06T21:01:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:product-master:events:ProductDescriptionChanged:v1
+                  data:
+                    sku: SKU-1
+                    description: Lithium battery pack 12V, 7Ah
+                    version: 2
+            messageId: ProductDescriptionChanged
+          - name: ProductClassified
+            title: Product classified
+            summary: A product's handling classification was set or replaced.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductClassified`;
+
+              subject and key = the SKU. Full-state replacement of the
+
+              classification. `sku`, `handling_tags`, `temperature_class` and
+
+              `dot_hazard_class` keep the field names of inventory-storage's v1
+
+              payload (ADR 0004). Optional fields are omitted when unset.
+            contentType: application/cloudevents+json
+            tags:
+              - name: product
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - handling_tags
+                        - classification_source
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-21>
+                        handling_tags:
+                          type: array
+                          minItems: 1
+                          items:
+                            type: string
+                            enum:
+                              - Hazmat
+                              - Fragile
+                              - TemperatureSensitive
+                              - Oversized
+                              - HighValue
+                            x-parser-schema-id: HandlingTag
+                          x-parser-schema-id: <anonymous-schema-22>
+                        temperature_class:
+                          type: string
+                          enum:
+                            - Ambient
+                            - Chilled
+                            - Frozen
+                          x-parser-schema-id: <anonymous-schema-23>
+                        dot_hazard_class:
+                          type: integer
+                          minimum: 1
+                          maximum: 9
+                          x-parser-schema-id: <anonymous-schema-24>
+                        classification_source:
+                          type: string
+                          enum:
+                            - native
+                            - legacy-import
+                          x-parser-schema-id: <anonymous-schema-25>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-26>
+                      x-parser-schema-id: <anonymous-schema-20>
+                  x-parser-schema-id: <anonymous-schema-19>
+              x-parser-schema-id: ProductClassifiedEvent
+            examples:
+              - name: hazmatFrozen
+                summary: >-
+                  SKU-1 classified Hazmat + TemperatureSensitive (Frozen), DOT
+                  class 3.
+                payload:
+                  specversion: '1.0'
+                  id: 0f6d8a2b-3c4e-4d5f-8a9b-7c6d5e4f3a2b
+                  source: /warehouse/product-master
+                  type: com.warehouse.wms.product-master.product.ProductClassified
+                  subject: SKU-1
+                  time: '2026-10-06T21:02:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:product-master:events:ProductClassified:v1
+                  data:
+                    sku: SKU-1
+                    handling_tags:
+                      - Hazmat
+                      - TemperatureSensitive
+                    temperature_class: Frozen
+                    dot_hazard_class: 3
+                    classification_source: native
+                    version: 3
+            messageId: ProductClassified
+          - name: ProductDimensionsDeclared
+            title: Product dimensions declared
+            summary: Declared unit dimensions and weight were set or replaced.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductDimensionsDeclared`;
+
+              subject and key = the SKU. Carries the FULL physical profile after
+              the
+
+              change (ADR 0002); act on `effective`.
+            contentType: application/cloudevents+json
+            tags:
+              - name: product
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - effective_source
+                        - discrepancy
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-29>
+                        declared:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                            - volume_mm3
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-30>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-31>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-32>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-33>
+                            volume_mm3:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: Dimensions
+                        measured:
+                          allOf:
+                            - type: object
+                              required:
+                                - length_mm
+                                - width_mm
+                                - height_mm
+                                - weight_g
+                                - volume_mm3
+                              properties:
+                                length_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-30>
+                                width_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-31>
+                                height_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-32>
+                                weight_g:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 2000000
+                                  x-parser-schema-id: <anonymous-schema-33>
+                                volume_mm3:
+                                  type: integer
+                                  minimum: 1
+                                  x-parser-schema-id: <anonymous-schema-34>
+                              x-parser-schema-id: Dimensions
+                            - type: object
+                              required:
+                                - measured_at
+                              properties:
+                                measured_at:
+                                  type: string
+                                  format: date-time
+                                  x-parser-schema-id: <anonymous-schema-36>
+                                device_id:
+                                  type: string
+                                  description: Omitted for a manual measurement.
+                                  x-parser-schema-id: <anonymous-schema-37>
+                              x-parser-schema-id: <anonymous-schema-35>
+                          x-parser-schema-id: MeasuredDimensions
+                        effective:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                            - volume_mm3
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-30>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-31>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-32>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-33>
+                            volume_mm3:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: Dimensions
+                        effective_source:
+                          type: string
+                          enum:
+                            - measured
+                            - declared
+                            - none
+                          x-parser-schema-id: <anonymous-schema-38>
+                        discrepancy:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-39>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-28>
+                  x-parser-schema-id: <anonymous-schema-27>
+              x-parser-schema-id: PhysicalProfileEvent
+            examples:
+              - name: declared
+                summary: SKU-1 declared at 200x120x80 mm, 1500 g.
+                payload:
+                  specversion: '1.0'
+                  id: 5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d
+                  source: /warehouse/product-master
+                  type: >-
+                    com.warehouse.wms.product-master.product.ProductDimensionsDeclared
+                  subject: SKU-1
+                  time: '2026-10-06T21:03:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:product-master:events:ProductDimensionsDeclared:v1
+                  data:
+                    sku: SKU-1
+                    declared:
+                      length_mm: 200
+                      width_mm: 120
+                      height_mm: 80
+                      weight_g: 1500
+                      volume_mm3: 1920000
+                    effective:
+                      length_mm: 200
+                      width_mm: 120
+                      height_mm: 80
+                      weight_g: 1500
+                      volume_mm3: 1920000
+                    effective_source: declared
+                    discrepancy: false
+                    version: 4
+            messageId: ProductDimensionsDeclared
+          - name: ProductMeasured
+            title: Product measured
+            summary: A measurement of one unit was recorded and is now effective.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductMeasured`;
+
+              subject and key = the SKU. Carries the FULL physical profile after
+              the
+
+              change (ADR 0002); act on `effective`.
+            contentType: application/cloudevents+json
+            tags:
+              - name: product
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - effective_source
+                        - discrepancy
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-29>
+                        declared:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                            - volume_mm3
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-30>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-31>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-32>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-33>
+                            volume_mm3:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: Dimensions
+                        measured:
+                          allOf:
+                            - type: object
+                              required:
+                                - length_mm
+                                - width_mm
+                                - height_mm
+                                - weight_g
+                                - volume_mm3
+                              properties:
+                                length_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-30>
+                                width_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-31>
+                                height_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-32>
+                                weight_g:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 2000000
+                                  x-parser-schema-id: <anonymous-schema-33>
+                                volume_mm3:
+                                  type: integer
+                                  minimum: 1
+                                  x-parser-schema-id: <anonymous-schema-34>
+                              x-parser-schema-id: Dimensions
+                            - type: object
+                              required:
+                                - measured_at
+                              properties:
+                                measured_at:
+                                  type: string
+                                  format: date-time
+                                  x-parser-schema-id: <anonymous-schema-36>
+                                device_id:
+                                  type: string
+                                  description: Omitted for a manual measurement.
+                                  x-parser-schema-id: <anonymous-schema-37>
+                              x-parser-schema-id: <anonymous-schema-35>
+                          x-parser-schema-id: MeasuredDimensions
+                        effective:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                            - volume_mm3
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-30>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-31>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-32>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-33>
+                            volume_mm3:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: Dimensions
+                        effective_source:
+                          type: string
+                          enum:
+                            - measured
+                            - declared
+                            - none
+                          x-parser-schema-id: <anonymous-schema-38>
+                        discrepancy:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-39>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-28>
+                  x-parser-schema-id: <anonymous-schema-27>
+              x-parser-schema-id: PhysicalProfileEvent
+            examples:
+              - name: measuredWithDiscrepancy
+                summary: SKU-1 measured heavier than declared (more than 10 %).
+                payload:
+                  specversion: '1.0'
+                  id: 9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b
+                  source: /warehouse/product-master
+                  type: com.warehouse.wms.product-master.product.ProductMeasured
+                  subject: SKU-1
+                  time: '2026-10-06T21:04:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:product-master:events:ProductMeasured:v1
+                  data:
+                    sku: SKU-1
+                    declared:
+                      length_mm: 200
+                      width_mm: 120
+                      height_mm: 80
+                      weight_g: 1500
+                      volume_mm3: 1920000
+                    measured:
+                      length_mm: 205
+                      width_mm: 121
+                      height_mm: 82
+                      weight_g: 1720
+                      volume_mm3: 2034010
+                      measured_at: '2026-10-06T14:05:00Z'
+                      device_id: CUBISCAN-03
+                    effective:
+                      length_mm: 205
+                      width_mm: 121
+                      height_mm: 82
+                      weight_g: 1720
+                      volume_mm3: 2034010
+                    effective_source: measured
+                    discrepancy: true
+                    version: 5
+            messageId: ProductMeasured
+  warehouse.product-master.analytics:
+    description: |
+      This service's analytics topic (`AnalyticsTopic` in
+      `internal/adapters/outbound/kafka/analytics_encoder.go`; ADR 0006).
+      Written by the SAME outbox relay, from rows inserted in the same
+      transaction as the integration rows (one CloudEvents `id` per occurrence
+      on both topics); key = SKU. Consumed ONLY by this service's
+      `product-projector` under a fixed consumer group read from env
+      `ANALYTICS_CONSUMER_GROUP` (at-least-once; the offset is committed after
+      the projection and the dedupe mark committed together in the analytical
+      database). The projector dedupes on `id`, ignores unknown types, skips
+      (with a rate-limited WARN) anything that is not CloudEvents 1.0, and
+      dead-letters a known type with an unusable payload to
+      `warehouse.product-master.analytics.dlq` (raw bytes plus `x-dlq-*`
+      headers). Not an integration contract: other contexts consume
+      `warehouse.product-master.events`.
+    x-eventcatalog-channel-version: 1.0.0
+    publish:
+      operationId: receiveProductAnalyticsEvents
+      summary: Receive the Product analytics events.
+      description: |
+        Route on the full `type`; the payloads equal the integration payloads
+        (no analytics-only fields in v1). `dataschema` is
+        `urn:warehouse:product-master:analytics:<EventName>:v1`.
+      tags:
+        - name: analytics
+      message:
+        oneOf:
+          - name: ProductRegistered
+            title: Product registered (analytics)
+            summary: Product registered, on the analytics stream.
+            description: >-
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductRegistered` (the
+              same as on the integration topic); dataschema
+              `urn:warehouse:product-master:analytics:ProductRegistered:v1`;
+              payload equal to the integration payload.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - description
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-11>
+                        description:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-12>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-13>
+                      x-parser-schema-id: <anonymous-schema-10>
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: ProductRegisteredEvent
+            examples:
+              - name: analytics
+                summary: The analytics copy of the integration example (same id).
+                payload:
+                  specversion: '1.0'
+                  id: 1b0c9a4e-2f7d-4a63-9d1e-5a7c3e2b9f10
+                  source: /warehouse/product-master
+                  type: com.warehouse.wms.product-master.product.ProductRegistered
+                  subject: SKU-1
+                  time: '2026-10-06T21:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:product-master:analytics:ProductRegistered:v1
+                  data:
+                    sku: SKU-1
+                    description: Lithium battery pack 12V
+                    version: 1
+            messageId: ProductRegisteredAnalytics
+          - name: ProductDescriptionChanged
+            title: Product description changed (analytics)
+            summary: Product description changed, on the analytics stream.
+            description: >-
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductDescriptionChanged`
+              (the same as on the integration topic); dataschema
+              `urn:warehouse:product-master:analytics:ProductDescriptionChanged:v1`;
+              payload equal to the integration payload.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - description
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-16>
+                        description:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-17>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-18>
+                      x-parser-schema-id: <anonymous-schema-15>
+                  x-parser-schema-id: <anonymous-schema-14>
+              x-parser-schema-id: ProductDescriptionChangedEvent
+            examples:
+              - name: analytics
+                summary: The analytics copy of the integration example (same id).
+                payload:
+                  specversion: '1.0'
+                  id: 8d3f2c1a-6b5e-4f7a-9c0d-1e2f3a4b5c6d
+                  source: /warehouse/product-master
+                  type: >-
+                    com.warehouse.wms.product-master.product.ProductDescriptionChanged
+                  subject: SKU-1
+                  time: '2026-10-06T21:01:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:product-master:analytics:ProductDescriptionChanged:v1
+                  data:
+                    sku: SKU-1
+                    description: Lithium battery pack 12V, 7Ah
+                    version: 2
+            messageId: ProductDescriptionChangedAnalytics
+          - name: ProductClassified
+            title: Product classified (analytics)
+            summary: Product classified, on the analytics stream.
+            description: >-
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductClassified` (the
+              same as on the integration topic); dataschema
+              `urn:warehouse:product-master:analytics:ProductClassified:v1`;
+              payload equal to the integration payload.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - handling_tags
+                        - classification_source
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-21>
+                        handling_tags:
+                          type: array
+                          minItems: 1
+                          items:
+                            type: string
+                            enum:
+                              - Hazmat
+                              - Fragile
+                              - TemperatureSensitive
+                              - Oversized
+                              - HighValue
+                            x-parser-schema-id: HandlingTag
+                          x-parser-schema-id: <anonymous-schema-22>
+                        temperature_class:
+                          type: string
+                          enum:
+                            - Ambient
+                            - Chilled
+                            - Frozen
+                          x-parser-schema-id: <anonymous-schema-23>
+                        dot_hazard_class:
+                          type: integer
+                          minimum: 1
+                          maximum: 9
+                          x-parser-schema-id: <anonymous-schema-24>
+                        classification_source:
+                          type: string
+                          enum:
+                            - native
+                            - legacy-import
+                          x-parser-schema-id: <anonymous-schema-25>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-26>
+                      x-parser-schema-id: <anonymous-schema-20>
+                  x-parser-schema-id: <anonymous-schema-19>
+              x-parser-schema-id: ProductClassifiedEvent
+            examples:
+              - name: analytics
+                summary: The analytics copy of the integration example (same id).
+                payload:
+                  specversion: '1.0'
+                  id: 0f6d8a2b-3c4e-4d5f-8a9b-7c6d5e4f3a2b
+                  source: /warehouse/product-master
+                  type: com.warehouse.wms.product-master.product.ProductClassified
+                  subject: SKU-1
+                  time: '2026-10-06T21:02:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:product-master:analytics:ProductClassified:v1
+                  data:
+                    sku: SKU-1
+                    handling_tags:
+                      - Hazmat
+                      - TemperatureSensitive
+                    temperature_class: Frozen
+                    dot_hazard_class: 3
+                    classification_source: native
+                    version: 3
+            messageId: ProductClassifiedAnalytics
+          - name: ProductDimensionsDeclared
+            title: Product dimensions declared (analytics)
+            summary: Product dimensions declared, on the analytics stream.
+            description: >-
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductDimensionsDeclared`
+              (the same as on the integration topic); dataschema
+              `urn:warehouse:product-master:analytics:ProductDimensionsDeclared:v1`;
+              payload equal to the integration payload.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - effective_source
+                        - discrepancy
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-29>
+                        declared:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                            - volume_mm3
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-30>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-31>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-32>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-33>
+                            volume_mm3:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: Dimensions
+                        measured:
+                          allOf:
+                            - type: object
+                              required:
+                                - length_mm
+                                - width_mm
+                                - height_mm
+                                - weight_g
+                                - volume_mm3
+                              properties:
+                                length_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-30>
+                                width_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-31>
+                                height_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-32>
+                                weight_g:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 2000000
+                                  x-parser-schema-id: <anonymous-schema-33>
+                                volume_mm3:
+                                  type: integer
+                                  minimum: 1
+                                  x-parser-schema-id: <anonymous-schema-34>
+                              x-parser-schema-id: Dimensions
+                            - type: object
+                              required:
+                                - measured_at
+                              properties:
+                                measured_at:
+                                  type: string
+                                  format: date-time
+                                  x-parser-schema-id: <anonymous-schema-36>
+                                device_id:
+                                  type: string
+                                  description: Omitted for a manual measurement.
+                                  x-parser-schema-id: <anonymous-schema-37>
+                              x-parser-schema-id: <anonymous-schema-35>
+                          x-parser-schema-id: MeasuredDimensions
+                        effective:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                            - volume_mm3
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-30>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-31>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-32>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-33>
+                            volume_mm3:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: Dimensions
+                        effective_source:
+                          type: string
+                          enum:
+                            - measured
+                            - declared
+                            - none
+                          x-parser-schema-id: <anonymous-schema-38>
+                        discrepancy:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-39>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-28>
+                  x-parser-schema-id: <anonymous-schema-27>
+              x-parser-schema-id: PhysicalProfileEvent
+            examples:
+              - name: analytics
+                summary: The analytics copy of the integration example (same id).
+                payload:
+                  specversion: '1.0'
+                  id: 5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d
+                  source: /warehouse/product-master
+                  type: >-
+                    com.warehouse.wms.product-master.product.ProductDimensionsDeclared
+                  subject: SKU-1
+                  time: '2026-10-06T21:03:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:product-master:analytics:ProductDimensionsDeclared:v1
+                  data:
+                    sku: SKU-1
+                    declared:
+                      length_mm: 200
+                      width_mm: 120
+                      height_mm: 80
+                      weight_g: 1500
+                      volume_mm3: 1920000
+                    effective:
+                      length_mm: 200
+                      width_mm: 120
+                      height_mm: 80
+                      weight_g: 1500
+                      volume_mm3: 1920000
+                    effective_source: declared
+                    discrepancy: false
+                    version: 4
+            messageId: ProductDimensionsDeclaredAnalytics
+          - name: ProductMeasured
+            title: Product measured (analytics)
+            summary: Product measured, on the analytics stream.
+            description: >-
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductMeasured` (the
+              same as on the integration topic); dataschema
+              `urn:warehouse:product-master:analytics:ProductMeasured:v1`;
+              payload equal to the integration payload.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: The SKU.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - effective_source
+                        - discrepancy
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-29>
+                        declared:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                            - volume_mm3
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-30>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-31>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-32>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-33>
+                            volume_mm3:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: Dimensions
+                        measured:
+                          allOf:
+                            - type: object
+                              required:
+                                - length_mm
+                                - width_mm
+                                - height_mm
+                                - weight_g
+                                - volume_mm3
+                              properties:
+                                length_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-30>
+                                width_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-31>
+                                height_mm:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 20000
+                                  x-parser-schema-id: <anonymous-schema-32>
+                                weight_g:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 2000000
+                                  x-parser-schema-id: <anonymous-schema-33>
+                                volume_mm3:
+                                  type: integer
+                                  minimum: 1
+                                  x-parser-schema-id: <anonymous-schema-34>
+                              x-parser-schema-id: Dimensions
+                            - type: object
+                              required:
+                                - measured_at
+                              properties:
+                                measured_at:
+                                  type: string
+                                  format: date-time
+                                  x-parser-schema-id: <anonymous-schema-36>
+                                device_id:
+                                  type: string
+                                  description: Omitted for a manual measurement.
+                                  x-parser-schema-id: <anonymous-schema-37>
+                              x-parser-schema-id: <anonymous-schema-35>
+                          x-parser-schema-id: MeasuredDimensions
+                        effective:
+                          type: object
+                          required:
+                            - length_mm
+                            - width_mm
+                            - height_mm
+                            - weight_g
+                            - volume_mm3
+                          properties:
+                            length_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-30>
+                            width_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-31>
+                            height_mm:
+                              type: integer
+                              minimum: 1
+                              maximum: 20000
+                              x-parser-schema-id: <anonymous-schema-32>
+                            weight_g:
+                              type: integer
+                              minimum: 1
+                              maximum: 2000000
+                              x-parser-schema-id: <anonymous-schema-33>
+                            volume_mm3:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: Dimensions
+                        effective_source:
+                          type: string
+                          enum:
+                            - measured
+                            - declared
+                            - none
+                          x-parser-schema-id: <anonymous-schema-38>
+                        discrepancy:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-39>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-28>
+                  x-parser-schema-id: <anonymous-schema-27>
+              x-parser-schema-id: PhysicalProfileEvent
+            examples:
+              - name: analytics
+                summary: The analytics copy of the integration example (same id).
+                payload:
+                  specversion: '1.0'
+                  id: 9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b
+                  source: /warehouse/product-master
+                  type: com.warehouse.wms.product-master.product.ProductMeasured
+                  subject: SKU-1
+                  time: '2026-10-06T21:04:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:product-master:analytics:ProductMeasured:v1
+                  data:
+                    sku: SKU-1
+                    declared:
+                      length_mm: 200
+                      width_mm: 120
+                      height_mm: 80
+                      weight_g: 1500
+                      volume_mm3: 1920000
+                    measured:
+                      length_mm: 205
+                      width_mm: 121
+                      height_mm: 82
+                      weight_g: 1720
+                      volume_mm3: 2034010
+                      measured_at: '2026-10-06T14:05:00Z'
+                      device_id: CUBISCAN-03
+                    effective:
+                      length_mm: 205
+                      width_mm: 121
+                      height_mm: 82
+                      weight_g: 1720
+                      volume_mm3: 2034010
+                    effective_source: measured
+                    discrepancy: true
+                    version: 5
+            messageId: ProductMeasuredAnalytics
+components:
+  messages:
+    ProductRegistered:
+      name: ProductRegistered
+      title: Product registered
+      summary: A SKU was registered as a product.
+      description: >-
+        `type` = `com.warehouse.wms.product-master.product.ProductRegistered`;
+        subject and key = the SKU.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - description
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-11>
+                  description:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-12>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-13>
+                x-parser-schema-id: <anonymous-schema-10>
+            x-parser-schema-id: <anonymous-schema-9>
+        x-parser-schema-id: ProductRegisteredEvent
+      examples:
+        - name: registered
+          summary: SKU-1 registered.
+          payload:
+            specversion: '1.0'
+            id: 1b0c9a4e-2f7d-4a63-9d1e-5a7c3e2b9f10
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductRegistered
+            subject: SKU-1
+            time: '2026-10-06T21:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductRegistered:v1
+            data:
+              sku: SKU-1
+              description: Lithium battery pack 12V
+              version: 1
+      messageId: ProductRegistered
+    ProductDescriptionChanged:
+      name: ProductDescriptionChanged
+      title: Product description changed
+      summary: A registered product's description changed.
+      description: >-
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductDescriptionChanged`;
+        subject and key = the SKU.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - description
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-16>
+                  description:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-17>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-18>
+                x-parser-schema-id: <anonymous-schema-15>
+            x-parser-schema-id: <anonymous-schema-14>
+        x-parser-schema-id: ProductDescriptionChangedEvent
+      examples:
+        - name: described
+          summary: SKU-1's description changed.
+          payload:
+            specversion: '1.0'
+            id: 8d3f2c1a-6b5e-4f7a-9c0d-1e2f3a4b5c6d
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductDescriptionChanged
+            subject: SKU-1
+            time: '2026-10-06T21:01:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductDescriptionChanged:v1
+            data:
+              sku: SKU-1
+              description: Lithium battery pack 12V, 7Ah
+              version: 2
+      messageId: ProductDescriptionChanged
+    ProductClassified:
+      name: ProductClassified
+      title: Product classified
+      summary: A product's handling classification was set or replaced.
+      description: |
+        `type` = `com.warehouse.wms.product-master.product.ProductClassified`;
+        subject and key = the SKU. Full-state replacement of the
+        classification. `sku`, `handling_tags`, `temperature_class` and
+        `dot_hazard_class` keep the field names of inventory-storage's v1
+        payload (ADR 0004). Optional fields are omitted when unset.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - handling_tags
+                  - classification_source
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-21>
+                  handling_tags:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: string
+                      enum:
+                        - Hazmat
+                        - Fragile
+                        - TemperatureSensitive
+                        - Oversized
+                        - HighValue
+                      x-parser-schema-id: HandlingTag
+                    x-parser-schema-id: <anonymous-schema-22>
+                  temperature_class:
+                    type: string
+                    enum:
+                      - Ambient
+                      - Chilled
+                      - Frozen
+                    x-parser-schema-id: <anonymous-schema-23>
+                  dot_hazard_class:
+                    type: integer
+                    minimum: 1
+                    maximum: 9
+                    x-parser-schema-id: <anonymous-schema-24>
+                  classification_source:
+                    type: string
+                    enum:
+                      - native
+                      - legacy-import
+                    x-parser-schema-id: <anonymous-schema-25>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-26>
+                x-parser-schema-id: <anonymous-schema-20>
+            x-parser-schema-id: <anonymous-schema-19>
+        x-parser-schema-id: ProductClassifiedEvent
+      examples:
+        - name: hazmatFrozen
+          summary: >-
+            SKU-1 classified Hazmat + TemperatureSensitive (Frozen), DOT class
+            3.
+          payload:
+            specversion: '1.0'
+            id: 0f6d8a2b-3c4e-4d5f-8a9b-7c6d5e4f3a2b
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductClassified
+            subject: SKU-1
+            time: '2026-10-06T21:02:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductClassified:v1
+            data:
+              sku: SKU-1
+              handling_tags:
+                - Hazmat
+                - TemperatureSensitive
+              temperature_class: Frozen
+              dot_hazard_class: 3
+              classification_source: native
+              version: 3
+      messageId: ProductClassified
+    ProductDimensionsDeclared:
+      name: ProductDimensionsDeclared
+      title: Product dimensions declared
+      summary: Declared unit dimensions and weight were set or replaced.
+      description: >
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductDimensionsDeclared`;
+
+        subject and key = the SKU. Carries the FULL physical profile after the
+
+        change (ADR 0002); act on `effective`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - effective_source
+                  - discrepancy
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-29>
+                  declared:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                      - volume_mm3
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-30>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-31>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-32>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-33>
+                      volume_mm3:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: Dimensions
+                  measured:
+                    allOf:
+                      - type: object
+                        required:
+                          - length_mm
+                          - width_mm
+                          - height_mm
+                          - weight_g
+                          - volume_mm3
+                        properties:
+                          length_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-30>
+                          width_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-31>
+                          height_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-32>
+                          weight_g:
+                            type: integer
+                            minimum: 1
+                            maximum: 2000000
+                            x-parser-schema-id: <anonymous-schema-33>
+                          volume_mm3:
+                            type: integer
+                            minimum: 1
+                            x-parser-schema-id: <anonymous-schema-34>
+                        x-parser-schema-id: Dimensions
+                      - type: object
+                        required:
+                          - measured_at
+                        properties:
+                          measured_at:
+                            type: string
+                            format: date-time
+                            x-parser-schema-id: <anonymous-schema-36>
+                          device_id:
+                            type: string
+                            description: Omitted for a manual measurement.
+                            x-parser-schema-id: <anonymous-schema-37>
+                        x-parser-schema-id: <anonymous-schema-35>
+                    x-parser-schema-id: MeasuredDimensions
+                  effective:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                      - volume_mm3
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-30>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-31>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-32>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-33>
+                      volume_mm3:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: Dimensions
+                  effective_source:
+                    type: string
+                    enum:
+                      - measured
+                      - declared
+                      - none
+                    x-parser-schema-id: <anonymous-schema-38>
+                  discrepancy:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-39>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-40>
+                x-parser-schema-id: <anonymous-schema-28>
+            x-parser-schema-id: <anonymous-schema-27>
+        x-parser-schema-id: PhysicalProfileEvent
+      examples:
+        - name: declared
+          summary: SKU-1 declared at 200x120x80 mm, 1500 g.
+          payload:
+            specversion: '1.0'
+            id: 5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductDimensionsDeclared
+            subject: SKU-1
+            time: '2026-10-06T21:03:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductDimensionsDeclared:v1
+            data:
+              sku: SKU-1
+              declared:
+                length_mm: 200
+                width_mm: 120
+                height_mm: 80
+                weight_g: 1500
+                volume_mm3: 1920000
+              effective:
+                length_mm: 200
+                width_mm: 120
+                height_mm: 80
+                weight_g: 1500
+                volume_mm3: 1920000
+              effective_source: declared
+              discrepancy: false
+              version: 4
+      messageId: ProductDimensionsDeclared
+    ProductMeasured:
+      name: ProductMeasured
+      title: Product measured
+      summary: A measurement of one unit was recorded and is now effective.
+      description: |
+        `type` = `com.warehouse.wms.product-master.product.ProductMeasured`;
+        subject and key = the SKU. Carries the FULL physical profile after the
+        change (ADR 0002); act on `effective`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - effective_source
+                  - discrepancy
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-29>
+                  declared:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                      - volume_mm3
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-30>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-31>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-32>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-33>
+                      volume_mm3:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: Dimensions
+                  measured:
+                    allOf:
+                      - type: object
+                        required:
+                          - length_mm
+                          - width_mm
+                          - height_mm
+                          - weight_g
+                          - volume_mm3
+                        properties:
+                          length_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-30>
+                          width_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-31>
+                          height_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-32>
+                          weight_g:
+                            type: integer
+                            minimum: 1
+                            maximum: 2000000
+                            x-parser-schema-id: <anonymous-schema-33>
+                          volume_mm3:
+                            type: integer
+                            minimum: 1
+                            x-parser-schema-id: <anonymous-schema-34>
+                        x-parser-schema-id: Dimensions
+                      - type: object
+                        required:
+                          - measured_at
+                        properties:
+                          measured_at:
+                            type: string
+                            format: date-time
+                            x-parser-schema-id: <anonymous-schema-36>
+                          device_id:
+                            type: string
+                            description: Omitted for a manual measurement.
+                            x-parser-schema-id: <anonymous-schema-37>
+                        x-parser-schema-id: <anonymous-schema-35>
+                    x-parser-schema-id: MeasuredDimensions
+                  effective:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                      - volume_mm3
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-30>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-31>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-32>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-33>
+                      volume_mm3:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: Dimensions
+                  effective_source:
+                    type: string
+                    enum:
+                      - measured
+                      - declared
+                      - none
+                    x-parser-schema-id: <anonymous-schema-38>
+                  discrepancy:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-39>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-40>
+                x-parser-schema-id: <anonymous-schema-28>
+            x-parser-schema-id: <anonymous-schema-27>
+        x-parser-schema-id: PhysicalProfileEvent
+      examples:
+        - name: measuredWithDiscrepancy
+          summary: SKU-1 measured heavier than declared (more than 10 %).
+          payload:
+            specversion: '1.0'
+            id: 9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductMeasured
+            subject: SKU-1
+            time: '2026-10-06T21:04:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductMeasured:v1
+            data:
+              sku: SKU-1
+              declared:
+                length_mm: 200
+                width_mm: 120
+                height_mm: 80
+                weight_g: 1500
+                volume_mm3: 1920000
+              measured:
+                length_mm: 205
+                width_mm: 121
+                height_mm: 82
+                weight_g: 1720
+                volume_mm3: 2034010
+                measured_at: '2026-10-06T14:05:00Z'
+                device_id: CUBISCAN-03
+              effective:
+                length_mm: 205
+                width_mm: 121
+                height_mm: 82
+                weight_g: 1720
+                volume_mm3: 2034010
+              effective_source: measured
+              discrepancy: true
+              version: 5
+      messageId: ProductMeasured
+    ProductRegisteredAnalytics:
+      name: ProductRegistered
+      title: Product registered (analytics)
+      summary: Product registered, on the analytics stream.
+      description: >-
+        `type` = `com.warehouse.wms.product-master.product.ProductRegistered`
+        (the same as on the integration topic); dataschema
+        `urn:warehouse:product-master:analytics:ProductRegistered:v1`; payload
+        equal to the integration payload.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - description
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-11>
+                  description:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-12>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-13>
+                x-parser-schema-id: <anonymous-schema-10>
+            x-parser-schema-id: <anonymous-schema-9>
+        x-parser-schema-id: ProductRegisteredEvent
+      examples:
+        - name: analytics
+          summary: The analytics copy of the integration example (same id).
+          payload:
+            specversion: '1.0'
+            id: 1b0c9a4e-2f7d-4a63-9d1e-5a7c3e2b9f10
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductRegistered
+            subject: SKU-1
+            time: '2026-10-06T21:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:analytics:ProductRegistered:v1
+            data:
+              sku: SKU-1
+              description: Lithium battery pack 12V
+              version: 1
+      messageId: ProductRegisteredAnalytics
+    ProductDescriptionChangedAnalytics:
+      name: ProductDescriptionChanged
+      title: Product description changed (analytics)
+      summary: Product description changed, on the analytics stream.
+      description: >-
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductDescriptionChanged`
+        (the same as on the integration topic); dataschema
+        `urn:warehouse:product-master:analytics:ProductDescriptionChanged:v1`;
+        payload equal to the integration payload.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - description
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-16>
+                  description:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-17>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-18>
+                x-parser-schema-id: <anonymous-schema-15>
+            x-parser-schema-id: <anonymous-schema-14>
+        x-parser-schema-id: ProductDescriptionChangedEvent
+      examples:
+        - name: analytics
+          summary: The analytics copy of the integration example (same id).
+          payload:
+            specversion: '1.0'
+            id: 8d3f2c1a-6b5e-4f7a-9c0d-1e2f3a4b5c6d
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductDescriptionChanged
+            subject: SKU-1
+            time: '2026-10-06T21:01:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:warehouse:product-master:analytics:ProductDescriptionChanged:v1
+            data:
+              sku: SKU-1
+              description: Lithium battery pack 12V, 7Ah
+              version: 2
+      messageId: ProductDescriptionChangedAnalytics
+    ProductClassifiedAnalytics:
+      name: ProductClassified
+      title: Product classified (analytics)
+      summary: Product classified, on the analytics stream.
+      description: >-
+        `type` = `com.warehouse.wms.product-master.product.ProductClassified`
+        (the same as on the integration topic); dataschema
+        `urn:warehouse:product-master:analytics:ProductClassified:v1`; payload
+        equal to the integration payload.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - handling_tags
+                  - classification_source
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-21>
+                  handling_tags:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: string
+                      enum:
+                        - Hazmat
+                        - Fragile
+                        - TemperatureSensitive
+                        - Oversized
+                        - HighValue
+                      x-parser-schema-id: HandlingTag
+                    x-parser-schema-id: <anonymous-schema-22>
+                  temperature_class:
+                    type: string
+                    enum:
+                      - Ambient
+                      - Chilled
+                      - Frozen
+                    x-parser-schema-id: <anonymous-schema-23>
+                  dot_hazard_class:
+                    type: integer
+                    minimum: 1
+                    maximum: 9
+                    x-parser-schema-id: <anonymous-schema-24>
+                  classification_source:
+                    type: string
+                    enum:
+                      - native
+                      - legacy-import
+                    x-parser-schema-id: <anonymous-schema-25>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-26>
+                x-parser-schema-id: <anonymous-schema-20>
+            x-parser-schema-id: <anonymous-schema-19>
+        x-parser-schema-id: ProductClassifiedEvent
+      examples:
+        - name: analytics
+          summary: The analytics copy of the integration example (same id).
+          payload:
+            specversion: '1.0'
+            id: 0f6d8a2b-3c4e-4d5f-8a9b-7c6d5e4f3a2b
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductClassified
+            subject: SKU-1
+            time: '2026-10-06T21:02:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:analytics:ProductClassified:v1
+            data:
+              sku: SKU-1
+              handling_tags:
+                - Hazmat
+                - TemperatureSensitive
+              temperature_class: Frozen
+              dot_hazard_class: 3
+              classification_source: native
+              version: 3
+      messageId: ProductClassifiedAnalytics
+    ProductDimensionsDeclaredAnalytics:
+      name: ProductDimensionsDeclared
+      title: Product dimensions declared (analytics)
+      summary: Product dimensions declared, on the analytics stream.
+      description: >-
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductDimensionsDeclared`
+        (the same as on the integration topic); dataschema
+        `urn:warehouse:product-master:analytics:ProductDimensionsDeclared:v1`;
+        payload equal to the integration payload.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - effective_source
+                  - discrepancy
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-29>
+                  declared:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                      - volume_mm3
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-30>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-31>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-32>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-33>
+                      volume_mm3:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: Dimensions
+                  measured:
+                    allOf:
+                      - type: object
+                        required:
+                          - length_mm
+                          - width_mm
+                          - height_mm
+                          - weight_g
+                          - volume_mm3
+                        properties:
+                          length_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-30>
+                          width_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-31>
+                          height_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-32>
+                          weight_g:
+                            type: integer
+                            minimum: 1
+                            maximum: 2000000
+                            x-parser-schema-id: <anonymous-schema-33>
+                          volume_mm3:
+                            type: integer
+                            minimum: 1
+                            x-parser-schema-id: <anonymous-schema-34>
+                        x-parser-schema-id: Dimensions
+                      - type: object
+                        required:
+                          - measured_at
+                        properties:
+                          measured_at:
+                            type: string
+                            format: date-time
+                            x-parser-schema-id: <anonymous-schema-36>
+                          device_id:
+                            type: string
+                            description: Omitted for a manual measurement.
+                            x-parser-schema-id: <anonymous-schema-37>
+                        x-parser-schema-id: <anonymous-schema-35>
+                    x-parser-schema-id: MeasuredDimensions
+                  effective:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                      - volume_mm3
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-30>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-31>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-32>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-33>
+                      volume_mm3:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: Dimensions
+                  effective_source:
+                    type: string
+                    enum:
+                      - measured
+                      - declared
+                      - none
+                    x-parser-schema-id: <anonymous-schema-38>
+                  discrepancy:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-39>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-40>
+                x-parser-schema-id: <anonymous-schema-28>
+            x-parser-schema-id: <anonymous-schema-27>
+        x-parser-schema-id: PhysicalProfileEvent
+      examples:
+        - name: analytics
+          summary: The analytics copy of the integration example (same id).
+          payload:
+            specversion: '1.0'
+            id: 5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductDimensionsDeclared
+            subject: SKU-1
+            time: '2026-10-06T21:03:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:warehouse:product-master:analytics:ProductDimensionsDeclared:v1
+            data:
+              sku: SKU-1
+              declared:
+                length_mm: 200
+                width_mm: 120
+                height_mm: 80
+                weight_g: 1500
+                volume_mm3: 1920000
+              effective:
+                length_mm: 200
+                width_mm: 120
+                height_mm: 80
+                weight_g: 1500
+                volume_mm3: 1920000
+              effective_source: declared
+              discrepancy: false
+              version: 4
+      messageId: ProductDimensionsDeclaredAnalytics
+    ProductMeasuredAnalytics:
+      name: ProductMeasured
+      title: Product measured (analytics)
+      summary: Product measured, on the analytics stream.
+      description: >-
+        `type` = `com.warehouse.wms.product-master.product.ProductMeasured` (the
+        same as on the integration topic); dataschema
+        `urn:warehouse:product-master:analytics:ProductMeasured:v1`; payload
+        equal to the integration payload.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The SKU.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - effective_source
+                  - discrepancy
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-29>
+                  declared:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                      - volume_mm3
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-30>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-31>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-32>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-33>
+                      volume_mm3:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: Dimensions
+                  measured:
+                    allOf:
+                      - type: object
+                        required:
+                          - length_mm
+                          - width_mm
+                          - height_mm
+                          - weight_g
+                          - volume_mm3
+                        properties:
+                          length_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-30>
+                          width_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-31>
+                          height_mm:
+                            type: integer
+                            minimum: 1
+                            maximum: 20000
+                            x-parser-schema-id: <anonymous-schema-32>
+                          weight_g:
+                            type: integer
+                            minimum: 1
+                            maximum: 2000000
+                            x-parser-schema-id: <anonymous-schema-33>
+                          volume_mm3:
+                            type: integer
+                            minimum: 1
+                            x-parser-schema-id: <anonymous-schema-34>
+                        x-parser-schema-id: Dimensions
+                      - type: object
+                        required:
+                          - measured_at
+                        properties:
+                          measured_at:
+                            type: string
+                            format: date-time
+                            x-parser-schema-id: <anonymous-schema-36>
+                          device_id:
+                            type: string
+                            description: Omitted for a manual measurement.
+                            x-parser-schema-id: <anonymous-schema-37>
+                        x-parser-schema-id: <anonymous-schema-35>
+                    x-parser-schema-id: MeasuredDimensions
+                  effective:
+                    type: object
+                    required:
+                      - length_mm
+                      - width_mm
+                      - height_mm
+                      - weight_g
+                      - volume_mm3
+                    properties:
+                      length_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-30>
+                      width_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-31>
+                      height_mm:
+                        type: integer
+                        minimum: 1
+                        maximum: 20000
+                        x-parser-schema-id: <anonymous-schema-32>
+                      weight_g:
+                        type: integer
+                        minimum: 1
+                        maximum: 2000000
+                        x-parser-schema-id: <anonymous-schema-33>
+                      volume_mm3:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-34>
+                    x-parser-schema-id: Dimensions
+                  effective_source:
+                    type: string
+                    enum:
+                      - measured
+                      - declared
+                      - none
+                    x-parser-schema-id: <anonymous-schema-38>
+                  discrepancy:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-39>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-40>
+                x-parser-schema-id: <anonymous-schema-28>
+            x-parser-schema-id: <anonymous-schema-27>
+        x-parser-schema-id: PhysicalProfileEvent
+      examples:
+        - name: analytics
+          summary: The analytics copy of the integration example (same id).
+          payload:
+            specversion: '1.0'
+            id: 9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductMeasured
+            subject: SKU-1
+            time: '2026-10-06T21:04:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:analytics:ProductMeasured:v1
+            data:
+              sku: SKU-1
+              declared:
+                length_mm: 200
+                width_mm: 120
+                height_mm: 80
+                weight_g: 1500
+                volume_mm3: 1920000
+              measured:
+                length_mm: 205
+                width_mm: 121
+                height_mm: 82
+                weight_g: 1720
+                volume_mm3: 2034010
+                measured_at: '2026-10-06T14:05:00Z'
+                device_id: CUBISCAN-03
+              effective:
+                length_mm: 205
+                width_mm: 121
+                height_mm: 82
+                weight_g: 1720
+                volume_mm3: 2034010
+              effective_source: measured
+              discrepancy: true
+              version: 5
+      messageId: ProductMeasuredAnalytics
+  schemas:
+    CloudEventEnvelope:
+      type: object
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - dataschema
+        - data
+      properties:
+        specversion:
+          type: string
+          const: '1.0'
+          x-parser-schema-id: <anonymous-schema-1>
+        id:
+          type: string
+          format: uuid
+          x-parser-schema-id: <anonymous-schema-2>
+        source:
+          type: string
+          x-parser-schema-id: <anonymous-schema-3>
+        type:
+          type: string
+          x-parser-schema-id: <anonymous-schema-4>
+        subject:
+          type: string
+          description: The SKU.
+          x-parser-schema-id: <anonymous-schema-5>
+        time:
+          type: string
+          format: date-time
+          x-parser-schema-id: <anonymous-schema-6>
+        datacontenttype:
+          type: string
+          const: application/json
+          x-parser-schema-id: <anonymous-schema-7>
+        dataschema:
+          type: string
+          x-parser-schema-id: <anonymous-schema-8>
+      x-parser-schema-id: CloudEventEnvelope
+    HandlingTag:
+      type: string
+      enum:
+        - Hazmat
+        - Fragile
+        - TemperatureSensitive
+        - Oversized
+        - HighValue
+      x-parser-schema-id: HandlingTag
+    Dimensions:
+      type: object
+      required:
+        - length_mm
+        - width_mm
+        - height_mm
+        - weight_g
+        - volume_mm3
+      properties:
+        length_mm:
+          type: integer
+          minimum: 1
+          maximum: 20000
+          x-parser-schema-id: <anonymous-schema-30>
+        width_mm:
+          type: integer
+          minimum: 1
+          maximum: 20000
+          x-parser-schema-id: <anonymous-schema-31>
+        height_mm:
+          type: integer
+          minimum: 1
+          maximum: 20000
+          x-parser-schema-id: <anonymous-schema-32>
+        weight_g:
+          type: integer
+          minimum: 1
+          maximum: 2000000
+          x-parser-schema-id: <anonymous-schema-33>
+        volume_mm3:
+          type: integer
+          minimum: 1
+          x-parser-schema-id: <anonymous-schema-34>
+      x-parser-schema-id: Dimensions
+    MeasuredDimensions:
+      allOf:
+        - type: object
+          required:
+            - length_mm
+            - width_mm
+            - height_mm
+            - weight_g
+            - volume_mm3
+          properties:
+            length_mm:
+              type: integer
+              minimum: 1
+              maximum: 20000
+              x-parser-schema-id: <anonymous-schema-30>
+            width_mm:
+              type: integer
+              minimum: 1
+              maximum: 20000
+              x-parser-schema-id: <anonymous-schema-31>
+            height_mm:
+              type: integer
+              minimum: 1
+              maximum: 20000
+              x-parser-schema-id: <anonymous-schema-32>
+            weight_g:
+              type: integer
+              minimum: 1
+              maximum: 2000000
+              x-parser-schema-id: <anonymous-schema-33>
+            volume_mm3:
+              type: integer
+              minimum: 1
+              x-parser-schema-id: <anonymous-schema-34>
+          x-parser-schema-id: Dimensions
+        - type: object
+          required:
+            - measured_at
+          properties:
+            measured_at:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-36>
+            device_id:
+              type: string
+              description: Omitted for a manual measurement.
+              x-parser-schema-id: <anonymous-schema-37>
+          x-parser-schema-id: <anonymous-schema-35>
+      x-parser-schema-id: MeasuredDimensions
+    ProductRegisteredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The SKU.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - description
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-11>
+                description:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-12>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-13>
+              x-parser-schema-id: <anonymous-schema-10>
+          x-parser-schema-id: <anonymous-schema-9>
+      x-parser-schema-id: ProductRegisteredEvent
+    ProductDescriptionChangedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The SKU.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - description
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-16>
+                description:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-17>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-18>
+              x-parser-schema-id: <anonymous-schema-15>
+          x-parser-schema-id: <anonymous-schema-14>
+      x-parser-schema-id: ProductDescriptionChangedEvent
+    ProductClassifiedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The SKU.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - handling_tags
+                - classification_source
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-21>
+                handling_tags:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    enum:
+                      - Hazmat
+                      - Fragile
+                      - TemperatureSensitive
+                      - Oversized
+                      - HighValue
+                    x-parser-schema-id: HandlingTag
+                  x-parser-schema-id: <anonymous-schema-22>
+                temperature_class:
+                  type: string
+                  enum:
+                    - Ambient
+                    - Chilled
+                    - Frozen
+                  x-parser-schema-id: <anonymous-schema-23>
+                dot_hazard_class:
+                  type: integer
+                  minimum: 1
+                  maximum: 9
+                  x-parser-schema-id: <anonymous-schema-24>
+                classification_source:
+                  type: string
+                  enum:
+                    - native
+                    - legacy-import
+                  x-parser-schema-id: <anonymous-schema-25>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-26>
+              x-parser-schema-id: <anonymous-schema-20>
+          x-parser-schema-id: <anonymous-schema-19>
+      x-parser-schema-id: ProductClassifiedEvent
+    PhysicalProfileEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The SKU.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - effective_source
+                - discrepancy
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-29>
+                declared:
+                  type: object
+                  required:
+                    - length_mm
+                    - width_mm
+                    - height_mm
+                    - weight_g
+                    - volume_mm3
+                  properties:
+                    length_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-30>
+                    width_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-31>
+                    height_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-32>
+                    weight_g:
+                      type: integer
+                      minimum: 1
+                      maximum: 2000000
+                      x-parser-schema-id: <anonymous-schema-33>
+                    volume_mm3:
+                      type: integer
+                      minimum: 1
+                      x-parser-schema-id: <anonymous-schema-34>
+                  x-parser-schema-id: Dimensions
+                measured:
+                  allOf:
+                    - type: object
+                      required:
+                        - length_mm
+                        - width_mm
+                        - height_mm
+                        - weight_g
+                        - volume_mm3
+                      properties:
+                        length_mm:
+                          type: integer
+                          minimum: 1
+                          maximum: 20000
+                          x-parser-schema-id: <anonymous-schema-30>
+                        width_mm:
+                          type: integer
+                          minimum: 1
+                          maximum: 20000
+                          x-parser-schema-id: <anonymous-schema-31>
+                        height_mm:
+                          type: integer
+                          minimum: 1
+                          maximum: 20000
+                          x-parser-schema-id: <anonymous-schema-32>
+                        weight_g:
+                          type: integer
+                          minimum: 1
+                          maximum: 2000000
+                          x-parser-schema-id: <anonymous-schema-33>
+                        volume_mm3:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-34>
+                      x-parser-schema-id: Dimensions
+                    - type: object
+                      required:
+                        - measured_at
+                      properties:
+                        measured_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-36>
+                        device_id:
+                          type: string
+                          description: Omitted for a manual measurement.
+                          x-parser-schema-id: <anonymous-schema-37>
+                      x-parser-schema-id: <anonymous-schema-35>
+                  x-parser-schema-id: MeasuredDimensions
+                effective:
+                  type: object
+                  required:
+                    - length_mm
+                    - width_mm
+                    - height_mm
+                    - weight_g
+                    - volume_mm3
+                  properties:
+                    length_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-30>
+                    width_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-31>
+                    height_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                      x-parser-schema-id: <anonymous-schema-32>
+                    weight_g:
+                      type: integer
+                      minimum: 1
+                      maximum: 2000000
+                      x-parser-schema-id: <anonymous-schema-33>
+                    volume_mm3:
+                      type: integer
+                      minimum: 1
+                      x-parser-schema-id: <anonymous-schema-34>
+                  x-parser-schema-id: Dimensions
+                effective_source:
+                  type: string
+                  enum:
+                    - measured
+                    - declared
+                    - none
+                  x-parser-schema-id: <anonymous-schema-38>
+                discrepancy:
+                  type: boolean
+                  x-parser-schema-id: <anonymous-schema-39>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-40>
+              x-parser-schema-id: <anonymous-schema-28>
+          x-parser-schema-id: <anonymous-schema-27>
+      x-parser-schema-id: PhysicalProfileEvent
+x-parser-spec-parsed: true
+x-parser-api-version: 3
