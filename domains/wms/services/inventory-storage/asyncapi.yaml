@@ -2418,7 +2418,10 @@ channels:
                     bin_id: A-12-3
                     quantity: 3
             messageId: ItemUnlocated
-          - name: ItemStowed
+          - x-no-consumer-reason: >-
+              pending: promoted to the integration topic; network-fulfillment
+              cache consumer in flight, no spec declares it yet
+            name: ItemStowed
             title: Item Stowed
             summary: A quantity of a SKU was placed into a bin.
             description: >
@@ -2595,7 +2598,10 @@ channels:
                     bin_id: A-12-3
                     quantity: 50
             messageId: ItemStowed
-          - name: ContainerRegistered
+          - x-no-consumer-reason: >-
+              pending: container fact (ADR 0045); no consumer declared in any
+              fleet spec yet
+            name: ContainerRegistered
             title: Container Registered
             summary: >-
               A sealed carton became a Container (LPN), bounded by its receipt
@@ -2820,7 +2826,10 @@ channels:
                     line_no: 1
                     at: '2026-10-24T12:00:00Z'
             messageId: ContainerRegistered
-          - name: ContainerStowed
+          - x-no-consumer-reason: >-
+              pending: container fact (ADR 0045); no consumer declared in any
+              fleet spec yet
+            name: ContainerStowed
             title: Container Stowed
             summary: >-
               A sealed case was stowed into a case bin; its site is the bin's
@@ -3017,7 +3026,10 @@ channels:
                     bin: WH1-STOR-AMB-A01-01-01-A
                     at: '2026-10-24T12:05:00Z'
             messageId: ContainerStowed
-          - name: CaseBroken
+          - x-no-consumer-reason: >-
+              pending: container fact (ADR 0045/0046); no consumer declared in
+              any fleet spec yet
+            name: CaseBroken
             title: Case Broken
             summary: A sealed case was opened and its eaches moved to loose stock.
             description: >-
@@ -3207,7 +3219,10 @@ channels:
                     loose_bin: WH1-PICK-AMB-B01-01-01-A
                     at: '2026-10-24T12:10:00Z'
             messageId: CaseBroken
-          - name: ContainerEmptied
+          - x-no-consumer-reason: >-
+              pending: container fact (ADR 0045/0046); no consumer declared in
+              any fleet spec yet
+            name: ContainerEmptied
             title: Container Emptied
             summary: A container has no contents left; it leaves its bin.
             description: >-
@@ -3585,7 +3600,10 @@ channels:
                     sku: SKU-1001
                     quantity: 50
             messageId: StockReceived
-          - name: ItemStowed
+          - x-no-consumer-reason: >-
+              pending: promoted to the integration topic; network-fulfillment
+              cache consumer in flight, no spec declares it yet
+            name: ItemStowed
             title: Item Stowed
             summary: A quantity of a SKU was placed into a bin.
             description: >
@@ -5543,6 +5561,384 @@ channels:
                     reason: superseded
                     version: 4
             messageId: ProductMasterProductPackLevelRetired
+  warehouse.facility.events:
+    description: >
+      The single outbound integration topic for this bounded context, named
+      after the `Topic` constant in
+      `internal/adapters/outbound/kafka/publisher.go`
+      (`warehouse.facility.events`). Every domain event this context raises is
+      published here when `EVENT_PUBLISHER=kafka` — the whole Published
+      Language, not a subset. The one live consumer today is inventory-storage's
+      location-classification cache (ZoneRegistered, LocationSlotRegistered,
+      LocationSlotDecommissioned); everything else is available, unconsumed
+      Published Language.
+    x-eventcatalog-channel-version: 1.0.0
+    subscribe:
+      operationId: applyFacilityCache
+      summary: Apply facility-layout's published language to the facility cache.
+      description: >
+        Upserts/evicts facility cache rows in one transaction with the
+        CloudEvents `id` claim; last write wins per subject.
+      message:
+        oneOf:
+          - name: FacilityLayoutZoneRegistered
+            title: ZoneRegistered (from facility-layout, consumed)
+            summary: >-
+              A zone and its classification (temperature, hazmat) was
+              registered.
+            description: >
+              CONSUMED, not produced. Pinned by facility-layout's
+              `apis/asyncapi.yaml`: type
+              `com.warehouse.wms.facility-layout.zone.ZoneRegistered`,
+              `source=/warehouse/facility-layout`, subject and Kafka key = the
+              zoneId. Only the fields the facility cache relies on are listed;
+              the producer's own AsyncAPI is authoritative and unknown fields
+              are ignored.
+            contentType: application/cloudevents+json
+            tags:
+              - name: facility-layout
+                description: Consumed from facility-layout.
+            payload:
+              type: object
+              description: >
+                CloudEvents 1.0 envelope of facility-layout's ZoneRegistered as
+                consumed here (not composed from CloudEventBase, whose `source`
+                is this service's own).
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - data
+              properties:
+                specversion:
+                  type: string
+                  enum:
+                    - '1.0'
+                  x-parser-schema-id: <anonymous-schema-260>
+                id:
+                  type: string
+                  description: >-
+                    CloudEvents id; the dedupe key (claimed in
+                    processed_events).
+                  x-parser-schema-id: <anonymous-schema-261>
+                source:
+                  type: string
+                  enum:
+                    - /warehouse/facility-layout
+                  x-parser-schema-id: <anonymous-schema-262>
+                type:
+                  type: string
+                  const: com.warehouse.wms.facility-layout.zone.ZoneRegistered
+                  x-parser-schema-id: <anonymous-schema-263>
+                subject:
+                  type: string
+                  description: The zoneId (also the Kafka key).
+                  x-parser-schema-id: <anonymous-schema-264>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-265>
+                datacontenttype:
+                  type: string
+                  enum:
+                    - application/json
+                  x-parser-schema-id: <anonymous-schema-266>
+                dataschema:
+                  type: string
+                  description: urn:warehouse:facility-layout:events:ZoneRegistered:v1
+                  x-parser-schema-id: <anonymous-schema-267>
+                data:
+                  type: object
+                  required:
+                    - zoneId
+                    - temperatureClass
+                    - hazmat
+                  properties:
+                    zoneId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-269>
+                    temperatureClass:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-270>
+                    hazmat:
+                      type: boolean
+                      x-parser-schema-id: <anonymous-schema-271>
+                  x-parser-schema-id: <anonymous-schema-268>
+              x-parser-schema-id: FacilityLayoutZoneRegisteredEvent
+            messageId: FacilityLayoutZoneRegistered
+          - name: FacilityLayoutLocationSlotRegistered
+            title: LocationSlotRegistered (from facility-layout, consumed)
+            summary: >-
+              A coded storage slot was registered, with its zone and optional
+              handling unit.
+            description: >
+              CONSUMED, not produced. Pinned by facility-layout's
+              `apis/asyncapi.yaml`: type
+              `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered`,
+              `source=/warehouse/facility-layout`, subject and Kafka key = the
+              locationCode. Only the fields the facility cache relies on are
+              listed; the producer's own AsyncAPI is authoritative and unknown
+              fields are ignored.
+            contentType: application/cloudevents+json
+            tags:
+              - name: facility-layout
+                description: Consumed from facility-layout.
+            payload:
+              type: object
+              description: >
+                CloudEvents 1.0 envelope of facility-layout's
+                LocationSlotRegistered as consumed here (not composed from
+                CloudEventBase, whose `source` is this service's own).
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - data
+              properties:
+                specversion:
+                  type: string
+                  enum:
+                    - '1.0'
+                  x-parser-schema-id: <anonymous-schema-272>
+                id:
+                  type: string
+                  description: >-
+                    CloudEvents id; the dedupe key (claimed in
+                    processed_events).
+                  x-parser-schema-id: <anonymous-schema-273>
+                source:
+                  type: string
+                  enum:
+                    - /warehouse/facility-layout
+                  x-parser-schema-id: <anonymous-schema-274>
+                type:
+                  type: string
+                  const: >-
+                    com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered
+                  x-parser-schema-id: <anonymous-schema-275>
+                subject:
+                  type: string
+                  description: The locationCode (also the Kafka key).
+                  x-parser-schema-id: <anonymous-schema-276>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-277>
+                datacontenttype:
+                  type: string
+                  enum:
+                    - application/json
+                  x-parser-schema-id: <anonymous-schema-278>
+                dataschema:
+                  type: string
+                  description: >-
+                    urn:warehouse:facility-layout:events:LocationSlotRegistered:v1
+                  x-parser-schema-id: <anonymous-schema-279>
+                data:
+                  type: object
+                  required:
+                    - locationCode
+                    - zoneId
+                  properties:
+                    locationCode:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-281>
+                    zoneId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-282>
+                    handlingUnit:
+                      type: string
+                      enum:
+                        - EACH
+                        - CASE
+                        - PALLET
+                      description: >-
+                        Optional handling unit recorded at registration; omitted
+                        when none was.
+                      x-parser-schema-id: <anonymous-schema-283>
+                  x-parser-schema-id: <anonymous-schema-280>
+              x-parser-schema-id: FacilityLayoutLocationSlotRegisteredEvent
+            messageId: FacilityLayoutLocationSlotRegistered
+          - name: FacilityLayoutLocationSlotDecommissioned
+            title: LocationSlotDecommissioned (from facility-layout, consumed)
+            summary: A coded slot was permanently retired.
+            description: >
+              CONSUMED, not produced. Pinned by facility-layout's
+              `apis/asyncapi.yaml`: type
+              `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned`,
+              `source=/warehouse/facility-layout`, subject and Kafka key = the
+              locationCode. Only the fields the facility cache relies on are
+              listed; the producer's own AsyncAPI is authoritative and unknown
+              fields are ignored.
+            contentType: application/cloudevents+json
+            tags:
+              - name: facility-layout
+                description: Consumed from facility-layout.
+            payload:
+              type: object
+              description: >
+                CloudEvents 1.0 envelope of facility-layout's
+                LocationSlotDecommissioned as consumed here (not composed from
+                CloudEventBase, whose `source` is this service's own).
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - data
+              properties:
+                specversion:
+                  type: string
+                  enum:
+                    - '1.0'
+                  x-parser-schema-id: <anonymous-schema-284>
+                id:
+                  type: string
+                  description: >-
+                    CloudEvents id; the dedupe key (claimed in
+                    processed_events).
+                  x-parser-schema-id: <anonymous-schema-285>
+                source:
+                  type: string
+                  enum:
+                    - /warehouse/facility-layout
+                  x-parser-schema-id: <anonymous-schema-286>
+                type:
+                  type: string
+                  const: >-
+                    com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
+                  x-parser-schema-id: <anonymous-schema-287>
+                subject:
+                  type: string
+                  description: The locationCode (also the Kafka key).
+                  x-parser-schema-id: <anonymous-schema-288>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-289>
+                datacontenttype:
+                  type: string
+                  enum:
+                    - application/json
+                  x-parser-schema-id: <anonymous-schema-290>
+                dataschema:
+                  type: string
+                  description: >-
+                    urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
+                  x-parser-schema-id: <anonymous-schema-291>
+                data:
+                  type: object
+                  required:
+                    - locationCode
+                  properties:
+                    locationCode:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-293>
+                  x-parser-schema-id: <anonymous-schema-292>
+              x-parser-schema-id: FacilityLayoutLocationSlotDecommissionedEvent
+            messageId: FacilityLayoutLocationSlotDecommissioned
+          - name: FacilityLayoutLocationSlotHandlingUnitDeclared
+            title: LocationSlotHandlingUnitDeclared (from facility-layout, consumed)
+            summary: >-
+              A slot's handling unit (EACH, CASE or PALLET) was set or changed
+              (ADR 0040).
+            description: >
+              CONSUMED, not produced. Pinned by facility-layout's
+              `apis/asyncapi.yaml`: type
+              `com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared`,
+              `source=/warehouse/facility-layout`, subject and Kafka key = the
+              locationCode. Only the fields the facility cache relies on are
+              listed; the producer's own AsyncAPI is authoritative and unknown
+              fields are ignored.
+            contentType: application/cloudevents+json
+            tags:
+              - name: facility-layout
+                description: Consumed from facility-layout.
+            payload:
+              type: object
+              description: >
+                CloudEvents 1.0 envelope of facility-layout's
+                LocationSlotHandlingUnitDeclared as consumed here (not composed
+                from CloudEventBase, whose `source` is this service's own).
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - data
+              properties:
+                specversion:
+                  type: string
+                  enum:
+                    - '1.0'
+                  x-parser-schema-id: <anonymous-schema-294>
+                id:
+                  type: string
+                  description: >-
+                    CloudEvents id; the dedupe key (claimed in
+                    processed_events).
+                  x-parser-schema-id: <anonymous-schema-295>
+                source:
+                  type: string
+                  enum:
+                    - /warehouse/facility-layout
+                  x-parser-schema-id: <anonymous-schema-296>
+                type:
+                  type: string
+                  const: >-
+                    com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared
+                  x-parser-schema-id: <anonymous-schema-297>
+                subject:
+                  type: string
+                  description: The locationCode (also the Kafka key).
+                  x-parser-schema-id: <anonymous-schema-298>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-299>
+                datacontenttype:
+                  type: string
+                  enum:
+                    - application/json
+                  x-parser-schema-id: <anonymous-schema-300>
+                dataschema:
+                  type: string
+                  description: >-
+                    urn:warehouse:facility-layout:events:LocationSlotHandlingUnitDeclared:v1
+                  x-parser-schema-id: <anonymous-schema-301>
+                data:
+                  type: object
+                  required:
+                    - locationCode
+                    - handlingUnit
+                  properties:
+                    locationCode:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-303>
+                    handlingUnit:
+                      type: string
+                      enum:
+                        - EACH
+                        - CASE
+                        - PALLET
+                      x-parser-schema-id: <anonymous-schema-304>
+                  x-parser-schema-id: <anonymous-schema-302>
+              x-parser-schema-id: FacilityLayoutLocationSlotHandlingUnitDeclaredEvent
+            messageId: FacilityLayoutLocationSlotHandlingUnitDeclared
   warehouse.fulfillment.events:
     description: >-
       Integration events published by Fulfillment Execution, keyed by aggregate
@@ -5693,7 +6089,7 @@ channels:
               type: string
               enum:
                 - '1.0'
-              x-parser-schema-id: <anonymous-schema-260>
+              x-parser-schema-id: <anonymous-schema-305>
             id:
               type: string
               description: >-
@@ -5701,33 +6097,33 @@ channels:
                 under consumer `task-completed-confirm-pick`,
                 `task-completed-relocate` for RELOCATE tasks, or
                 `task-completed-replenish` for REPLENISH tasks).
-              x-parser-schema-id: <anonymous-schema-261>
+              x-parser-schema-id: <anonymous-schema-306>
             source:
               type: string
               enum:
                 - /warehouse/fulfillment-execution
-              x-parser-schema-id: <anonymous-schema-262>
+              x-parser-schema-id: <anonymous-schema-307>
             type:
               type: string
               const: com.warehouse.wes.fulfillment-execution.task.TaskCompleted
-              x-parser-schema-id: <anonymous-schema-263>
+              x-parser-schema-id: <anonymous-schema-308>
             subject:
               type: string
               description: The task id (also the Kafka key).
-              x-parser-schema-id: <anonymous-schema-264>
+              x-parser-schema-id: <anonymous-schema-309>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-265>
+              x-parser-schema-id: <anonymous-schema-310>
             datacontenttype:
               type: string
               enum:
                 - application/json
-              x-parser-schema-id: <anonymous-schema-266>
+              x-parser-schema-id: <anonymous-schema-311>
             dataschema:
               type: string
               description: urn:warehouse:fulfillment-execution:events:TaskCompleted:v1
-              x-parser-schema-id: <anonymous-schema-267>
+              x-parser-schema-id: <anonymous-schema-312>
             data:
               type: object
               required:
@@ -5735,7 +6131,7 @@ channels:
               properties:
                 task_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-269>
+                  x-parser-schema-id: <anonymous-schema-314>
                 task_type:
                   type: string
                   enum:
@@ -5750,7 +6146,7 @@ channels:
                   description: >-
                     PICK, RELOCATE and REPLENISH are acted on; omitted by the
                     producer when the task could not be found.
-                  x-parser-schema-id: <anonymous-schema-270>
+                  x-parser-schema-id: <anonymous-schema-315>
                 order_ref:
                   type: string
                   description: >
@@ -5760,7 +6156,7 @@ channels:
                     per order line) carries the same value. Additive and
                     optional (ADR 0035): omitted when empty, in which case
                     nothing is counted or confirmed.
-                  x-parser-schema-id: <anonymous-schema-271>
+                  x-parser-schema-id: <anonymous-schema-316>
                 line_no:
                   type: integer
                   minimum: 1
@@ -5774,7 +6170,7 @@ channels:
                     the ADR 0035 last-pick counting applies. A value outside
                     1..2147483647 (the 32-bit line_no column) or a non-integer
                     is a malformed payload (dead-lettered).
-                  x-parser-schema-id: <anonymous-schema-272>
+                  x-parser-schema-id: <anonymous-schema-317>
                 sku:
                   type: string
                   description: >
@@ -5782,20 +6178,20 @@ channels:
                     the SKU moved. Required on a RELOCATE or REPLENISH
                     completion (missing or invalid = dead-lettered); absent on
                     every other task type.
-                  x-parser-schema-id: <anonymous-schema-273>
+                  x-parser-schema-id: <anonymous-schema-318>
                 from_bin:
                   type: string
                   description: >
                     RELOCATE and REPLENISH only (additive): the source bin's
                     location code; its site is the move's site.
-                  x-parser-schema-id: <anonymous-schema-274>
+                  x-parser-schema-id: <anonymous-schema-319>
                 to_bin:
                   type: string
                   description: >
                     RELOCATE and REPLENISH only (additive): the destination
                     bin's location code; must be a different bin of the same
                     site.
-                  x-parser-schema-id: <anonymous-schema-275>
+                  x-parser-schema-id: <anonymous-schema-320>
                 quantity:
                   type: integer
                   minimum: 1
@@ -5803,7 +6199,7 @@ channels:
                     RELOCATE and REPLENISH only (additive): the units moved.
                     Missing, zero or negative on a RELOCATE or REPLENISH
                     completion = dead-lettered.
-                  x-parser-schema-id: <anonymous-schema-276>
+                  x-parser-schema-id: <anonymous-schema-321>
                 relocation_ref:
                   type: string
                   maxLength: 200
@@ -5811,7 +6207,7 @@ channels:
                     RELOCATE only (additive, ADR 0039, optional): the slot-plan
                     move the task executes; stored as the relocation's
                     source_ref (the task id is used when absent).
-                  x-parser-schema-id: <anonymous-schema-277>
+                  x-parser-schema-id: <anonymous-schema-322>
                 request_ref:
                   type: string
                   maxLength: 200
@@ -5821,8 +6217,8 @@ channels:
                     source_ref (reason REPLENISHMENT) and echoed in
                     StockRelocated. Missing or blank = dead-lettered; there is
                     no task-id fallback.
-                  x-parser-schema-id: <anonymous-schema-278>
-              x-parser-schema-id: <anonymous-schema-268>
+                  x-parser-schema-id: <anonymous-schema-323>
+              x-parser-schema-id: <anonymous-schema-313>
           x-parser-schema-id: FulfillmentTaskCompletedEvent
         examples:
           - name: pickTaskCompletedForLine
@@ -5993,41 +6389,41 @@ channels:
                   type: string
                   enum:
                     - '1.0'
-                  x-parser-schema-id: <anonymous-schema-279>
+                  x-parser-schema-id: <anonymous-schema-324>
                 id:
                   type: string
                   description: >-
                     CloudEvents id; the dedupe key (claimed in processed_events
                     under consumer `inbound-receipt-line`).
-                  x-parser-schema-id: <anonymous-schema-280>
+                  x-parser-schema-id: <anonymous-schema-325>
                 source:
                   type: string
                   enum:
                     - /warehouse/inbound-receiving
-                  x-parser-schema-id: <anonymous-schema-281>
+                  x-parser-schema-id: <anonymous-schema-326>
                 type:
                   type: string
                   const: >-
                     com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived
-                  x-parser-schema-id: <anonymous-schema-282>
+                  x-parser-schema-id: <anonymous-schema-327>
                 subject:
                   type: string
                   description: The receipt id (the Kafka key is the ASN number).
-                  x-parser-schema-id: <anonymous-schema-283>
+                  x-parser-schema-id: <anonymous-schema-328>
                 time:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-284>
+                  x-parser-schema-id: <anonymous-schema-329>
                 datacontenttype:
                   type: string
                   enum:
                     - application/json
-                  x-parser-schema-id: <anonymous-schema-285>
+                  x-parser-schema-id: <anonymous-schema-330>
                 dataschema:
                   type: string
                   description: >-
                     urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1
-                  x-parser-schema-id: <anonymous-schema-286>
+                  x-parser-schema-id: <anonymous-schema-331>
                 data:
                   type: object
                   required:
@@ -6041,27 +6437,27 @@ channels:
                   properties:
                     receipt_id:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-288>
+                      x-parser-schema-id: <anonymous-schema-333>
                     asn_number:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-289>
+                      x-parser-schema-id: <anonymous-schema-334>
                     line_no:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-290>
+                      x-parser-schema-id: <anonymous-schema-335>
                     sku:
                       type: string
                       description: >-
                         Must be non-empty; an empty SKU is logged and committed
                         past.
-                      x-parser-schema-id: <anonymous-schema-291>
+                      x-parser-schema-id: <anonymous-schema-336>
                     quantity:
                       type: integer
                       minimum: 1
                       description: >-
                         Units received on this occurrence. A value <= 0 is
                         logged and committed past.
-                      x-parser-schema-id: <anonymous-schema-292>
+                      x-parser-schema-id: <anonymous-schema-337>
                     condition:
                       type: string
                       enum:
@@ -6071,11 +6467,11 @@ channels:
                         Only Good is booked as stock (ADR 0037); Damaged is
                         counted and ignored; any other value is logged and
                         committed past.
-                      x-parser-schema-id: <anonymous-schema-293>
+                      x-parser-schema-id: <anonymous-schema-338>
                     received_at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-294>
+                      x-parser-schema-id: <anonymous-schema-339>
                     owner_ref:
                       type: string
                       maxLength: 64
@@ -6083,25 +6479,25 @@ channels:
                         Optional (ADR 0046). The owner of the received stock;
                         absent means fleet-owned. A malformed value is logged
                         and committed past.
-                      x-parser-schema-id: <anonymous-schema-295>
+                      x-parser-schema-id: <anonymous-schema-340>
                     pack_gtin:
                       type: string
                       description: >-
                         Optional. GTIN-14 of the case pack level when the line
                         was received in sealed cases.
-                      x-parser-schema-id: <anonymous-schema-296>
+                      x-parser-schema-id: <anonymous-schema-341>
                     cases:
                       type: integer
                       minimum: 1
                       description: Optional. Number of sealed cases in the line.
-                      x-parser-schema-id: <anonymous-schema-297>
+                      x-parser-schema-id: <anonymous-schema-342>
                     sscc:
                       type: string
                       description: >-
                         Optional. SSCC of the pallet or carton the line was
                         received on.
-                      x-parser-schema-id: <anonymous-schema-298>
-                  x-parser-schema-id: <anonymous-schema-287>
+                      x-parser-schema-id: <anonymous-schema-343>
+                  x-parser-schema-id: <anonymous-schema-332>
               x-parser-schema-id: InboundReceivingReceiptLineReceivedEvent
             examples:
               - name: goodLine
@@ -6202,41 +6598,41 @@ channels:
                   type: string
                   enum:
                     - '1.0'
-                  x-parser-schema-id: <anonymous-schema-299>
+                  x-parser-schema-id: <anonymous-schema-344>
                 id:
                   type: string
                   description: >-
                     CloudEvents id; the dedupe key (claimed in
                     processed_events).
-                  x-parser-schema-id: <anonymous-schema-300>
+                  x-parser-schema-id: <anonymous-schema-345>
                 source:
                   type: string
                   enum:
                     - /warehouse/inbound-receiving
-                  x-parser-schema-id: <anonymous-schema-301>
+                  x-parser-schema-id: <anonymous-schema-346>
                 type:
                   type: string
                   const: >-
                     com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived
-                  x-parser-schema-id: <anonymous-schema-302>
+                  x-parser-schema-id: <anonymous-schema-347>
                 subject:
                   type: string
                   description: The receipt id.
-                  x-parser-schema-id: <anonymous-schema-303>
+                  x-parser-schema-id: <anonymous-schema-348>
                 time:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-304>
+                  x-parser-schema-id: <anonymous-schema-349>
                 datacontenttype:
                   type: string
                   enum:
                     - application/json
-                  x-parser-schema-id: <anonymous-schema-305>
+                  x-parser-schema-id: <anonymous-schema-350>
                 dataschema:
                   type: string
                   description: >-
                     urn:warehouse:inbound-receiving:events:ReceiptCartonReceived:v1
-                  x-parser-schema-id: <anonymous-schema-306>
+                  x-parser-schema-id: <anonymous-schema-351>
                 data:
                   type: object
                   description: >-
@@ -6250,34 +6646,34 @@ channels:
                   properties:
                     receipt_id:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-308>
+                      x-parser-schema-id: <anonymous-schema-353>
                     asn_number:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-309>
+                      x-parser-schema-id: <anonymous-schema-354>
                     sscc:
                       type: string
                       description: SSCC-18 of the carton.
-                      x-parser-schema-id: <anonymous-schema-310>
+                      x-parser-schema-id: <anonymous-schema-355>
                     parent_sscc:
                       type: string
                       description: SSCC of the pallet it arrived on, when palletised.
-                      x-parser-schema-id: <anonymous-schema-311>
+                      x-parser-schema-id: <anonymous-schema-356>
                     sealed:
                       type: boolean
                       description: Only a sealed carton gets a Container.
-                      x-parser-schema-id: <anonymous-schema-312>
+                      x-parser-schema-id: <anonymous-schema-357>
                     lpn:
                       type: string
                       description: >-
                         The license plate - the SSCC, or an internal
                         `LPN-<site>-<id>` for an unlabelled carton. Absent falls
                         back to `sscc`.
-                      x-parser-schema-id: <anonymous-schema-313>
+                      x-parser-schema-id: <anonymous-schema-358>
                     owner_ref:
                       type: string
                       maxLength: 64
                       description: Owner of the stock; absent means fleet-owned.
-                      x-parser-schema-id: <anonymous-schema-314>
+                      x-parser-schema-id: <anonymous-schema-359>
                     contents:
                       type: array
                       minItems: 1
@@ -6295,44 +6691,44 @@ channels:
                           line_no:
                             type: integer
                             minimum: 1
-                            x-parser-schema-id: <anonymous-schema-317>
+                            x-parser-schema-id: <anonymous-schema-362>
                           sku:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-318>
+                            x-parser-schema-id: <anonymous-schema-363>
                           gtin:
                             type: string
                             description: >-
                               GTIN-14 of the case; must be known to the
                               PackagingView and belong to `sku`.
-                            x-parser-schema-id: <anonymous-schema-319>
+                            x-parser-schema-id: <anonymous-schema-364>
                           qty:
                             type: integer
                             minimum: 1
                             description: >-
                               Eaches in the carton; must equal the case's units
                               per pack.
-                            x-parser-schema-id: <anonymous-schema-320>
+                            x-parser-schema-id: <anonymous-schema-365>
                           lot:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-321>
+                            x-parser-schema-id: <anonymous-schema-366>
                           expiry:
                             type: string
                             description: YYYY-MM-DD.
-                            x-parser-schema-id: <anonymous-schema-322>
+                            x-parser-schema-id: <anonymous-schema-367>
                           condition:
                             type: string
                             enum:
                               - Good
                               - Damaged
                             description: Only Good gets a Container.
-                            x-parser-schema-id: <anonymous-schema-323>
-                        x-parser-schema-id: <anonymous-schema-316>
-                      x-parser-schema-id: <anonymous-schema-315>
+                            x-parser-schema-id: <anonymous-schema-368>
+                        x-parser-schema-id: <anonymous-schema-361>
+                      x-parser-schema-id: <anonymous-schema-360>
                     received_at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-324>
-                  x-parser-schema-id: <anonymous-schema-307>
+                      x-parser-schema-id: <anonymous-schema-369>
+                  x-parser-schema-id: <anonymous-schema-352>
               x-parser-schema-id: InboundReceivingReceiptCartonReceivedEvent
             examples:
               - name: sealedCase
@@ -6439,40 +6835,40 @@ channels:
               type: string
               enum:
                 - '1.0'
-              x-parser-schema-id: <anonymous-schema-325>
+              x-parser-schema-id: <anonymous-schema-370>
             id:
               type: string
               description: >-
                 CloudEvents id; the dedupe key (claimed in processed_events
                 under consumer `return-line-staged`).
-              x-parser-schema-id: <anonymous-schema-326>
+              x-parser-schema-id: <anonymous-schema-371>
             source:
               type: string
               enum:
                 - /warehouse/returns-processing
-              x-parser-schema-id: <anonymous-schema-327>
+              x-parser-schema-id: <anonymous-schema-372>
             type:
               type: string
               const: >-
                 com.warehouse.wms.returns-processing.disposition.ReturnLineStaged
-              x-parser-schema-id: <anonymous-schema-328>
+              x-parser-schema-id: <anonymous-schema-373>
             subject:
               type: string
               description: The disposition id (also the Kafka key).
-              x-parser-schema-id: <anonymous-schema-329>
+              x-parser-schema-id: <anonymous-schema-374>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-330>
+              x-parser-schema-id: <anonymous-schema-375>
             datacontenttype:
               type: string
               enum:
                 - application/json
-              x-parser-schema-id: <anonymous-schema-331>
+              x-parser-schema-id: <anonymous-schema-376>
             dataschema:
               type: string
               description: urn:warehouse:returns-processing:events:ReturnLineStaged:v1
-              x-parser-schema-id: <anonymous-schema-332>
+              x-parser-schema-id: <anonymous-schema-377>
             data:
               type: object
               description: >
@@ -6491,24 +6887,24 @@ channels:
               properties:
                 receipt_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-334>
+                  x-parser-schema-id: <anonymous-schema-379>
                 line_no:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-335>
+                  x-parser-schema-id: <anonymous-schema-380>
                 sku:
                   type: string
                   description: >-
                     Must be non-empty; an empty SKU is logged and committed
                     past.
-                  x-parser-schema-id: <anonymous-schema-336>
+                  x-parser-schema-id: <anonymous-schema-381>
                 quantity:
                   type: integer
                   minimum: 1
                   description: >-
                     Restockable units handed over. A value <= 0 is logged and
                     committed past.
-                  x-parser-schema-id: <anonymous-schema-337>
+                  x-parser-schema-id: <anonymous-schema-382>
                 condition:
                   type: string
                   const: Good
@@ -6516,32 +6912,32 @@ channels:
                     A staged return line is always Good (only a RESTOCK
                     disposition stages one); any other value is logged and
                     committed past.
-                  x-parser-schema-id: <anonymous-schema-338>
+                  x-parser-schema-id: <anonymous-schema-383>
                 received_at:
                   type: string
                   format: date-time
                   description: >-
                     When the line arrived on the return receipt; logged, not
                     stored.
-                  x-parser-schema-id: <anonymous-schema-339>
+                  x-parser-schema-id: <anonymous-schema-384>
                 rma_id:
                   type: string
                   description: The RMA the line was authorized against; logged, not stored.
-                  x-parser-schema-id: <anonymous-schema-340>
+                  x-parser-schema-id: <anonymous-schema-385>
                 disposition_id:
                   type: string
                   description: >
                     The RESTOCK disposition this staging belongs to (the
                     producer's idempotency key). Must be non-empty; an empty
                     value is logged and committed past. Logged, not stored.
-                  x-parser-schema-id: <anonymous-schema-341>
+                  x-parser-schema-id: <anonymous-schema-386>
                 site_id:
                   type: string
                   description: >-
                     The site the goods were received back at; logged, not
                     stored.
-                  x-parser-schema-id: <anonymous-schema-342>
-              x-parser-schema-id: <anonymous-schema-333>
+                  x-parser-schema-id: <anonymous-schema-387>
+              x-parser-schema-id: <anonymous-schema-378>
           x-parser-schema-id: ReturnsProcessingReturnLineStagedEvent
         examples:
           - name: staged
@@ -6632,41 +7028,41 @@ channels:
               type: string
               enum:
                 - '1.0'
-              x-parser-schema-id: <anonymous-schema-343>
+              x-parser-schema-id: <anonymous-schema-388>
             id:
               type: string
               description: CloudEvents id; the dedupe key (claimed in processed_events).
-              x-parser-schema-id: <anonymous-schema-344>
+              x-parser-schema-id: <anonymous-schema-389>
             source:
               type: string
               enum:
                 - /warehouse/network-inventory-planning
-              x-parser-schema-id: <anonymous-schema-345>
+              x-parser-schema-id: <anonymous-schema-390>
             type:
               type: string
               const: >-
                 com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
-              x-parser-schema-id: <anonymous-schema-346>
+              x-parser-schema-id: <anonymous-schema-391>
             subject:
               type: string
               description: >-
                 The transfer line id (also the Kafka key and the
                 reply-correlation key).
-              x-parser-schema-id: <anonymous-schema-347>
+              x-parser-schema-id: <anonymous-schema-392>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-348>
+              x-parser-schema-id: <anonymous-schema-393>
             datacontenttype:
               type: string
               enum:
                 - application/json
-              x-parser-schema-id: <anonymous-schema-349>
+              x-parser-schema-id: <anonymous-schema-394>
             dataschema:
               type: string
               description: >-
                 urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
-              x-parser-schema-id: <anonymous-schema-350>
+              x-parser-schema-id: <anonymous-schema-395>
             data:
               type: object
               description: Exactly five fields — the whole consumed contract.
@@ -6679,24 +7075,24 @@ channels:
               properties:
                 transfer_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-352>
+                  x-parser-schema-id: <anonymous-schema-397>
                 transfer_line_id:
                   type: string
                   description: >-
                     <transfer_id>:1 in v1's single-line saga; also the
                     allocation-ledger and reply-correlation key.
-                  x-parser-schema-id: <anonymous-schema-353>
+                  x-parser-schema-id: <anonymous-schema-398>
                 origin_site_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-354>
+                  x-parser-schema-id: <anonymous-schema-399>
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-355>
+                  x-parser-schema-id: <anonymous-schema-400>
                 quantity:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-356>
-              x-parser-schema-id: <anonymous-schema-351>
+                  x-parser-schema-id: <anonymous-schema-401>
+              x-parser-schema-id: <anonymous-schema-396>
           x-parser-schema-id: NetworkInventoryPlanningTransferAllocationRequestedEvent
         examples:
           - name: singleLineAllocation
@@ -6881,6 +7277,9 @@ components:
               quantity: 50
       messageId: StockReceived
     ItemStowed:
+      x-no-consumer-reason: >-
+        pending: promoted to the integration topic; network-fulfillment cache
+        consumer in flight, no spec declares it yet
       name: ItemStowed
       title: Item Stowed
       summary: A quantity of a SKU was placed into a bin.
@@ -7165,14 +7564,14 @@ components:
                 type: string
                 description: Fixed event type for LocationRecorded.
                 const: com.warehouse.wms.inventory-storage.stock.LocationRecorded
-                x-parser-schema-id: <anonymous-schema-358>
+                x-parser-schema-id: <anonymous-schema-403>
               dataschema:
                 type: string
                 description: >-
                   Reserved for if LocationRecorded is ever published; it is
                   in-process only today.
                 pattern: ^urn:warehouse:inventory-storage:events:LocationRecorded:v1$
-                x-parser-schema-id: <anonymous-schema-359>
+                x-parser-schema-id: <anonymous-schema-404>
               data:
                 type: object
                 description: Business payload for LocationRecorded.
@@ -7183,13 +7582,13 @@ components:
                   stock_unit_id:
                     type: string
                     description: Identifier of the StockUnit whose location is now known.
-                    x-parser-schema-id: <anonymous-schema-361>
+                    x-parser-schema-id: <anonymous-schema-406>
                   bin_id:
                     type: string
                     description: The bin that authoritatively holds that StockUnit.
-                    x-parser-schema-id: <anonymous-schema-362>
-                x-parser-schema-id: <anonymous-schema-360>
-            x-parser-schema-id: <anonymous-schema-357>
+                    x-parser-schema-id: <anonymous-schema-407>
+                x-parser-schema-id: <anonymous-schema-405>
+            x-parser-schema-id: <anonymous-schema-402>
         x-parser-schema-id: LocationRecordedEvent
       examples:
         - name: locationRecordedForStockUnit
@@ -7207,6 +7606,355 @@ components:
               stock_unit_id: su-7781
               bin_id: A-12-3
       messageId: LocationRecorded
+    FacilityLayoutZoneRegistered:
+      name: FacilityLayoutZoneRegistered
+      title: ZoneRegistered (from facility-layout, consumed)
+      summary: A zone and its classification (temperature, hazmat) was registered.
+      description: >
+        CONSUMED, not produced. Pinned by facility-layout's
+        `apis/asyncapi.yaml`: type
+        `com.warehouse.wms.facility-layout.zone.ZoneRegistered`,
+        `source=/warehouse/facility-layout`, subject and Kafka key = the zoneId.
+        Only the fields the facility cache relies on are listed; the producer's
+        own AsyncAPI is authoritative and unknown fields are ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: facility-layout
+          description: Consumed from facility-layout.
+      payload:
+        type: object
+        description: >
+          CloudEvents 1.0 envelope of facility-layout's ZoneRegistered as
+          consumed here (not composed from CloudEventBase, whose `source` is
+          this service's own).
+        required:
+          - specversion
+          - id
+          - source
+          - type
+          - subject
+          - time
+          - datacontenttype
+          - data
+        properties:
+          specversion:
+            type: string
+            enum:
+              - '1.0'
+            x-parser-schema-id: <anonymous-schema-260>
+          id:
+            type: string
+            description: CloudEvents id; the dedupe key (claimed in processed_events).
+            x-parser-schema-id: <anonymous-schema-261>
+          source:
+            type: string
+            enum:
+              - /warehouse/facility-layout
+            x-parser-schema-id: <anonymous-schema-262>
+          type:
+            type: string
+            const: com.warehouse.wms.facility-layout.zone.ZoneRegistered
+            x-parser-schema-id: <anonymous-schema-263>
+          subject:
+            type: string
+            description: The zoneId (also the Kafka key).
+            x-parser-schema-id: <anonymous-schema-264>
+          time:
+            type: string
+            format: date-time
+            x-parser-schema-id: <anonymous-schema-265>
+          datacontenttype:
+            type: string
+            enum:
+              - application/json
+            x-parser-schema-id: <anonymous-schema-266>
+          dataschema:
+            type: string
+            description: urn:warehouse:facility-layout:events:ZoneRegistered:v1
+            x-parser-schema-id: <anonymous-schema-267>
+          data:
+            type: object
+            required:
+              - zoneId
+              - temperatureClass
+              - hazmat
+            properties:
+              zoneId:
+                type: string
+                x-parser-schema-id: <anonymous-schema-269>
+              temperatureClass:
+                type: string
+                x-parser-schema-id: <anonymous-schema-270>
+              hazmat:
+                type: boolean
+                x-parser-schema-id: <anonymous-schema-271>
+            x-parser-schema-id: <anonymous-schema-268>
+        x-parser-schema-id: FacilityLayoutZoneRegisteredEvent
+      messageId: FacilityLayoutZoneRegistered
+    FacilityLayoutLocationSlotRegistered:
+      name: FacilityLayoutLocationSlotRegistered
+      title: LocationSlotRegistered (from facility-layout, consumed)
+      summary: >-
+        A coded storage slot was registered, with its zone and optional handling
+        unit.
+      description: >
+        CONSUMED, not produced. Pinned by facility-layout's
+        `apis/asyncapi.yaml`: type
+        `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered`,
+        `source=/warehouse/facility-layout`, subject and Kafka key = the
+        locationCode. Only the fields the facility cache relies on are listed;
+        the producer's own AsyncAPI is authoritative and unknown fields are
+        ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: facility-layout
+          description: Consumed from facility-layout.
+      payload:
+        type: object
+        description: >
+          CloudEvents 1.0 envelope of facility-layout's LocationSlotRegistered
+          as consumed here (not composed from CloudEventBase, whose `source` is
+          this service's own).
+        required:
+          - specversion
+          - id
+          - source
+          - type
+          - subject
+          - time
+          - datacontenttype
+          - data
+        properties:
+          specversion:
+            type: string
+            enum:
+              - '1.0'
+            x-parser-schema-id: <anonymous-schema-272>
+          id:
+            type: string
+            description: CloudEvents id; the dedupe key (claimed in processed_events).
+            x-parser-schema-id: <anonymous-schema-273>
+          source:
+            type: string
+            enum:
+              - /warehouse/facility-layout
+            x-parser-schema-id: <anonymous-schema-274>
+          type:
+            type: string
+            const: >-
+              com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered
+            x-parser-schema-id: <anonymous-schema-275>
+          subject:
+            type: string
+            description: The locationCode (also the Kafka key).
+            x-parser-schema-id: <anonymous-schema-276>
+          time:
+            type: string
+            format: date-time
+            x-parser-schema-id: <anonymous-schema-277>
+          datacontenttype:
+            type: string
+            enum:
+              - application/json
+            x-parser-schema-id: <anonymous-schema-278>
+          dataschema:
+            type: string
+            description: urn:warehouse:facility-layout:events:LocationSlotRegistered:v1
+            x-parser-schema-id: <anonymous-schema-279>
+          data:
+            type: object
+            required:
+              - locationCode
+              - zoneId
+            properties:
+              locationCode:
+                type: string
+                x-parser-schema-id: <anonymous-schema-281>
+              zoneId:
+                type: string
+                x-parser-schema-id: <anonymous-schema-282>
+              handlingUnit:
+                type: string
+                enum:
+                  - EACH
+                  - CASE
+                  - PALLET
+                description: >-
+                  Optional handling unit recorded at registration; omitted when
+                  none was.
+                x-parser-schema-id: <anonymous-schema-283>
+            x-parser-schema-id: <anonymous-schema-280>
+        x-parser-schema-id: FacilityLayoutLocationSlotRegisteredEvent
+      messageId: FacilityLayoutLocationSlotRegistered
+    FacilityLayoutLocationSlotDecommissioned:
+      name: FacilityLayoutLocationSlotDecommissioned
+      title: LocationSlotDecommissioned (from facility-layout, consumed)
+      summary: A coded slot was permanently retired.
+      description: >
+        CONSUMED, not produced. Pinned by facility-layout's
+        `apis/asyncapi.yaml`: type
+        `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned`,
+        `source=/warehouse/facility-layout`, subject and Kafka key = the
+        locationCode. Only the fields the facility cache relies on are listed;
+        the producer's own AsyncAPI is authoritative and unknown fields are
+        ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: facility-layout
+          description: Consumed from facility-layout.
+      payload:
+        type: object
+        description: >
+          CloudEvents 1.0 envelope of facility-layout's
+          LocationSlotDecommissioned as consumed here (not composed from
+          CloudEventBase, whose `source` is this service's own).
+        required:
+          - specversion
+          - id
+          - source
+          - type
+          - subject
+          - time
+          - datacontenttype
+          - data
+        properties:
+          specversion:
+            type: string
+            enum:
+              - '1.0'
+            x-parser-schema-id: <anonymous-schema-284>
+          id:
+            type: string
+            description: CloudEvents id; the dedupe key (claimed in processed_events).
+            x-parser-schema-id: <anonymous-schema-285>
+          source:
+            type: string
+            enum:
+              - /warehouse/facility-layout
+            x-parser-schema-id: <anonymous-schema-286>
+          type:
+            type: string
+            const: >-
+              com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
+            x-parser-schema-id: <anonymous-schema-287>
+          subject:
+            type: string
+            description: The locationCode (also the Kafka key).
+            x-parser-schema-id: <anonymous-schema-288>
+          time:
+            type: string
+            format: date-time
+            x-parser-schema-id: <anonymous-schema-289>
+          datacontenttype:
+            type: string
+            enum:
+              - application/json
+            x-parser-schema-id: <anonymous-schema-290>
+          dataschema:
+            type: string
+            description: urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
+            x-parser-schema-id: <anonymous-schema-291>
+          data:
+            type: object
+            required:
+              - locationCode
+            properties:
+              locationCode:
+                type: string
+                x-parser-schema-id: <anonymous-schema-293>
+            x-parser-schema-id: <anonymous-schema-292>
+        x-parser-schema-id: FacilityLayoutLocationSlotDecommissionedEvent
+      messageId: FacilityLayoutLocationSlotDecommissioned
+    FacilityLayoutLocationSlotHandlingUnitDeclared:
+      name: FacilityLayoutLocationSlotHandlingUnitDeclared
+      title: LocationSlotHandlingUnitDeclared (from facility-layout, consumed)
+      summary: >-
+        A slot's handling unit (EACH, CASE or PALLET) was set or changed (ADR
+        0040).
+      description: >
+        CONSUMED, not produced. Pinned by facility-layout's
+        `apis/asyncapi.yaml`: type
+        `com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared`,
+        `source=/warehouse/facility-layout`, subject and Kafka key = the
+        locationCode. Only the fields the facility cache relies on are listed;
+        the producer's own AsyncAPI is authoritative and unknown fields are
+        ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: facility-layout
+          description: Consumed from facility-layout.
+      payload:
+        type: object
+        description: >
+          CloudEvents 1.0 envelope of facility-layout's
+          LocationSlotHandlingUnitDeclared as consumed here (not composed from
+          CloudEventBase, whose `source` is this service's own).
+        required:
+          - specversion
+          - id
+          - source
+          - type
+          - subject
+          - time
+          - datacontenttype
+          - data
+        properties:
+          specversion:
+            type: string
+            enum:
+              - '1.0'
+            x-parser-schema-id: <anonymous-schema-294>
+          id:
+            type: string
+            description: CloudEvents id; the dedupe key (claimed in processed_events).
+            x-parser-schema-id: <anonymous-schema-295>
+          source:
+            type: string
+            enum:
+              - /warehouse/facility-layout
+            x-parser-schema-id: <anonymous-schema-296>
+          type:
+            type: string
+            const: >-
+              com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared
+            x-parser-schema-id: <anonymous-schema-297>
+          subject:
+            type: string
+            description: The locationCode (also the Kafka key).
+            x-parser-schema-id: <anonymous-schema-298>
+          time:
+            type: string
+            format: date-time
+            x-parser-schema-id: <anonymous-schema-299>
+          datacontenttype:
+            type: string
+            enum:
+              - application/json
+            x-parser-schema-id: <anonymous-schema-300>
+          dataschema:
+            type: string
+            description: >-
+              urn:warehouse:facility-layout:events:LocationSlotHandlingUnitDeclared:v1
+            x-parser-schema-id: <anonymous-schema-301>
+          data:
+            type: object
+            required:
+              - locationCode
+              - handlingUnit
+            properties:
+              locationCode:
+                type: string
+                x-parser-schema-id: <anonymous-schema-303>
+              handlingUnit:
+                type: string
+                enum:
+                  - EACH
+                  - CASE
+                  - PALLET
+                x-parser-schema-id: <anonymous-schema-304>
+            x-parser-schema-id: <anonymous-schema-302>
+        x-parser-schema-id: FacilityLayoutLocationSlotHandlingUnitDeclaredEvent
+      messageId: FacilityLayoutLocationSlotHandlingUnitDeclared
     ProductMasterProductClassified:
       name: ProductMasterProductClassified
       title: Product Classified (from product-master, consumed)
@@ -7365,6 +8113,9 @@ components:
               version: 3
       messageId: ProductMasterProductClassified
     ContainerRegistered:
+      x-no-consumer-reason: >-
+        pending: container fact (ADR 0045); no consumer declared in any fleet
+        spec yet
       name: ContainerRegistered
       title: Container Registered
       summary: >-
@@ -7584,6 +8335,9 @@ components:
               at: '2026-10-24T12:00:00Z'
       messageId: ContainerRegistered
     ContainerStowed:
+      x-no-consumer-reason: >-
+        pending: container fact (ADR 0045); no consumer declared in any fleet
+        spec yet
       name: ContainerStowed
       title: Container Stowed
       summary: A sealed case was stowed into a case bin; its site is the bin's site.
@@ -7771,6 +8525,9 @@ components:
               at: '2026-10-24T12:05:00Z'
       messageId: ContainerStowed
     CaseBroken:
+      x-no-consumer-reason: >-
+        pending: container fact (ADR 0045/0046); no consumer declared in any
+        fleet spec yet
       name: CaseBroken
       title: Case Broken
       summary: A sealed case was opened and its eaches moved to loose stock.
@@ -7958,6 +8715,9 @@ components:
               at: '2026-10-24T12:10:00Z'
       messageId: CaseBroken
     ContainerEmptied:
+      x-no-consumer-reason: >-
+        pending: container fact (ADR 0045/0046); no consumer declared in any
+        fleet spec yet
       name: ContainerEmptied
       title: Container Emptied
       summary: A container has no contents left; it leaves its bin.
@@ -8189,37 +8949,37 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-299>
+            x-parser-schema-id: <anonymous-schema-344>
           id:
             type: string
             description: CloudEvents id; the dedupe key (claimed in processed_events).
-            x-parser-schema-id: <anonymous-schema-300>
+            x-parser-schema-id: <anonymous-schema-345>
           source:
             type: string
             enum:
               - /warehouse/inbound-receiving
-            x-parser-schema-id: <anonymous-schema-301>
+            x-parser-schema-id: <anonymous-schema-346>
           type:
             type: string
             const: com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived
-            x-parser-schema-id: <anonymous-schema-302>
+            x-parser-schema-id: <anonymous-schema-347>
           subject:
             type: string
             description: The receipt id.
-            x-parser-schema-id: <anonymous-schema-303>
+            x-parser-schema-id: <anonymous-schema-348>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-304>
+            x-parser-schema-id: <anonymous-schema-349>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-305>
+            x-parser-schema-id: <anonymous-schema-350>
           dataschema:
             type: string
             description: urn:warehouse:inbound-receiving:events:ReceiptCartonReceived:v1
-            x-parser-schema-id: <anonymous-schema-306>
+            x-parser-schema-id: <anonymous-schema-351>
           data:
             type: object
             description: >-
@@ -8233,33 +8993,33 @@ components:
             properties:
               receipt_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-308>
+                x-parser-schema-id: <anonymous-schema-353>
               asn_number:
                 type: string
-                x-parser-schema-id: <anonymous-schema-309>
+                x-parser-schema-id: <anonymous-schema-354>
               sscc:
                 type: string
                 description: SSCC-18 of the carton.
-                x-parser-schema-id: <anonymous-schema-310>
+                x-parser-schema-id: <anonymous-schema-355>
               parent_sscc:
                 type: string
                 description: SSCC of the pallet it arrived on, when palletised.
-                x-parser-schema-id: <anonymous-schema-311>
+                x-parser-schema-id: <anonymous-schema-356>
               sealed:
                 type: boolean
                 description: Only a sealed carton gets a Container.
-                x-parser-schema-id: <anonymous-schema-312>
+                x-parser-schema-id: <anonymous-schema-357>
               lpn:
                 type: string
                 description: >-
                   The license plate - the SSCC, or an internal `LPN-<site>-<id>`
                   for an unlabelled carton. Absent falls back to `sscc`.
-                x-parser-schema-id: <anonymous-schema-313>
+                x-parser-schema-id: <anonymous-schema-358>
               owner_ref:
                 type: string
                 maxLength: 64
                 description: Owner of the stock; absent means fleet-owned.
-                x-parser-schema-id: <anonymous-schema-314>
+                x-parser-schema-id: <anonymous-schema-359>
               contents:
                 type: array
                 minItems: 1
@@ -8277,44 +9037,44 @@ components:
                     line_no:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-317>
+                      x-parser-schema-id: <anonymous-schema-362>
                     sku:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-318>
+                      x-parser-schema-id: <anonymous-schema-363>
                     gtin:
                       type: string
                       description: >-
                         GTIN-14 of the case; must be known to the PackagingView
                         and belong to `sku`.
-                      x-parser-schema-id: <anonymous-schema-319>
+                      x-parser-schema-id: <anonymous-schema-364>
                     qty:
                       type: integer
                       minimum: 1
                       description: >-
                         Eaches in the carton; must equal the case's units per
                         pack.
-                      x-parser-schema-id: <anonymous-schema-320>
+                      x-parser-schema-id: <anonymous-schema-365>
                     lot:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-321>
+                      x-parser-schema-id: <anonymous-schema-366>
                     expiry:
                       type: string
                       description: YYYY-MM-DD.
-                      x-parser-schema-id: <anonymous-schema-322>
+                      x-parser-schema-id: <anonymous-schema-367>
                     condition:
                       type: string
                       enum:
                         - Good
                         - Damaged
                       description: Only Good gets a Container.
-                      x-parser-schema-id: <anonymous-schema-323>
-                  x-parser-schema-id: <anonymous-schema-316>
-                x-parser-schema-id: <anonymous-schema-315>
+                      x-parser-schema-id: <anonymous-schema-368>
+                  x-parser-schema-id: <anonymous-schema-361>
+                x-parser-schema-id: <anonymous-schema-360>
               received_at:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-324>
-            x-parser-schema-id: <anonymous-schema-307>
+                x-parser-schema-id: <anonymous-schema-369>
+            x-parser-schema-id: <anonymous-schema-352>
         x-parser-schema-id: InboundReceivingReceiptCartonReceivedEvent
       examples:
         - name: sealedCase
@@ -8672,7 +9432,7 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-260>
+            x-parser-schema-id: <anonymous-schema-305>
           id:
             type: string
             description: >-
@@ -8680,33 +9440,33 @@ components:
               consumer `task-completed-confirm-pick`, `task-completed-relocate`
               for RELOCATE tasks, or `task-completed-replenish` for REPLENISH
               tasks).
-            x-parser-schema-id: <anonymous-schema-261>
+            x-parser-schema-id: <anonymous-schema-306>
           source:
             type: string
             enum:
               - /warehouse/fulfillment-execution
-            x-parser-schema-id: <anonymous-schema-262>
+            x-parser-schema-id: <anonymous-schema-307>
           type:
             type: string
             const: com.warehouse.wes.fulfillment-execution.task.TaskCompleted
-            x-parser-schema-id: <anonymous-schema-263>
+            x-parser-schema-id: <anonymous-schema-308>
           subject:
             type: string
             description: The task id (also the Kafka key).
-            x-parser-schema-id: <anonymous-schema-264>
+            x-parser-schema-id: <anonymous-schema-309>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-265>
+            x-parser-schema-id: <anonymous-schema-310>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-266>
+            x-parser-schema-id: <anonymous-schema-311>
           dataschema:
             type: string
             description: urn:warehouse:fulfillment-execution:events:TaskCompleted:v1
-            x-parser-schema-id: <anonymous-schema-267>
+            x-parser-schema-id: <anonymous-schema-312>
           data:
             type: object
             required:
@@ -8714,7 +9474,7 @@ components:
             properties:
               task_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-269>
+                x-parser-schema-id: <anonymous-schema-314>
               task_type:
                 type: string
                 enum:
@@ -8729,7 +9489,7 @@ components:
                 description: >-
                   PICK, RELOCATE and REPLENISH are acted on; omitted by the
                   producer when the task could not be found.
-                x-parser-schema-id: <anonymous-schema-270>
+                x-parser-schema-id: <anonymous-schema-315>
               order_ref:
                 type: string
                 description: >
@@ -8739,7 +9499,7 @@ components:
                   line) carries the same value. Additive and optional (ADR
                   0035): omitted when empty, in which case nothing is counted or
                   confirmed.
-                x-parser-schema-id: <anonymous-schema-271>
+                x-parser-schema-id: <anonymous-schema-316>
               line_no:
                 type: integer
                 minimum: 1
@@ -8753,7 +9513,7 @@ components:
                   last-pick counting applies. A value outside 1..2147483647 (the
                   32-bit line_no column) or a non-integer is a malformed payload
                   (dead-lettered).
-                x-parser-schema-id: <anonymous-schema-272>
+                x-parser-schema-id: <anonymous-schema-317>
               sku:
                 type: string
                 description: >
@@ -8761,19 +9521,19 @@ components:
                   the SKU moved. Required on a RELOCATE or REPLENISH completion
                   (missing or invalid = dead-lettered); absent on every other
                   task type.
-                x-parser-schema-id: <anonymous-schema-273>
+                x-parser-schema-id: <anonymous-schema-318>
               from_bin:
                 type: string
                 description: >
                   RELOCATE and REPLENISH only (additive): the source bin's
                   location code; its site is the move's site.
-                x-parser-schema-id: <anonymous-schema-274>
+                x-parser-schema-id: <anonymous-schema-319>
               to_bin:
                 type: string
                 description: >
                   RELOCATE and REPLENISH only (additive): the destination bin's
                   location code; must be a different bin of the same site.
-                x-parser-schema-id: <anonymous-schema-275>
+                x-parser-schema-id: <anonymous-schema-320>
               quantity:
                 type: integer
                 minimum: 1
@@ -8781,7 +9541,7 @@ components:
                   RELOCATE and REPLENISH only (additive): the units moved.
                   Missing, zero or negative on a RELOCATE or REPLENISH
                   completion = dead-lettered.
-                x-parser-schema-id: <anonymous-schema-276>
+                x-parser-schema-id: <anonymous-schema-321>
               relocation_ref:
                 type: string
                 maxLength: 200
@@ -8789,7 +9549,7 @@ components:
                   RELOCATE only (additive, ADR 0039, optional): the slot-plan
                   move the task executes; stored as the relocation's source_ref
                   (the task id is used when absent).
-                x-parser-schema-id: <anonymous-schema-277>
+                x-parser-schema-id: <anonymous-schema-322>
               request_ref:
                 type: string
                 maxLength: 200
@@ -8799,8 +9559,8 @@ components:
                   source_ref (reason REPLENISHMENT) and echoed in
                   StockRelocated. Missing or blank = dead-lettered; there is no
                   task-id fallback.
-                x-parser-schema-id: <anonymous-schema-278>
-            x-parser-schema-id: <anonymous-schema-268>
+                x-parser-schema-id: <anonymous-schema-323>
+            x-parser-schema-id: <anonymous-schema-313>
         x-parser-schema-id: FulfillmentTaskCompletedEvent
       examples:
         - name: pickTaskCompletedForLine
@@ -8939,39 +9699,39 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-279>
+            x-parser-schema-id: <anonymous-schema-324>
           id:
             type: string
             description: >-
               CloudEvents id; the dedupe key (claimed in processed_events under
               consumer `inbound-receipt-line`).
-            x-parser-schema-id: <anonymous-schema-280>
+            x-parser-schema-id: <anonymous-schema-325>
           source:
             type: string
             enum:
               - /warehouse/inbound-receiving
-            x-parser-schema-id: <anonymous-schema-281>
+            x-parser-schema-id: <anonymous-schema-326>
           type:
             type: string
             const: com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived
-            x-parser-schema-id: <anonymous-schema-282>
+            x-parser-schema-id: <anonymous-schema-327>
           subject:
             type: string
             description: The receipt id (the Kafka key is the ASN number).
-            x-parser-schema-id: <anonymous-schema-283>
+            x-parser-schema-id: <anonymous-schema-328>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-284>
+            x-parser-schema-id: <anonymous-schema-329>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-285>
+            x-parser-schema-id: <anonymous-schema-330>
           dataschema:
             type: string
             description: urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1
-            x-parser-schema-id: <anonymous-schema-286>
+            x-parser-schema-id: <anonymous-schema-331>
           data:
             type: object
             required:
@@ -8985,25 +9745,25 @@ components:
             properties:
               receipt_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-288>
+                x-parser-schema-id: <anonymous-schema-333>
               asn_number:
                 type: string
-                x-parser-schema-id: <anonymous-schema-289>
+                x-parser-schema-id: <anonymous-schema-334>
               line_no:
                 type: integer
                 minimum: 1
-                x-parser-schema-id: <anonymous-schema-290>
+                x-parser-schema-id: <anonymous-schema-335>
               sku:
                 type: string
                 description: Must be non-empty; an empty SKU is logged and committed past.
-                x-parser-schema-id: <anonymous-schema-291>
+                x-parser-schema-id: <anonymous-schema-336>
               quantity:
                 type: integer
                 minimum: 1
                 description: >-
                   Units received on this occurrence. A value <= 0 is logged and
                   committed past.
-                x-parser-schema-id: <anonymous-schema-292>
+                x-parser-schema-id: <anonymous-schema-337>
               condition:
                 type: string
                 enum:
@@ -9012,11 +9772,11 @@ components:
                 description: >-
                   Only Good is booked as stock (ADR 0037); Damaged is counted
                   and ignored; any other value is logged and committed past.
-                x-parser-schema-id: <anonymous-schema-293>
+                x-parser-schema-id: <anonymous-schema-338>
               received_at:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-294>
+                x-parser-schema-id: <anonymous-schema-339>
               owner_ref:
                 type: string
                 maxLength: 64
@@ -9024,25 +9784,25 @@ components:
                   Optional (ADR 0046). The owner of the received stock; absent
                   means fleet-owned. A malformed value is logged and committed
                   past.
-                x-parser-schema-id: <anonymous-schema-295>
+                x-parser-schema-id: <anonymous-schema-340>
               pack_gtin:
                 type: string
                 description: >-
                   Optional. GTIN-14 of the case pack level when the line was
                   received in sealed cases.
-                x-parser-schema-id: <anonymous-schema-296>
+                x-parser-schema-id: <anonymous-schema-341>
               cases:
                 type: integer
                 minimum: 1
                 description: Optional. Number of sealed cases in the line.
-                x-parser-schema-id: <anonymous-schema-297>
+                x-parser-schema-id: <anonymous-schema-342>
               sscc:
                 type: string
                 description: >-
                   Optional. SSCC of the pallet or carton the line was received
                   on.
-                x-parser-schema-id: <anonymous-schema-298>
-            x-parser-schema-id: <anonymous-schema-287>
+                x-parser-schema-id: <anonymous-schema-343>
+            x-parser-schema-id: <anonymous-schema-332>
         x-parser-schema-id: InboundReceivingReceiptLineReceivedEvent
       examples:
         - name: goodLine
@@ -9129,39 +9889,39 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-325>
+            x-parser-schema-id: <anonymous-schema-370>
           id:
             type: string
             description: >-
               CloudEvents id; the dedupe key (claimed in processed_events under
               consumer `return-line-staged`).
-            x-parser-schema-id: <anonymous-schema-326>
+            x-parser-schema-id: <anonymous-schema-371>
           source:
             type: string
             enum:
               - /warehouse/returns-processing
-            x-parser-schema-id: <anonymous-schema-327>
+            x-parser-schema-id: <anonymous-schema-372>
           type:
             type: string
             const: com.warehouse.wms.returns-processing.disposition.ReturnLineStaged
-            x-parser-schema-id: <anonymous-schema-328>
+            x-parser-schema-id: <anonymous-schema-373>
           subject:
             type: string
             description: The disposition id (also the Kafka key).
-            x-parser-schema-id: <anonymous-schema-329>
+            x-parser-schema-id: <anonymous-schema-374>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-330>
+            x-parser-schema-id: <anonymous-schema-375>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-331>
+            x-parser-schema-id: <anonymous-schema-376>
           dataschema:
             type: string
             description: urn:warehouse:returns-processing:events:ReturnLineStaged:v1
-            x-parser-schema-id: <anonymous-schema-332>
+            x-parser-schema-id: <anonymous-schema-377>
           data:
             type: object
             description: >
@@ -9180,22 +9940,22 @@ components:
             properties:
               receipt_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-334>
+                x-parser-schema-id: <anonymous-schema-379>
               line_no:
                 type: integer
                 minimum: 1
-                x-parser-schema-id: <anonymous-schema-335>
+                x-parser-schema-id: <anonymous-schema-380>
               sku:
                 type: string
                 description: Must be non-empty; an empty SKU is logged and committed past.
-                x-parser-schema-id: <anonymous-schema-336>
+                x-parser-schema-id: <anonymous-schema-381>
               quantity:
                 type: integer
                 minimum: 1
                 description: >-
                   Restockable units handed over. A value <= 0 is logged and
                   committed past.
-                x-parser-schema-id: <anonymous-schema-337>
+                x-parser-schema-id: <anonymous-schema-382>
               condition:
                 type: string
                 const: Good
@@ -9203,30 +9963,30 @@ components:
                   A staged return line is always Good (only a RESTOCK
                   disposition stages one); any other value is logged and
                   committed past.
-                x-parser-schema-id: <anonymous-schema-338>
+                x-parser-schema-id: <anonymous-schema-383>
               received_at:
                 type: string
                 format: date-time
                 description: >-
                   When the line arrived on the return receipt; logged, not
                   stored.
-                x-parser-schema-id: <anonymous-schema-339>
+                x-parser-schema-id: <anonymous-schema-384>
               rma_id:
                 type: string
                 description: The RMA the line was authorized against; logged, not stored.
-                x-parser-schema-id: <anonymous-schema-340>
+                x-parser-schema-id: <anonymous-schema-385>
               disposition_id:
                 type: string
                 description: >
                   The RESTOCK disposition this staging belongs to (the
                   producer's idempotency key). Must be non-empty; an empty value
                   is logged and committed past. Logged, not stored.
-                x-parser-schema-id: <anonymous-schema-341>
+                x-parser-schema-id: <anonymous-schema-386>
               site_id:
                 type: string
                 description: The site the goods were received back at; logged, not stored.
-                x-parser-schema-id: <anonymous-schema-342>
-            x-parser-schema-id: <anonymous-schema-333>
+                x-parser-schema-id: <anonymous-schema-387>
+            x-parser-schema-id: <anonymous-schema-378>
         x-parser-schema-id: ReturnsProcessingReturnLineStagedEvent
       examples:
         - name: staged
@@ -9291,41 +10051,41 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-343>
+            x-parser-schema-id: <anonymous-schema-388>
           id:
             type: string
             description: CloudEvents id; the dedupe key (claimed in processed_events).
-            x-parser-schema-id: <anonymous-schema-344>
+            x-parser-schema-id: <anonymous-schema-389>
           source:
             type: string
             enum:
               - /warehouse/network-inventory-planning
-            x-parser-schema-id: <anonymous-schema-345>
+            x-parser-schema-id: <anonymous-schema-390>
           type:
             type: string
             const: >-
               com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
-            x-parser-schema-id: <anonymous-schema-346>
+            x-parser-schema-id: <anonymous-schema-391>
           subject:
             type: string
             description: >-
               The transfer line id (also the Kafka key and the reply-correlation
               key).
-            x-parser-schema-id: <anonymous-schema-347>
+            x-parser-schema-id: <anonymous-schema-392>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-348>
+            x-parser-schema-id: <anonymous-schema-393>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-349>
+            x-parser-schema-id: <anonymous-schema-394>
           dataschema:
             type: string
             description: >-
               urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
-            x-parser-schema-id: <anonymous-schema-350>
+            x-parser-schema-id: <anonymous-schema-395>
           data:
             type: object
             description: Exactly five fields — the whole consumed contract.
@@ -9338,24 +10098,24 @@ components:
             properties:
               transfer_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-352>
+                x-parser-schema-id: <anonymous-schema-397>
               transfer_line_id:
                 type: string
                 description: >-
                   <transfer_id>:1 in v1's single-line saga; also the
                   allocation-ledger and reply-correlation key.
-                x-parser-schema-id: <anonymous-schema-353>
+                x-parser-schema-id: <anonymous-schema-398>
               origin_site_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-354>
+                x-parser-schema-id: <anonymous-schema-399>
               sku:
                 type: string
-                x-parser-schema-id: <anonymous-schema-355>
+                x-parser-schema-id: <anonymous-schema-400>
               quantity:
                 type: integer
                 minimum: 1
-                x-parser-schema-id: <anonymous-schema-356>
-            x-parser-schema-id: <anonymous-schema-351>
+                x-parser-schema-id: <anonymous-schema-401>
+            x-parser-schema-id: <anonymous-schema-396>
         x-parser-schema-id: NetworkInventoryPlanningTransferAllocationRequestedEvent
       examples:
         - name: singleLineAllocation
@@ -12056,6 +12816,9 @@ components:
               system: 50
       messageId: DiscrepancyDetected
     ItemStowedAnalytics:
+      x-no-consumer-reason: >-
+        pending: promoted to the integration topic; network-fulfillment cache
+        consumer in flight, no spec declares it yet
       name: ItemStowed
       title: Item Stowed
       summary: A quantity of a SKU was placed into a bin.
@@ -13428,14 +14191,14 @@ components:
               type: string
               description: Fixed event type for LocationRecorded.
               const: com.warehouse.wms.inventory-storage.stock.LocationRecorded
-              x-parser-schema-id: <anonymous-schema-358>
+              x-parser-schema-id: <anonymous-schema-403>
             dataschema:
               type: string
               description: >-
                 Reserved for if LocationRecorded is ever published; it is
                 in-process only today.
               pattern: ^urn:warehouse:inventory-storage:events:LocationRecorded:v1$
-              x-parser-schema-id: <anonymous-schema-359>
+              x-parser-schema-id: <anonymous-schema-404>
             data:
               type: object
               description: Business payload for LocationRecorded.
@@ -13446,14 +14209,292 @@ components:
                 stock_unit_id:
                   type: string
                   description: Identifier of the StockUnit whose location is now known.
-                  x-parser-schema-id: <anonymous-schema-361>
+                  x-parser-schema-id: <anonymous-schema-406>
                 bin_id:
                   type: string
                   description: The bin that authoritatively holds that StockUnit.
-                  x-parser-schema-id: <anonymous-schema-362>
-              x-parser-schema-id: <anonymous-schema-360>
-          x-parser-schema-id: <anonymous-schema-357>
+                  x-parser-schema-id: <anonymous-schema-407>
+              x-parser-schema-id: <anonymous-schema-405>
+          x-parser-schema-id: <anonymous-schema-402>
       x-parser-schema-id: LocationRecordedEvent
+    FacilityLayoutZoneRegisteredEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of facility-layout's ZoneRegistered as consumed
+        here (not composed from CloudEventBase, whose `source` is this service's
+        own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum:
+            - '1.0'
+          x-parser-schema-id: <anonymous-schema-260>
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+          x-parser-schema-id: <anonymous-schema-261>
+        source:
+          type: string
+          enum:
+            - /warehouse/facility-layout
+          x-parser-schema-id: <anonymous-schema-262>
+        type:
+          type: string
+          const: com.warehouse.wms.facility-layout.zone.ZoneRegistered
+          x-parser-schema-id: <anonymous-schema-263>
+        subject:
+          type: string
+          description: The zoneId (also the Kafka key).
+          x-parser-schema-id: <anonymous-schema-264>
+        time:
+          type: string
+          format: date-time
+          x-parser-schema-id: <anonymous-schema-265>
+        datacontenttype:
+          type: string
+          enum:
+            - application/json
+          x-parser-schema-id: <anonymous-schema-266>
+        dataschema:
+          type: string
+          description: urn:warehouse:facility-layout:events:ZoneRegistered:v1
+          x-parser-schema-id: <anonymous-schema-267>
+        data:
+          type: object
+          required:
+            - zoneId
+            - temperatureClass
+            - hazmat
+          properties:
+            zoneId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-269>
+            temperatureClass:
+              type: string
+              x-parser-schema-id: <anonymous-schema-270>
+            hazmat:
+              type: boolean
+              x-parser-schema-id: <anonymous-schema-271>
+          x-parser-schema-id: <anonymous-schema-268>
+      x-parser-schema-id: FacilityLayoutZoneRegisteredEvent
+    FacilityLayoutLocationSlotRegisteredEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of facility-layout's LocationSlotRegistered as
+        consumed here (not composed from CloudEventBase, whose `source` is this
+        service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum:
+            - '1.0'
+          x-parser-schema-id: <anonymous-schema-272>
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+          x-parser-schema-id: <anonymous-schema-273>
+        source:
+          type: string
+          enum:
+            - /warehouse/facility-layout
+          x-parser-schema-id: <anonymous-schema-274>
+        type:
+          type: string
+          const: >-
+            com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered
+          x-parser-schema-id: <anonymous-schema-275>
+        subject:
+          type: string
+          description: The locationCode (also the Kafka key).
+          x-parser-schema-id: <anonymous-schema-276>
+        time:
+          type: string
+          format: date-time
+          x-parser-schema-id: <anonymous-schema-277>
+        datacontenttype:
+          type: string
+          enum:
+            - application/json
+          x-parser-schema-id: <anonymous-schema-278>
+        dataschema:
+          type: string
+          description: urn:warehouse:facility-layout:events:LocationSlotRegistered:v1
+          x-parser-schema-id: <anonymous-schema-279>
+        data:
+          type: object
+          required:
+            - locationCode
+            - zoneId
+          properties:
+            locationCode:
+              type: string
+              x-parser-schema-id: <anonymous-schema-281>
+            zoneId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-282>
+            handlingUnit:
+              type: string
+              enum:
+                - EACH
+                - CASE
+                - PALLET
+              description: >-
+                Optional handling unit recorded at registration; omitted when
+                none was.
+              x-parser-schema-id: <anonymous-schema-283>
+          x-parser-schema-id: <anonymous-schema-280>
+      x-parser-schema-id: FacilityLayoutLocationSlotRegisteredEvent
+    FacilityLayoutLocationSlotDecommissionedEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of facility-layout's LocationSlotDecommissioned
+        as consumed here (not composed from CloudEventBase, whose `source` is
+        this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum:
+            - '1.0'
+          x-parser-schema-id: <anonymous-schema-284>
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+          x-parser-schema-id: <anonymous-schema-285>
+        source:
+          type: string
+          enum:
+            - /warehouse/facility-layout
+          x-parser-schema-id: <anonymous-schema-286>
+        type:
+          type: string
+          const: >-
+            com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
+          x-parser-schema-id: <anonymous-schema-287>
+        subject:
+          type: string
+          description: The locationCode (also the Kafka key).
+          x-parser-schema-id: <anonymous-schema-288>
+        time:
+          type: string
+          format: date-time
+          x-parser-schema-id: <anonymous-schema-289>
+        datacontenttype:
+          type: string
+          enum:
+            - application/json
+          x-parser-schema-id: <anonymous-schema-290>
+        dataschema:
+          type: string
+          description: urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
+          x-parser-schema-id: <anonymous-schema-291>
+        data:
+          type: object
+          required:
+            - locationCode
+          properties:
+            locationCode:
+              type: string
+              x-parser-schema-id: <anonymous-schema-293>
+          x-parser-schema-id: <anonymous-schema-292>
+      x-parser-schema-id: FacilityLayoutLocationSlotDecommissionedEvent
+    FacilityLayoutLocationSlotHandlingUnitDeclaredEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of facility-layout's
+        LocationSlotHandlingUnitDeclared as consumed here (not composed from
+        CloudEventBase, whose `source` is this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum:
+            - '1.0'
+          x-parser-schema-id: <anonymous-schema-294>
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+          x-parser-schema-id: <anonymous-schema-295>
+        source:
+          type: string
+          enum:
+            - /warehouse/facility-layout
+          x-parser-schema-id: <anonymous-schema-296>
+        type:
+          type: string
+          const: >-
+            com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared
+          x-parser-schema-id: <anonymous-schema-297>
+        subject:
+          type: string
+          description: The locationCode (also the Kafka key).
+          x-parser-schema-id: <anonymous-schema-298>
+        time:
+          type: string
+          format: date-time
+          x-parser-schema-id: <anonymous-schema-299>
+        datacontenttype:
+          type: string
+          enum:
+            - application/json
+          x-parser-schema-id: <anonymous-schema-300>
+        dataschema:
+          type: string
+          description: >-
+            urn:warehouse:facility-layout:events:LocationSlotHandlingUnitDeclared:v1
+          x-parser-schema-id: <anonymous-schema-301>
+        data:
+          type: object
+          required:
+            - locationCode
+            - handlingUnit
+          properties:
+            locationCode:
+              type: string
+              x-parser-schema-id: <anonymous-schema-303>
+            handlingUnit:
+              type: string
+              enum:
+                - EACH
+                - CASE
+                - PALLET
+              x-parser-schema-id: <anonymous-schema-304>
+          x-parser-schema-id: <anonymous-schema-302>
+      x-parser-schema-id: FacilityLayoutLocationSlotHandlingUnitDeclaredEvent
     ProductMasterProductClassifiedEvent:
       type: object
       description: >
@@ -13588,7 +14629,7 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-260>
+          x-parser-schema-id: <anonymous-schema-305>
         id:
           type: string
           description: >-
@@ -13596,33 +14637,33 @@ components:
             consumer `task-completed-confirm-pick`, `task-completed-relocate`
             for RELOCATE tasks, or `task-completed-replenish` for REPLENISH
             tasks).
-          x-parser-schema-id: <anonymous-schema-261>
+          x-parser-schema-id: <anonymous-schema-306>
         source:
           type: string
           enum:
             - /warehouse/fulfillment-execution
-          x-parser-schema-id: <anonymous-schema-262>
+          x-parser-schema-id: <anonymous-schema-307>
         type:
           type: string
           const: com.warehouse.wes.fulfillment-execution.task.TaskCompleted
-          x-parser-schema-id: <anonymous-schema-263>
+          x-parser-schema-id: <anonymous-schema-308>
         subject:
           type: string
           description: The task id (also the Kafka key).
-          x-parser-schema-id: <anonymous-schema-264>
+          x-parser-schema-id: <anonymous-schema-309>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-265>
+          x-parser-schema-id: <anonymous-schema-310>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-266>
+          x-parser-schema-id: <anonymous-schema-311>
         dataschema:
           type: string
           description: urn:warehouse:fulfillment-execution:events:TaskCompleted:v1
-          x-parser-schema-id: <anonymous-schema-267>
+          x-parser-schema-id: <anonymous-schema-312>
         data:
           type: object
           required:
@@ -13630,7 +14671,7 @@ components:
           properties:
             task_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-269>
+              x-parser-schema-id: <anonymous-schema-314>
             task_type:
               type: string
               enum:
@@ -13645,7 +14686,7 @@ components:
               description: >-
                 PICK, RELOCATE and REPLENISH are acted on; omitted by the
                 producer when the task could not be found.
-              x-parser-schema-id: <anonymous-schema-270>
+              x-parser-schema-id: <anonymous-schema-315>
             order_ref:
               type: string
               description: >
@@ -13655,7 +14696,7 @@ components:
                 carries the same value. Additive and optional (ADR 0035):
                 omitted when empty, in which case nothing is counted or
                 confirmed.
-              x-parser-schema-id: <anonymous-schema-271>
+              x-parser-schema-id: <anonymous-schema-316>
             line_no:
               type: integer
               minimum: 1
@@ -13668,7 +14709,7 @@ components:
                 nothing is counted; when absent the ADR 0035 last-pick counting
                 applies. A value outside 1..2147483647 (the 32-bit line_no
                 column) or a non-integer is a malformed payload (dead-lettered).
-              x-parser-schema-id: <anonymous-schema-272>
+              x-parser-schema-id: <anonymous-schema-317>
             sku:
               type: string
               description: >
@@ -13676,19 +14717,19 @@ components:
                 SKU moved. Required on a RELOCATE or REPLENISH completion
                 (missing or invalid = dead-lettered); absent on every other task
                 type.
-              x-parser-schema-id: <anonymous-schema-273>
+              x-parser-schema-id: <anonymous-schema-318>
             from_bin:
               type: string
               description: >
                 RELOCATE and REPLENISH only (additive): the source bin's
                 location code; its site is the move's site.
-              x-parser-schema-id: <anonymous-schema-274>
+              x-parser-schema-id: <anonymous-schema-319>
             to_bin:
               type: string
               description: >
                 RELOCATE and REPLENISH only (additive): the destination bin's
                 location code; must be a different bin of the same site.
-              x-parser-schema-id: <anonymous-schema-275>
+              x-parser-schema-id: <anonymous-schema-320>
             quantity:
               type: integer
               minimum: 1
@@ -13696,7 +14737,7 @@ components:
                 RELOCATE and REPLENISH only (additive): the units moved.
                 Missing, zero or negative on a RELOCATE or REPLENISH completion
                 = dead-lettered.
-              x-parser-schema-id: <anonymous-schema-276>
+              x-parser-schema-id: <anonymous-schema-321>
             relocation_ref:
               type: string
               maxLength: 200
@@ -13704,7 +14745,7 @@ components:
                 RELOCATE only (additive, ADR 0039, optional): the slot-plan move
                 the task executes; stored as the relocation's source_ref (the
                 task id is used when absent).
-              x-parser-schema-id: <anonymous-schema-277>
+              x-parser-schema-id: <anonymous-schema-322>
             request_ref:
               type: string
               maxLength: 200
@@ -13713,8 +14754,8 @@ components:
                 replenishment request id; stored as the relocation's source_ref
                 (reason REPLENISHMENT) and echoed in StockRelocated. Missing or
                 blank = dead-lettered; there is no task-id fallback.
-              x-parser-schema-id: <anonymous-schema-278>
-          x-parser-schema-id: <anonymous-schema-268>
+              x-parser-schema-id: <anonymous-schema-323>
+          x-parser-schema-id: <anonymous-schema-313>
       x-parser-schema-id: FulfillmentTaskCompletedEvent
     InboundReceivingReceiptLineReceivedEvent:
       type: object
@@ -13736,39 +14777,39 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-279>
+          x-parser-schema-id: <anonymous-schema-324>
         id:
           type: string
           description: >-
             CloudEvents id; the dedupe key (claimed in processed_events under
             consumer `inbound-receipt-line`).
-          x-parser-schema-id: <anonymous-schema-280>
+          x-parser-schema-id: <anonymous-schema-325>
         source:
           type: string
           enum:
             - /warehouse/inbound-receiving
-          x-parser-schema-id: <anonymous-schema-281>
+          x-parser-schema-id: <anonymous-schema-326>
         type:
           type: string
           const: com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived
-          x-parser-schema-id: <anonymous-schema-282>
+          x-parser-schema-id: <anonymous-schema-327>
         subject:
           type: string
           description: The receipt id (the Kafka key is the ASN number).
-          x-parser-schema-id: <anonymous-schema-283>
+          x-parser-schema-id: <anonymous-schema-328>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-284>
+          x-parser-schema-id: <anonymous-schema-329>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-285>
+          x-parser-schema-id: <anonymous-schema-330>
         dataschema:
           type: string
           description: urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1
-          x-parser-schema-id: <anonymous-schema-286>
+          x-parser-schema-id: <anonymous-schema-331>
         data:
           type: object
           required:
@@ -13782,25 +14823,25 @@ components:
           properties:
             receipt_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-288>
+              x-parser-schema-id: <anonymous-schema-333>
             asn_number:
               type: string
-              x-parser-schema-id: <anonymous-schema-289>
+              x-parser-schema-id: <anonymous-schema-334>
             line_no:
               type: integer
               minimum: 1
-              x-parser-schema-id: <anonymous-schema-290>
+              x-parser-schema-id: <anonymous-schema-335>
             sku:
               type: string
               description: Must be non-empty; an empty SKU is logged and committed past.
-              x-parser-schema-id: <anonymous-schema-291>
+              x-parser-schema-id: <anonymous-schema-336>
             quantity:
               type: integer
               minimum: 1
               description: >-
                 Units received on this occurrence. A value <= 0 is logged and
                 committed past.
-              x-parser-schema-id: <anonymous-schema-292>
+              x-parser-schema-id: <anonymous-schema-337>
             condition:
               type: string
               enum:
@@ -13809,11 +14850,11 @@ components:
               description: >-
                 Only Good is booked as stock (ADR 0037); Damaged is counted and
                 ignored; any other value is logged and committed past.
-              x-parser-schema-id: <anonymous-schema-293>
+              x-parser-schema-id: <anonymous-schema-338>
             received_at:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-294>
+              x-parser-schema-id: <anonymous-schema-339>
             owner_ref:
               type: string
               maxLength: 64
@@ -13821,23 +14862,23 @@ components:
                 Optional (ADR 0046). The owner of the received stock; absent
                 means fleet-owned. A malformed value is logged and committed
                 past.
-              x-parser-schema-id: <anonymous-schema-295>
+              x-parser-schema-id: <anonymous-schema-340>
             pack_gtin:
               type: string
               description: >-
                 Optional. GTIN-14 of the case pack level when the line was
                 received in sealed cases.
-              x-parser-schema-id: <anonymous-schema-296>
+              x-parser-schema-id: <anonymous-schema-341>
             cases:
               type: integer
               minimum: 1
               description: Optional. Number of sealed cases in the line.
-              x-parser-schema-id: <anonymous-schema-297>
+              x-parser-schema-id: <anonymous-schema-342>
             sscc:
               type: string
               description: Optional. SSCC of the pallet or carton the line was received on.
-              x-parser-schema-id: <anonymous-schema-298>
-          x-parser-schema-id: <anonymous-schema-287>
+              x-parser-schema-id: <anonymous-schema-343>
+          x-parser-schema-id: <anonymous-schema-332>
       x-parser-schema-id: InboundReceivingReceiptLineReceivedEvent
     ContainerRegisteredEvent:
       description: CloudEvents envelope for a ContainerRegistered domain event (ADR 0045).
@@ -14476,37 +15517,37 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-299>
+          x-parser-schema-id: <anonymous-schema-344>
         id:
           type: string
           description: CloudEvents id; the dedupe key (claimed in processed_events).
-          x-parser-schema-id: <anonymous-schema-300>
+          x-parser-schema-id: <anonymous-schema-345>
         source:
           type: string
           enum:
             - /warehouse/inbound-receiving
-          x-parser-schema-id: <anonymous-schema-301>
+          x-parser-schema-id: <anonymous-schema-346>
         type:
           type: string
           const: com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived
-          x-parser-schema-id: <anonymous-schema-302>
+          x-parser-schema-id: <anonymous-schema-347>
         subject:
           type: string
           description: The receipt id.
-          x-parser-schema-id: <anonymous-schema-303>
+          x-parser-schema-id: <anonymous-schema-348>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-304>
+          x-parser-schema-id: <anonymous-schema-349>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-305>
+          x-parser-schema-id: <anonymous-schema-350>
         dataschema:
           type: string
           description: urn:warehouse:inbound-receiving:events:ReceiptCartonReceived:v1
-          x-parser-schema-id: <anonymous-schema-306>
+          x-parser-schema-id: <anonymous-schema-351>
         data:
           type: object
           description: >-
@@ -14520,33 +15561,33 @@ components:
           properties:
             receipt_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-308>
+              x-parser-schema-id: <anonymous-schema-353>
             asn_number:
               type: string
-              x-parser-schema-id: <anonymous-schema-309>
+              x-parser-schema-id: <anonymous-schema-354>
             sscc:
               type: string
               description: SSCC-18 of the carton.
-              x-parser-schema-id: <anonymous-schema-310>
+              x-parser-schema-id: <anonymous-schema-355>
             parent_sscc:
               type: string
               description: SSCC of the pallet it arrived on, when palletised.
-              x-parser-schema-id: <anonymous-schema-311>
+              x-parser-schema-id: <anonymous-schema-356>
             sealed:
               type: boolean
               description: Only a sealed carton gets a Container.
-              x-parser-schema-id: <anonymous-schema-312>
+              x-parser-schema-id: <anonymous-schema-357>
             lpn:
               type: string
               description: >-
                 The license plate - the SSCC, or an internal `LPN-<site>-<id>`
                 for an unlabelled carton. Absent falls back to `sscc`.
-              x-parser-schema-id: <anonymous-schema-313>
+              x-parser-schema-id: <anonymous-schema-358>
             owner_ref:
               type: string
               maxLength: 64
               description: Owner of the stock; absent means fleet-owned.
-              x-parser-schema-id: <anonymous-schema-314>
+              x-parser-schema-id: <anonymous-schema-359>
             contents:
               type: array
               minItems: 1
@@ -14564,44 +15605,44 @@ components:
                   line_no:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-317>
+                    x-parser-schema-id: <anonymous-schema-362>
                   sku:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-318>
+                    x-parser-schema-id: <anonymous-schema-363>
                   gtin:
                     type: string
                     description: >-
                       GTIN-14 of the case; must be known to the PackagingView
                       and belong to `sku`.
-                    x-parser-schema-id: <anonymous-schema-319>
+                    x-parser-schema-id: <anonymous-schema-364>
                   qty:
                     type: integer
                     minimum: 1
                     description: >-
                       Eaches in the carton; must equal the case's units per
                       pack.
-                    x-parser-schema-id: <anonymous-schema-320>
+                    x-parser-schema-id: <anonymous-schema-365>
                   lot:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-321>
+                    x-parser-schema-id: <anonymous-schema-366>
                   expiry:
                     type: string
                     description: YYYY-MM-DD.
-                    x-parser-schema-id: <anonymous-schema-322>
+                    x-parser-schema-id: <anonymous-schema-367>
                   condition:
                     type: string
                     enum:
                       - Good
                       - Damaged
                     description: Only Good gets a Container.
-                    x-parser-schema-id: <anonymous-schema-323>
-                x-parser-schema-id: <anonymous-schema-316>
-              x-parser-schema-id: <anonymous-schema-315>
+                    x-parser-schema-id: <anonymous-schema-368>
+                x-parser-schema-id: <anonymous-schema-361>
+              x-parser-schema-id: <anonymous-schema-360>
             received_at:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-324>
-          x-parser-schema-id: <anonymous-schema-307>
+              x-parser-schema-id: <anonymous-schema-369>
+          x-parser-schema-id: <anonymous-schema-352>
       x-parser-schema-id: InboundReceivingReceiptCartonReceivedEvent
     ProductMasterProductPackLevelDeclaredEvent:
       type: object
@@ -14813,39 +15854,39 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-325>
+          x-parser-schema-id: <anonymous-schema-370>
         id:
           type: string
           description: >-
             CloudEvents id; the dedupe key (claimed in processed_events under
             consumer `return-line-staged`).
-          x-parser-schema-id: <anonymous-schema-326>
+          x-parser-schema-id: <anonymous-schema-371>
         source:
           type: string
           enum:
             - /warehouse/returns-processing
-          x-parser-schema-id: <anonymous-schema-327>
+          x-parser-schema-id: <anonymous-schema-372>
         type:
           type: string
           const: com.warehouse.wms.returns-processing.disposition.ReturnLineStaged
-          x-parser-schema-id: <anonymous-schema-328>
+          x-parser-schema-id: <anonymous-schema-373>
         subject:
           type: string
           description: The disposition id (also the Kafka key).
-          x-parser-schema-id: <anonymous-schema-329>
+          x-parser-schema-id: <anonymous-schema-374>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-330>
+          x-parser-schema-id: <anonymous-schema-375>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-331>
+          x-parser-schema-id: <anonymous-schema-376>
         dataschema:
           type: string
           description: urn:warehouse:returns-processing:events:ReturnLineStaged:v1
-          x-parser-schema-id: <anonymous-schema-332>
+          x-parser-schema-id: <anonymous-schema-377>
         data:
           type: object
           description: >
@@ -14864,50 +15905,50 @@ components:
           properties:
             receipt_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-334>
+              x-parser-schema-id: <anonymous-schema-379>
             line_no:
               type: integer
               minimum: 1
-              x-parser-schema-id: <anonymous-schema-335>
+              x-parser-schema-id: <anonymous-schema-380>
             sku:
               type: string
               description: Must be non-empty; an empty SKU is logged and committed past.
-              x-parser-schema-id: <anonymous-schema-336>
+              x-parser-schema-id: <anonymous-schema-381>
             quantity:
               type: integer
               minimum: 1
               description: >-
                 Restockable units handed over. A value <= 0 is logged and
                 committed past.
-              x-parser-schema-id: <anonymous-schema-337>
+              x-parser-schema-id: <anonymous-schema-382>
             condition:
               type: string
               const: Good
               description: >
                 A staged return line is always Good (only a RESTOCK disposition
                 stages one); any other value is logged and committed past.
-              x-parser-schema-id: <anonymous-schema-338>
+              x-parser-schema-id: <anonymous-schema-383>
             received_at:
               type: string
               format: date-time
               description: When the line arrived on the return receipt; logged, not stored.
-              x-parser-schema-id: <anonymous-schema-339>
+              x-parser-schema-id: <anonymous-schema-384>
             rma_id:
               type: string
               description: The RMA the line was authorized against; logged, not stored.
-              x-parser-schema-id: <anonymous-schema-340>
+              x-parser-schema-id: <anonymous-schema-385>
             disposition_id:
               type: string
               description: >
                 The RESTOCK disposition this staging belongs to (the producer's
                 idempotency key). Must be non-empty; an empty value is logged
                 and committed past. Logged, not stored.
-              x-parser-schema-id: <anonymous-schema-341>
+              x-parser-schema-id: <anonymous-schema-386>
             site_id:
               type: string
               description: The site the goods were received back at; logged, not stored.
-              x-parser-schema-id: <anonymous-schema-342>
-          x-parser-schema-id: <anonymous-schema-333>
+              x-parser-schema-id: <anonymous-schema-387>
+          x-parser-schema-id: <anonymous-schema-378>
       x-parser-schema-id: ReturnsProcessingReturnLineStagedEvent
     NetworkInventoryPlanningTransferAllocationRequestedEvent:
       type: object
@@ -14929,41 +15970,41 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-343>
+          x-parser-schema-id: <anonymous-schema-388>
         id:
           type: string
           description: CloudEvents id; the dedupe key (claimed in processed_events).
-          x-parser-schema-id: <anonymous-schema-344>
+          x-parser-schema-id: <anonymous-schema-389>
         source:
           type: string
           enum:
             - /warehouse/network-inventory-planning
-          x-parser-schema-id: <anonymous-schema-345>
+          x-parser-schema-id: <anonymous-schema-390>
         type:
           type: string
           const: >-
             com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested
-          x-parser-schema-id: <anonymous-schema-346>
+          x-parser-schema-id: <anonymous-schema-391>
         subject:
           type: string
           description: >-
             The transfer line id (also the Kafka key and the reply-correlation
             key).
-          x-parser-schema-id: <anonymous-schema-347>
+          x-parser-schema-id: <anonymous-schema-392>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-348>
+          x-parser-schema-id: <anonymous-schema-393>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-349>
+          x-parser-schema-id: <anonymous-schema-394>
         dataschema:
           type: string
           description: >-
             urn:warehouse:network-inventory-planning:events:TransferAllocationRequested:v1
-          x-parser-schema-id: <anonymous-schema-350>
+          x-parser-schema-id: <anonymous-schema-395>
         data:
           type: object
           description: Exactly five fields — the whole consumed contract.
@@ -14976,24 +16017,24 @@ components:
           properties:
             transfer_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-352>
+              x-parser-schema-id: <anonymous-schema-397>
             transfer_line_id:
               type: string
               description: >-
                 <transfer_id>:1 in v1's single-line saga; also the
                 allocation-ledger and reply-correlation key.
-              x-parser-schema-id: <anonymous-schema-353>
+              x-parser-schema-id: <anonymous-schema-398>
             origin_site_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-354>
+              x-parser-schema-id: <anonymous-schema-399>
             sku:
               type: string
-              x-parser-schema-id: <anonymous-schema-355>
+              x-parser-schema-id: <anonymous-schema-400>
             quantity:
               type: integer
               minimum: 1
-              x-parser-schema-id: <anonymous-schema-356>
-          x-parser-schema-id: <anonymous-schema-351>
+              x-parser-schema-id: <anonymous-schema-401>
+          x-parser-schema-id: <anonymous-schema-396>
       x-parser-schema-id: NetworkInventoryPlanningTransferAllocationRequestedEvent
     StockReservedEvent:
       description: >

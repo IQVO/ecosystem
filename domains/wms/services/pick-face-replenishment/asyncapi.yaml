@@ -286,7 +286,10 @@ channels:
                     policy_max: 60
                     requested_at: '2026-10-17T09:30:00Z'
             messageId: ReplenishmentRequested
-          - name: ReplenishmentCompleted
+          - x-no-consumer-reason: >-
+              ledger mirror of inventory-storage's StockRelocated; consumed on
+              demand
+            name: ReplenishmentCompleted
             title: Replenishment completed
             summary: The relocation of a request was recorded on the stock ledger.
             description: >
@@ -1076,6 +1079,258 @@ channels:
                     version: 1
                     declared_at: '2026-10-17T09:00:00Z'
             messageId: ReplenishmentPolicyDeclared
+  warehouse.product-master.events:
+    description: |
+      This service's integration topic. Written by the outbox relay; key = SKU;
+      every message carries the CloudEvents content-type header (plus the
+      optional W3C `traceparent` of the writing request). Dispatch on the
+      full `type`, ignore unknown types, dedupe on `id`, apply by `version`.
+    x-eventcatalog-channel-version: 1.1.0
+    subscribe:
+      operationId: applyProductMasterPackLevel
+      summary: Apply product-master pack-level facts to the local packaging copy.
+      description: |
+        Upserts the packaging view in one transaction with the CloudEvents `id`
+        claim; unknown types on the topic are skipped.
+      message:
+        oneOf:
+          - name: ProductPackLevelDeclared
+            title: product-master ProductPackLevelDeclared (consumed)
+            summary: >-
+              A pack level (EACH, INNER, CASE or PALLET) of a SKU was declared,
+              or one of its mutable attributes changed.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductPackLevelDeclared`,
+
+              source `/warehouse/product-master`, dataschema
+
+              `urn:warehouse:product-master:events:ProductPackLevelDeclared:v1`;
+              subject and
+
+              key = the SKU. Produced by product-master; consumed into the local
+
+              packaging view (pack level -> eaches factor for case-level scans).
+            contentType: application/cloudevents+json
+            tags:
+              - name: consumed
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the request id for request
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - level
+                        - gtin
+                        - units_per_pack
+                        - is_orderable
+                        - is_despatch_unit
+                        - effective_from
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-49>
+                        level:
+                          type: string
+                          enum:
+                            - EACH
+                            - INNER
+                            - CASE
+                            - PALLET
+                          x-parser-schema-id: <anonymous-schema-50>
+                        gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          x-parser-schema-id: <anonymous-schema-51>
+                        child_gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          x-parser-schema-id: <anonymous-schema-52>
+                        qty_of_child:
+                          type: integer
+                          minimum: 2
+                          maximum: 1000000
+                          description: Absent for EACH.
+                          x-parser-schema-id: <anonymous-schema-53>
+                        units_per_pack:
+                          type: integer
+                          minimum: 1
+                          maximum: 1000000
+                          description: Direct factor to eaches; 1 for EACH.
+                          x-parser-schema-id: <anonymous-schema-54>
+                        is_orderable:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-55>
+                        is_despatch_unit:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-56>
+                        effective_from:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-57>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-58>
+                      x-parser-schema-id: <anonymous-schema-48>
+                  x-parser-schema-id: <anonymous-schema-47>
+              x-parser-schema-id: ProductPackLevelDeclaredEvent
+            messageId: ProductPackLevelDeclared
+          - name: ProductPackLevelRetired
+            title: product-master ProductPackLevelRetired (consumed)
+            summary: A pack level of a SKU was retired.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductPackLevelRetired`,
+
+              source `/warehouse/product-master`, dataschema
+
+              `urn:warehouse:product-master:events:ProductPackLevelRetired:v1`;
+              subject and
+
+              key = the SKU. Produced by product-master; consumed into the local
+
+              packaging view (retired levels are no longer valid scan targets).
+            contentType: application/cloudevents+json
+            tags:
+              - name: consumed
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the request id for request
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - level
+                        - gtin
+                        - effective_to
+                        - reason
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-61>
+                        level:
+                          type: string
+                          enum:
+                            - EACH
+                            - INNER
+                            - CASE
+                            - PALLET
+                          x-parser-schema-id: <anonymous-schema-62>
+                        gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          x-parser-schema-id: <anonymous-schema-63>
+                        effective_to:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-64>
+                        reason:
+                          type: string
+                          minLength: 1
+                          maxLength: 200
+                          x-parser-schema-id: <anonymous-schema-65>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-66>
+                      x-parser-schema-id: <anonymous-schema-60>
+                  x-parser-schema-id: <anonymous-schema-59>
+              x-parser-schema-id: ProductPackLevelRetiredEvent
+            messageId: ProductPackLevelRetired
   warehouse.inventory.events:
     description: >
       The outbound integration topic for this bounded context (the `Topic`
@@ -1211,41 +1466,41 @@ channels:
                       properties:
                         site_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-49>
+                          x-parser-schema-id: <anonymous-schema-69>
                         bin:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-50>
+                          x-parser-schema-id: <anonymous-schema-70>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-51>
+                          x-parser-schema-id: <anonymous-schema-71>
                         on_hand:
                           type: integer
                           minimum: 0
                           description: Absolute units in the bin after the change.
-                          x-parser-schema-id: <anonymous-schema-52>
+                          x-parser-schema-id: <anonymous-schema-72>
                         reserved:
                           type: integer
                           minimum: 0
                           description: Units of this bin bound by active reservations.
-                          x-parser-schema-id: <anonymous-schema-53>
+                          x-parser-schema-id: <anonymous-schema-73>
                         version:
                           type: integer
                           minimum: 1
                           description: Per-(bin
                           sku) monotonically increasing; keep the highest.: null
-                          x-parser-schema-id: <anonymous-schema-54>
+                          x-parser-schema-id: <anonymous-schema-74>
                         reason:
                           type: string
                           description: >-
                             STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE,
                             REVOKE or UNLOCATED; unknown values are ignored.
-                          x-parser-schema-id: <anonymous-schema-55>
+                          x-parser-schema-id: <anonymous-schema-75>
                         occurred_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-56>
-                      x-parser-schema-id: <anonymous-schema-48>
-                  x-parser-schema-id: <anonymous-schema-47>
+                          x-parser-schema-id: <anonymous-schema-76>
+                      x-parser-schema-id: <anonymous-schema-68>
+                  x-parser-schema-id: <anonymous-schema-67>
               x-parser-schema-id: BinStockLevelChangedEvent
             examples:
               - name: afterPick
@@ -1361,42 +1616,42 @@ channels:
                       properties:
                         relocation_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-59>
+                          x-parser-schema-id: <anonymous-schema-79>
                         site_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-60>
+                          x-parser-schema-id: <anonymous-schema-80>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-61>
+                          x-parser-schema-id: <anonymous-schema-81>
                         from_bin:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-62>
+                          x-parser-schema-id: <anonymous-schema-82>
                         to_bin:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-63>
+                          x-parser-schema-id: <anonymous-schema-83>
                         quantity:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-64>
+                          x-parser-schema-id: <anonymous-schema-84>
                         reason:
                           type: string
                           description: >-
                             Act only on REPLENISHMENT; SLOTTING, CONSOLIDATION,
                             MANUAL and any other value are ignored.
-                          x-parser-schema-id: <anonymous-schema-65>
+                          x-parser-schema-id: <anonymous-schema-85>
                         source_ref:
                           type: string
                           maxLength: 200
                           description: >-
                             The request id on a replenishment; "" or another
                             reference otherwise.
-                          x-parser-schema-id: <anonymous-schema-66>
+                          x-parser-schema-id: <anonymous-schema-86>
                         occurred_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-67>
-                      x-parser-schema-id: <anonymous-schema-58>
-                  x-parser-schema-id: <anonymous-schema-57>
+                          x-parser-schema-id: <anonymous-schema-87>
+                      x-parser-schema-id: <anonymous-schema-78>
+                  x-parser-schema-id: <anonymous-schema-77>
               x-parser-schema-id: StockRelocatedEvent
             examples:
               - name: replenishmentFromATask
@@ -1525,18 +1780,18 @@ channels:
                   properties:
                     plan_id:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-70>
+                      x-parser-schema-id: <anonymous-schema-90>
                     site_id:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-91>
                     approved_at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-92>
                     supersedes_plan_id:
                       type: string
                       description: Omitted when the site had no Approved plan.
-                      x-parser-schema-id: <anonymous-schema-73>
+                      x-parser-schema-id: <anonymous-schema-93>
                     assignments:
                       type: array
                       description: The FULL assignment map of the plan.
@@ -1548,15 +1803,15 @@ channels:
                         properties:
                           sku:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-75>
+                            x-parser-schema-id: <anonymous-schema-95>
                           slot:
                             type: string
                             description: >-
                               The facility-layout location code of the forward
                               slot.
-                            x-parser-schema-id: <anonymous-schema-76>
+                            x-parser-schema-id: <anonymous-schema-96>
                         x-parser-schema-id: SlotAssignment
-                      x-parser-schema-id: <anonymous-schema-74>
+                      x-parser-schema-id: <anonymous-schema-94>
                     moves:
                       type: array
                       items:
@@ -1567,26 +1822,26 @@ channels:
                         properties:
                           sku:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-78>
+                            x-parser-schema-id: <anonymous-schema-98>
                           from_slot:
                             type: string
                             description: Omitted for an Assign.
-                            x-parser-schema-id: <anonymous-schema-79>
+                            x-parser-schema-id: <anonymous-schema-99>
                           to_slot:
                             type: string
                             description: Omitted for a Vacate.
-                            x-parser-schema-id: <anonymous-schema-80>
+                            x-parser-schema-id: <anonymous-schema-100>
                           kind:
                             type: string
                             enum:
                               - Assign
                               - Relocate
                               - Vacate
-                            x-parser-schema-id: <anonymous-schema-81>
+                            x-parser-schema-id: <anonymous-schema-101>
                         x-parser-schema-id: SlotMove
-                      x-parser-schema-id: <anonymous-schema-77>
-                  x-parser-schema-id: <anonymous-schema-69>
-              x-parser-schema-id: <anonymous-schema-68>
+                      x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-89>
+              x-parser-schema-id: <anonymous-schema-88>
           x-parser-schema-id: SlotPlanApprovedEvent
         examples:
           - name: approved
@@ -1720,28 +1975,28 @@ channels:
                       properties:
                         zoneId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-84>
+                          x-parser-schema-id: <anonymous-schema-104>
                         siteCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-85>
+                          x-parser-schema-id: <anonymous-schema-105>
                         areaCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-86>
+                          x-parser-schema-id: <anonymous-schema-106>
                         zoneCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-87>
+                          x-parser-schema-id: <anonymous-schema-107>
                         temperatureClass:
                           type: string
                           enum:
                             - Ambient
                             - Chilled
                             - Frozen
-                          x-parser-schema-id: <anonymous-schema-88>
+                          x-parser-schema-id: <anonymous-schema-108>
                         hazmat:
                           type: boolean
-                          x-parser-schema-id: <anonymous-schema-89>
-                      x-parser-schema-id: <anonymous-schema-83>
-                  x-parser-schema-id: <anonymous-schema-82>
+                          x-parser-schema-id: <anonymous-schema-109>
+                      x-parser-schema-id: <anonymous-schema-103>
+                  x-parser-schema-id: <anonymous-schema-102>
               x-parser-schema-id: ZoneRegisteredEvent
             examples:
               - name: reserveZone
@@ -1846,37 +2101,37 @@ channels:
                       properties:
                         locationCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-92>
+                          x-parser-schema-id: <anonymous-schema-112>
                         aisleId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-93>
+                          x-parser-schema-id: <anonymous-schema-113>
                         zoneId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-94>
+                          x-parser-schema-id: <anonymous-schema-114>
                         locationType:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-95>
+                          x-parser-schema-id: <anonymous-schema-115>
                         role:
                           type: string
                           description: Absent means Storage.
-                          x-parser-schema-id: <anonymous-schema-96>
+                          x-parser-schema-id: <anonymous-schema-116>
                         dockFlow:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-97>
+                          x-parser-schema-id: <anonymous-schema-117>
                         activities:
                           type: array
                           items:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-99>
-                          x-parser-schema-id: <anonymous-schema-98>
+                            x-parser-schema-id: <anonymous-schema-119>
+                          x-parser-schema-id: <anonymous-schema-118>
                         maxWeightKg:
                           type: number
-                          x-parser-schema-id: <anonymous-schema-100>
+                          x-parser-schema-id: <anonymous-schema-120>
                         maxVolumeM3:
                           type: number
-                          x-parser-schema-id: <anonymous-schema-101>
-                      x-parser-schema-id: <anonymous-schema-91>
-                  x-parser-schema-id: <anonymous-schema-90>
+                          x-parser-schema-id: <anonymous-schema-121>
+                      x-parser-schema-id: <anonymous-schema-111>
+                  x-parser-schema-id: <anonymous-schema-110>
               x-parser-schema-id: LocationSlotRegisteredEvent
             examples:
               - name: reserveSlot
@@ -1977,9 +2232,9 @@ channels:
                       properties:
                         locationCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-104>
-                      x-parser-schema-id: <anonymous-schema-103>
-                  x-parser-schema-id: <anonymous-schema-102>
+                          x-parser-schema-id: <anonymous-schema-124>
+                      x-parser-schema-id: <anonymous-schema-123>
+                  x-parser-schema-id: <anonymous-schema-122>
               x-parser-schema-id: LocationSlotDecommissionedEvent
             examples:
               - name: decommissioned
@@ -2155,6 +2410,7 @@ components:
               requested_at: '2026-10-17T09:30:00Z'
       messageId: ReplenishmentRequested
     ReplenishmentCompleted:
+      x-no-consumer-reason: ledger mirror of inventory-storage's StockRelocated; consumed on demand
       name: ReplenishmentCompleted
       title: Replenishment completed
       summary: The relocation of a request was recorded on the stock ledger.
@@ -2981,41 +3237,41 @@ components:
                 properties:
                   site_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: <anonymous-schema-69>
                   bin:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-50>
+                    x-parser-schema-id: <anonymous-schema-70>
                   sku:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-51>
+                    x-parser-schema-id: <anonymous-schema-71>
                   on_hand:
                     type: integer
                     minimum: 0
                     description: Absolute units in the bin after the change.
-                    x-parser-schema-id: <anonymous-schema-52>
+                    x-parser-schema-id: <anonymous-schema-72>
                   reserved:
                     type: integer
                     minimum: 0
                     description: Units of this bin bound by active reservations.
-                    x-parser-schema-id: <anonymous-schema-53>
+                    x-parser-schema-id: <anonymous-schema-73>
                   version:
                     type: integer
                     minimum: 1
                     description: Per-(bin
                     sku) monotonically increasing; keep the highest.: null
-                    x-parser-schema-id: <anonymous-schema-54>
+                    x-parser-schema-id: <anonymous-schema-74>
                   reason:
                     type: string
                     description: >-
                       STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE,
                       REVOKE or UNLOCATED; unknown values are ignored.
-                    x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-75>
                   occurred_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-56>
-                x-parser-schema-id: <anonymous-schema-48>
-            x-parser-schema-id: <anonymous-schema-47>
+                    x-parser-schema-id: <anonymous-schema-76>
+                x-parser-schema-id: <anonymous-schema-68>
+            x-parser-schema-id: <anonymous-schema-67>
         x-parser-schema-id: BinStockLevelChangedEvent
       examples:
         - name: afterPick
@@ -3125,42 +3381,42 @@ components:
                 properties:
                   relocation_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-79>
                   site_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-60>
+                    x-parser-schema-id: <anonymous-schema-80>
                   sku:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-61>
+                    x-parser-schema-id: <anonymous-schema-81>
                   from_bin:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-82>
                   to_bin:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-63>
+                    x-parser-schema-id: <anonymous-schema-83>
                   quantity:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-64>
+                    x-parser-schema-id: <anonymous-schema-84>
                   reason:
                     type: string
                     description: >-
                       Act only on REPLENISHMENT; SLOTTING, CONSOLIDATION, MANUAL
                       and any other value are ignored.
-                    x-parser-schema-id: <anonymous-schema-65>
+                    x-parser-schema-id: <anonymous-schema-85>
                   source_ref:
                     type: string
                     maxLength: 200
                     description: >-
                       The request id on a replenishment; "" or another reference
                       otherwise.
-                    x-parser-schema-id: <anonymous-schema-66>
+                    x-parser-schema-id: <anonymous-schema-86>
                   occurred_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-67>
-                x-parser-schema-id: <anonymous-schema-58>
-            x-parser-schema-id: <anonymous-schema-57>
+                    x-parser-schema-id: <anonymous-schema-87>
+                x-parser-schema-id: <anonymous-schema-78>
+            x-parser-schema-id: <anonymous-schema-77>
         x-parser-schema-id: StockRelocatedEvent
       examples:
         - name: replenishmentFromATask
@@ -3261,18 +3517,18 @@ components:
                 properties:
                   plan_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-70>
+                    x-parser-schema-id: <anonymous-schema-90>
                   site_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-71>
+                    x-parser-schema-id: <anonymous-schema-91>
                   approved_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-72>
+                    x-parser-schema-id: <anonymous-schema-92>
                   supersedes_plan_id:
                     type: string
                     description: Omitted when the site had no Approved plan.
-                    x-parser-schema-id: <anonymous-schema-73>
+                    x-parser-schema-id: <anonymous-schema-93>
                   assignments:
                     type: array
                     description: The FULL assignment map of the plan.
@@ -3284,15 +3540,15 @@ components:
                       properties:
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-75>
+                          x-parser-schema-id: <anonymous-schema-95>
                         slot:
                           type: string
                           description: >-
                             The facility-layout location code of the forward
                             slot.
-                          x-parser-schema-id: <anonymous-schema-76>
+                          x-parser-schema-id: <anonymous-schema-96>
                       x-parser-schema-id: SlotAssignment
-                    x-parser-schema-id: <anonymous-schema-74>
+                    x-parser-schema-id: <anonymous-schema-94>
                   moves:
                     type: array
                     items:
@@ -3303,26 +3559,26 @@ components:
                       properties:
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-78>
+                          x-parser-schema-id: <anonymous-schema-98>
                         from_slot:
                           type: string
                           description: Omitted for an Assign.
-                          x-parser-schema-id: <anonymous-schema-79>
+                          x-parser-schema-id: <anonymous-schema-99>
                         to_slot:
                           type: string
                           description: Omitted for a Vacate.
-                          x-parser-schema-id: <anonymous-schema-80>
+                          x-parser-schema-id: <anonymous-schema-100>
                         kind:
                           type: string
                           enum:
                             - Assign
                             - Relocate
                             - Vacate
-                          x-parser-schema-id: <anonymous-schema-81>
+                          x-parser-schema-id: <anonymous-schema-101>
                       x-parser-schema-id: SlotMove
-                    x-parser-schema-id: <anonymous-schema-77>
-                x-parser-schema-id: <anonymous-schema-69>
-            x-parser-schema-id: <anonymous-schema-68>
+                    x-parser-schema-id: <anonymous-schema-97>
+                x-parser-schema-id: <anonymous-schema-89>
+            x-parser-schema-id: <anonymous-schema-88>
         x-parser-schema-id: SlotPlanApprovedEvent
       examples:
         - name: approved
@@ -3429,28 +3685,28 @@ components:
                 properties:
                   zoneId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-84>
+                    x-parser-schema-id: <anonymous-schema-104>
                   siteCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-85>
+                    x-parser-schema-id: <anonymous-schema-105>
                   areaCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-86>
+                    x-parser-schema-id: <anonymous-schema-106>
                   zoneCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-87>
+                    x-parser-schema-id: <anonymous-schema-107>
                   temperatureClass:
                     type: string
                     enum:
                       - Ambient
                       - Chilled
                       - Frozen
-                    x-parser-schema-id: <anonymous-schema-88>
+                    x-parser-schema-id: <anonymous-schema-108>
                   hazmat:
                     type: boolean
-                    x-parser-schema-id: <anonymous-schema-89>
-                x-parser-schema-id: <anonymous-schema-83>
-            x-parser-schema-id: <anonymous-schema-82>
+                    x-parser-schema-id: <anonymous-schema-109>
+                x-parser-schema-id: <anonymous-schema-103>
+            x-parser-schema-id: <anonymous-schema-102>
         x-parser-schema-id: ZoneRegisteredEvent
       examples:
         - name: reserveZone
@@ -3552,37 +3808,37 @@ components:
                 properties:
                   locationCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-92>
+                    x-parser-schema-id: <anonymous-schema-112>
                   aisleId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-93>
+                    x-parser-schema-id: <anonymous-schema-113>
                   zoneId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-94>
+                    x-parser-schema-id: <anonymous-schema-114>
                   locationType:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-95>
+                    x-parser-schema-id: <anonymous-schema-115>
                   role:
                     type: string
                     description: Absent means Storage.
-                    x-parser-schema-id: <anonymous-schema-96>
+                    x-parser-schema-id: <anonymous-schema-116>
                   dockFlow:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-97>
+                    x-parser-schema-id: <anonymous-schema-117>
                   activities:
                     type: array
                     items:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-99>
-                    x-parser-schema-id: <anonymous-schema-98>
+                      x-parser-schema-id: <anonymous-schema-119>
+                    x-parser-schema-id: <anonymous-schema-118>
                   maxWeightKg:
                     type: number
-                    x-parser-schema-id: <anonymous-schema-100>
+                    x-parser-schema-id: <anonymous-schema-120>
                   maxVolumeM3:
                     type: number
-                    x-parser-schema-id: <anonymous-schema-101>
-                x-parser-schema-id: <anonymous-schema-91>
-            x-parser-schema-id: <anonymous-schema-90>
+                    x-parser-schema-id: <anonymous-schema-121>
+                x-parser-schema-id: <anonymous-schema-111>
+            x-parser-schema-id: <anonymous-schema-110>
         x-parser-schema-id: LocationSlotRegisteredEvent
       examples:
         - name: reserveSlot
@@ -3680,9 +3936,9 @@ components:
                 properties:
                   locationCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-104>
-                x-parser-schema-id: <anonymous-schema-103>
-            x-parser-schema-id: <anonymous-schema-102>
+                    x-parser-schema-id: <anonymous-schema-124>
+                x-parser-schema-id: <anonymous-schema-123>
+            x-parser-schema-id: <anonymous-schema-122>
         x-parser-schema-id: LocationSlotDecommissionedEvent
       examples:
         - name: decommissioned
@@ -3704,7 +3960,435 @@ components:
               occurredAt: '2026-10-01T08:00:00Z'
               locationCode: WH1-RSV-A07-03-03-B
       messageId: LocationSlotDecommissioned
+    ProductPackLevelDeclared:
+      name: ProductPackLevelDeclared
+      title: product-master ProductPackLevelDeclared (consumed)
+      summary: >-
+        A pack level (EACH, INNER, CASE or PALLET) of a SKU was declared, or one
+        of its mutable attributes changed.
+      description: >
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductPackLevelDeclared`,
+
+        source `/warehouse/product-master`, dataschema
+
+        `urn:warehouse:product-master:events:ProductPackLevelDeclared:v1`;
+        subject and
+
+        key = the SKU. Produced by product-master; consumed into the local
+
+        packaging view (pack level -> eaches factor for case-level scans).
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the request id for request events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - level
+                  - gtin
+                  - units_per_pack
+                  - is_orderable
+                  - is_despatch_unit
+                  - effective_from
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-49>
+                  level:
+                    type: string
+                    enum:
+                      - EACH
+                      - INNER
+                      - CASE
+                      - PALLET
+                    x-parser-schema-id: <anonymous-schema-50>
+                  gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    x-parser-schema-id: <anonymous-schema-51>
+                  child_gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    x-parser-schema-id: <anonymous-schema-52>
+                  qty_of_child:
+                    type: integer
+                    minimum: 2
+                    maximum: 1000000
+                    description: Absent for EACH.
+                    x-parser-schema-id: <anonymous-schema-53>
+                  units_per_pack:
+                    type: integer
+                    minimum: 1
+                    maximum: 1000000
+                    description: Direct factor to eaches; 1 for EACH.
+                    x-parser-schema-id: <anonymous-schema-54>
+                  is_orderable:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-55>
+                  is_despatch_unit:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-56>
+                  effective_from:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-57>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-58>
+                x-parser-schema-id: <anonymous-schema-48>
+            x-parser-schema-id: <anonymous-schema-47>
+        x-parser-schema-id: ProductPackLevelDeclaredEvent
+      messageId: ProductPackLevelDeclared
+    ProductPackLevelRetired:
+      name: ProductPackLevelRetired
+      title: product-master ProductPackLevelRetired (consumed)
+      summary: A pack level of a SKU was retired.
+      description: >
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductPackLevelRetired`,
+
+        source `/warehouse/product-master`, dataschema
+
+        `urn:warehouse:product-master:events:ProductPackLevelRetired:v1`;
+        subject and
+
+        key = the SKU. Produced by product-master; consumed into the local
+
+        packaging view (retired levels are no longer valid scan targets).
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the request id for request events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - level
+                  - gtin
+                  - effective_to
+                  - reason
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-61>
+                  level:
+                    type: string
+                    enum:
+                      - EACH
+                      - INNER
+                      - CASE
+                      - PALLET
+                    x-parser-schema-id: <anonymous-schema-62>
+                  gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    x-parser-schema-id: <anonymous-schema-63>
+                  effective_to:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-64>
+                  reason:
+                    type: string
+                    minLength: 1
+                    maxLength: 200
+                    x-parser-schema-id: <anonymous-schema-65>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-66>
+                x-parser-schema-id: <anonymous-schema-60>
+            x-parser-schema-id: <anonymous-schema-59>
+        x-parser-schema-id: ProductPackLevelRetiredEvent
+      messageId: ProductPackLevelRetired
   schemas:
+    ProductPackLevelDeclaredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The aggregate instance id (the request id for request events).
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - units_per_pack
+                - is_orderable
+                - is_despatch_unit
+                - effective_from
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-49>
+                level:
+                  type: string
+                  enum:
+                    - EACH
+                    - INNER
+                    - CASE
+                    - PALLET
+                  x-parser-schema-id: <anonymous-schema-50>
+                gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  x-parser-schema-id: <anonymous-schema-51>
+                child_gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  x-parser-schema-id: <anonymous-schema-52>
+                qty_of_child:
+                  type: integer
+                  minimum: 2
+                  maximum: 1000000
+                  description: Absent for EACH.
+                  x-parser-schema-id: <anonymous-schema-53>
+                units_per_pack:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000000
+                  description: Direct factor to eaches; 1 for EACH.
+                  x-parser-schema-id: <anonymous-schema-54>
+                is_orderable:
+                  type: boolean
+                  x-parser-schema-id: <anonymous-schema-55>
+                is_despatch_unit:
+                  type: boolean
+                  x-parser-schema-id: <anonymous-schema-56>
+                effective_from:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-57>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-58>
+              x-parser-schema-id: <anonymous-schema-48>
+          x-parser-schema-id: <anonymous-schema-47>
+      x-parser-schema-id: ProductPackLevelDeclaredEvent
+    ProductPackLevelRetiredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The aggregate instance id (the request id for request events).
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - effective_to
+                - reason
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-61>
+                level:
+                  type: string
+                  enum:
+                    - EACH
+                    - INNER
+                    - CASE
+                    - PALLET
+                  x-parser-schema-id: <anonymous-schema-62>
+                gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  x-parser-schema-id: <anonymous-schema-63>
+                effective_to:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-64>
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  x-parser-schema-id: <anonymous-schema-65>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-66>
+              x-parser-schema-id: <anonymous-schema-60>
+          x-parser-schema-id: <anonymous-schema-59>
+      x-parser-schema-id: ProductPackLevelRetiredEvent
     CloudEventEnvelope:
       type: object
       required:
@@ -4165,41 +4849,41 @@ components:
               properties:
                 site_code:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: <anonymous-schema-69>
                 bin:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-50>
+                  x-parser-schema-id: <anonymous-schema-70>
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-51>
+                  x-parser-schema-id: <anonymous-schema-71>
                 on_hand:
                   type: integer
                   minimum: 0
                   description: Absolute units in the bin after the change.
-                  x-parser-schema-id: <anonymous-schema-52>
+                  x-parser-schema-id: <anonymous-schema-72>
                 reserved:
                   type: integer
                   minimum: 0
                   description: Units of this bin bound by active reservations.
-                  x-parser-schema-id: <anonymous-schema-53>
+                  x-parser-schema-id: <anonymous-schema-73>
                 version:
                   type: integer
                   minimum: 1
                   description: Per-(bin
                   sku) monotonically increasing; keep the highest.: null
-                  x-parser-schema-id: <anonymous-schema-54>
+                  x-parser-schema-id: <anonymous-schema-74>
                 reason:
                   type: string
                   description: >-
                     STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE, REVOKE
                     or UNLOCATED; unknown values are ignored.
-                  x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-75>
                 occurred_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-56>
-              x-parser-schema-id: <anonymous-schema-48>
-          x-parser-schema-id: <anonymous-schema-47>
+                  x-parser-schema-id: <anonymous-schema-76>
+              x-parser-schema-id: <anonymous-schema-68>
+          x-parser-schema-id: <anonymous-schema-67>
       x-parser-schema-id: BinStockLevelChangedEvent
     StockRelocatedEvent:
       allOf:
@@ -4262,42 +4946,42 @@ components:
               properties:
                 relocation_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-79>
                 site_code:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-60>
+                  x-parser-schema-id: <anonymous-schema-80>
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-61>
+                  x-parser-schema-id: <anonymous-schema-81>
                 from_bin:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-82>
                 to_bin:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-63>
+                  x-parser-schema-id: <anonymous-schema-83>
                 quantity:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-64>
+                  x-parser-schema-id: <anonymous-schema-84>
                 reason:
                   type: string
                   description: >-
                     Act only on REPLENISHMENT; SLOTTING, CONSOLIDATION, MANUAL
                     and any other value are ignored.
-                  x-parser-schema-id: <anonymous-schema-65>
+                  x-parser-schema-id: <anonymous-schema-85>
                 source_ref:
                   type: string
                   maxLength: 200
                   description: >-
                     The request id on a replenishment; "" or another reference
                     otherwise.
-                  x-parser-schema-id: <anonymous-schema-66>
+                  x-parser-schema-id: <anonymous-schema-86>
                 occurred_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-67>
-              x-parser-schema-id: <anonymous-schema-58>
-          x-parser-schema-id: <anonymous-schema-57>
+                  x-parser-schema-id: <anonymous-schema-87>
+              x-parser-schema-id: <anonymous-schema-78>
+          x-parser-schema-id: <anonymous-schema-77>
       x-parser-schema-id: StockRelocatedEvent
     SlotAssignment:
       type: object
@@ -4307,11 +4991,11 @@ components:
       properties:
         sku:
           type: string
-          x-parser-schema-id: <anonymous-schema-75>
+          x-parser-schema-id: <anonymous-schema-95>
         slot:
           type: string
           description: The facility-layout location code of the forward slot.
-          x-parser-schema-id: <anonymous-schema-76>
+          x-parser-schema-id: <anonymous-schema-96>
       x-parser-schema-id: SlotAssignment
     SlotMove:
       type: object
@@ -4321,22 +5005,22 @@ components:
       properties:
         sku:
           type: string
-          x-parser-schema-id: <anonymous-schema-78>
+          x-parser-schema-id: <anonymous-schema-98>
         from_slot:
           type: string
           description: Omitted for an Assign.
-          x-parser-schema-id: <anonymous-schema-79>
+          x-parser-schema-id: <anonymous-schema-99>
         to_slot:
           type: string
           description: Omitted for a Vacate.
-          x-parser-schema-id: <anonymous-schema-80>
+          x-parser-schema-id: <anonymous-schema-100>
         kind:
           type: string
           enum:
             - Assign
             - Relocate
             - Vacate
-          x-parser-schema-id: <anonymous-schema-81>
+          x-parser-schema-id: <anonymous-schema-101>
       x-parser-schema-id: SlotMove
     SlotPlanApprovedEvent:
       allOf:
@@ -4395,18 +5079,18 @@ components:
               properties:
                 plan_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-70>
+                  x-parser-schema-id: <anonymous-schema-90>
                 site_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-71>
+                  x-parser-schema-id: <anonymous-schema-91>
                 approved_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-72>
+                  x-parser-schema-id: <anonymous-schema-92>
                 supersedes_plan_id:
                   type: string
                   description: Omitted when the site had no Approved plan.
-                  x-parser-schema-id: <anonymous-schema-73>
+                  x-parser-schema-id: <anonymous-schema-93>
                 assignments:
                   type: array
                   description: The FULL assignment map of the plan.
@@ -4418,13 +5102,13 @@ components:
                     properties:
                       sku:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-75>
+                        x-parser-schema-id: <anonymous-schema-95>
                       slot:
                         type: string
                         description: The facility-layout location code of the forward slot.
-                        x-parser-schema-id: <anonymous-schema-76>
+                        x-parser-schema-id: <anonymous-schema-96>
                     x-parser-schema-id: SlotAssignment
-                  x-parser-schema-id: <anonymous-schema-74>
+                  x-parser-schema-id: <anonymous-schema-94>
                 moves:
                   type: array
                   items:
@@ -4435,26 +5119,26 @@ components:
                     properties:
                       sku:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-78>
+                        x-parser-schema-id: <anonymous-schema-98>
                       from_slot:
                         type: string
                         description: Omitted for an Assign.
-                        x-parser-schema-id: <anonymous-schema-79>
+                        x-parser-schema-id: <anonymous-schema-99>
                       to_slot:
                         type: string
                         description: Omitted for a Vacate.
-                        x-parser-schema-id: <anonymous-schema-80>
+                        x-parser-schema-id: <anonymous-schema-100>
                       kind:
                         type: string
                         enum:
                           - Assign
                           - Relocate
                           - Vacate
-                        x-parser-schema-id: <anonymous-schema-81>
+                        x-parser-schema-id: <anonymous-schema-101>
                     x-parser-schema-id: SlotMove
-                  x-parser-schema-id: <anonymous-schema-77>
-              x-parser-schema-id: <anonymous-schema-69>
-          x-parser-schema-id: <anonymous-schema-68>
+                  x-parser-schema-id: <anonymous-schema-97>
+              x-parser-schema-id: <anonymous-schema-89>
+          x-parser-schema-id: <anonymous-schema-88>
       x-parser-schema-id: SlotPlanApprovedEvent
     ZoneRegisteredEvent:
       allOf:
@@ -4514,28 +5198,28 @@ components:
               properties:
                 zoneId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-104>
                 siteCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-85>
+                  x-parser-schema-id: <anonymous-schema-105>
                 areaCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-106>
                 zoneCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-87>
+                  x-parser-schema-id: <anonymous-schema-107>
                 temperatureClass:
                   type: string
                   enum:
                     - Ambient
                     - Chilled
                     - Frozen
-                  x-parser-schema-id: <anonymous-schema-88>
+                  x-parser-schema-id: <anonymous-schema-108>
                 hazmat:
                   type: boolean
-                  x-parser-schema-id: <anonymous-schema-89>
-              x-parser-schema-id: <anonymous-schema-83>
-          x-parser-schema-id: <anonymous-schema-82>
+                  x-parser-schema-id: <anonymous-schema-109>
+              x-parser-schema-id: <anonymous-schema-103>
+          x-parser-schema-id: <anonymous-schema-102>
       x-parser-schema-id: ZoneRegisteredEvent
     LocationSlotRegisteredEvent:
       allOf:
@@ -4595,37 +5279,37 @@ components:
               properties:
                 locationCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-92>
+                  x-parser-schema-id: <anonymous-schema-112>
                 aisleId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-93>
+                  x-parser-schema-id: <anonymous-schema-113>
                 zoneId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-94>
+                  x-parser-schema-id: <anonymous-schema-114>
                 locationType:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-95>
+                  x-parser-schema-id: <anonymous-schema-115>
                 role:
                   type: string
                   description: Absent means Storage.
-                  x-parser-schema-id: <anonymous-schema-96>
+                  x-parser-schema-id: <anonymous-schema-116>
                 dockFlow:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-117>
                 activities:
                   type: array
                   items:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-99>
-                  x-parser-schema-id: <anonymous-schema-98>
+                    x-parser-schema-id: <anonymous-schema-119>
+                  x-parser-schema-id: <anonymous-schema-118>
                 maxWeightKg:
                   type: number
-                  x-parser-schema-id: <anonymous-schema-100>
+                  x-parser-schema-id: <anonymous-schema-120>
                 maxVolumeM3:
                   type: number
-                  x-parser-schema-id: <anonymous-schema-101>
-              x-parser-schema-id: <anonymous-schema-91>
-          x-parser-schema-id: <anonymous-schema-90>
+                  x-parser-schema-id: <anonymous-schema-121>
+              x-parser-schema-id: <anonymous-schema-111>
+          x-parser-schema-id: <anonymous-schema-110>
       x-parser-schema-id: LocationSlotRegisteredEvent
     LocationSlotDecommissionedEvent:
       allOf:
@@ -4680,9 +5364,9 @@ components:
               properties:
                 locationCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-104>
-              x-parser-schema-id: <anonymous-schema-103>
-          x-parser-schema-id: <anonymous-schema-102>
+                  x-parser-schema-id: <anonymous-schema-124>
+              x-parser-schema-id: <anonymous-schema-123>
+          x-parser-schema-id: <anonymous-schema-122>
       x-parser-schema-id: LocationSlotDecommissionedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

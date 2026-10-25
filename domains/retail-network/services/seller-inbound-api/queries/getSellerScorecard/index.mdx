@@ -1,0 +1,70 @@
+---
+id: seller-inbound-api-getSellerScorecard
+version: 1.0.0
+name: getSellerScorecard
+summary: Get a seller's compliance scorecard (GetSellerScorecard)
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Sellers'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: '/sellers/{sellerId}/scorecard'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+The seller's compliance scorecard over a rolling window that ends now, derived from this service's own facts (ADR 0005): the shipments that closed in the window, the
+cartons they reported and how many were `RECEIVED`, the discrepancies recorded by kind, and the compliance violations recorded. Facts are dated by the instant this service
+recorded them, not by the `receivedAt` the vendor reports.
+
+`receiptAccuracyRate` is `cartonsReceived / cartonsReported` and is omitted when no carton was reported; `discrepancyRatePerShipment` is the discrepancies recorded divided by
+`shipmentsReceived` and is omitted when no shipment closed. Rates are rounded to four decimals.
+
+`complianceTier` is the worst of three signals (thresholds are declared in code and in ADR 0005 A3): `AT_RISK` when `receiptAccuracyRate` is below 0.90, `discrepancyRatePerShipment`
+is 2.0 or more, or there are 5 or more violations; otherwise `WATCH` when the rate is below 0.98, the discrepancy rate is 0.5 or more, or there is at least 1 violation; otherwise `GOOD`.
+The tier is **informational**: it changes nothing about the seller, who stays `ACTIVE` or `SUSPENDED` by the human commands only. A suspended seller has a scorecard too.
+The read publishes no event.
+
+
+
+
+
+## GET `(/sellers/{sellerId}/scorecard)`
+
+### Parameters
+- **sellerId** (path) (required): The seller id.
+- **window** (query): The rolling window that ends now. Defaults to `30d`. Any other value is `invalid-window`.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+The informational compliance scorecard of a seller over a rolling window (ADR 0005). Additive; no event carries it.
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+
+
+## Architecture
+
+<NodeGraph />
