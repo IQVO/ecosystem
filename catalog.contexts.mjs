@@ -269,4 +269,13 @@ export const CONTEXTS = {
       "Measures every node against what it declared and what was asked of it: acknowledgement latency, rejections, on-time handover against requiredShipBy, promise-kept rate and inventory feed freshness, over rolling windows, and grades the node.",
     topics: ["retailnetwork.node-performance.events", "retailnetwork.node-performance.analytics"],
   },
+  'seller-inbound': {
+    subdomain: 'retail-network',
+    ceSegment: 'partner',
+    classification: 'Supporting',
+    tier: 'Retail Network, partner tier',
+    purpose:
+      "The seller-facing front door for stock coming into the network: sellers are onboarded and held to a compliance tier, inbound plans are confirmed, and shipments are labelled, shipped and received with discrepancies recorded. Quantities are always eaches; seller-lifecycle and plan facts go to the analytics stream only (G41-54).",
+    topics: ["retailnetwork.seller-inbound.events", "retailnetwork.seller-inbound.analytics"],
+  },
 };

@@ -175,9 +175,13 @@ export function derive() {
 
   let allowlist = {};
   if (fs.existsSync(ALLOWLIST_FILE)) {
-    const parsed = load(fs.readFileSync(ALLOWLIST_FILE, 'utf8'));
+    // A comments-only allowlist (empty by design, e.g. after the native
+    // reasons wave) parses to nothing; js-yaml throws on an empty document.
+    const raw = fs.readFileSync(ALLOWLIST_FILE, 'utf8');
+    const hasEntries = raw.split('\n').some((l) => l.trim() && !l.trim().startsWith('#'));
+    const parsed = hasEntries ? load(raw) : undefined;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) allowlist = parsed;
-    else warn(`${path.relative(ROOT, ALLOWLIST_FILE)} is not a type -> reason mapping`);
+    else if (hasEntries) warn(`${path.relative(ROOT, ALLOWLIST_FILE)} is not a type -> reason mapping`);
   } else {
     warn(`${path.relative(ROOT, ALLOWLIST_FILE)} missing: no allowlist fallback available`);
   }

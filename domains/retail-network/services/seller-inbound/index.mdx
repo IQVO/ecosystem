@@ -1,0 +1,151 @@
+---
+id: seller-inbound
+name: Seller Inbound (events)
+version: 1.0.0
+summary: >-
+  The seller-facing front door for stock coming into the network: sellers are
+  onboarded and held to a compliance tier, inbound plans are confirmed, and
+  shipments are labelled, shipped and received with discrepancies recorded.
+badges:
+  - content: seller-inbound
+    textColor: blue
+    backgroundColor: blue
+  - content: seller
+    textColor: blue
+    backgroundColor: blue
+  - content: inboundplan
+    textColor: blue
+    backgroundColor: blue
+  - content: inboundshipment
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: InboundShipmentLabelled
+    version: 1.0.0
+    to:
+      - id: sellerInboundEvents
+        version: 1.0.0
+  - id: InboundShipmentShipped
+    version: 1.0.0
+    to:
+      - id: sellerInboundEvents
+        version: 1.0.0
+  - id: InboundShipmentReceived
+    version: 1.0.0
+    to:
+      - id: sellerInboundEvents
+        version: 1.0.0
+  - id: SellerOnboarded
+    version: 1.0.0
+    to:
+      - id: sellerInboundAnalytics
+        version: 1.0.0
+  - id: SellerSuspended
+    version: 1.0.0
+    to:
+      - id: sellerInboundAnalytics
+        version: 1.0.0
+  - id: SellerReinstated
+    version: 1.0.0
+    to:
+      - id: sellerInboundAnalytics
+        version: 1.0.0
+  - id: InboundPlanConfirmed
+    version: 1.0.0
+    to:
+      - id: sellerInboundAnalytics
+        version: 1.0.0
+  - id: InboundDiscrepancyRecorded
+    version: 1.0.0
+    to:
+      - id: sellerInboundAnalytics
+        version: 1.0.0
+  - id: SellerComplianceViolationRecorded
+    version: 1.0.0
+    to:
+      - id: sellerInboundAnalytics
+        version: 1.0.0
+receives:
+  - id: NodeRegistered
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeOperationalProfileDeclared
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeActivated
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeSuspended
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeRetired
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: CatalogItemPackagingDeclared
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: CatalogItemPackLevelRetired
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: InboundReceiptSubmitted
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+The seller-facing front door for stock coming into the network: sellers are onboarded and held to a compliance tier, inbound plans are confirmed, and shipments are labelled, shipped and received with discrepancies recorded. Quantities are always eaches; seller-lifecycle and plan facts go to the analytics stream only (G41-54).
+
+| | |
+|---|---|
+| Bounded context | `seller-inbound` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, partner tier |
+| Publishes (Kafka) | `retailnetwork.seller-inbound.events`<br/>`retailnetwork.seller-inbound.analytics` |
+| Consumes (Kafka) | `sellerInboundEvents`<br/>`sellerInboundAnalytics`<br/>`nodeTopologyEvents`<br/>`offerAvailabilityEvents`<br/>`vendorConnectivityEvents` |
+| CloudEvents type prefix | `com.retailnetwork.partner.seller-inbound.` |
+| Event source | `/retailnetwork/seller-inbound` |
+| Repository | [IQVO/seller-inbound](https://github.com/IQVO/seller-inbound) |
+| REST API | [seller-inbound-api](/docs/services/seller-inbound-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **seller-inbound** bounded context of the retail network (partner tier): the seller-facing front door for stock coming into the network.
+The REST contract is `apis/openapi.yaml`.
+
+**Published.** Nine types. `InboundShipmentLabelled`, `InboundShipmentShipped` and `InboundShipmentReceived` go to `retailnetwork.seller-inbound.events`; the other six (`SellerOnboarded`, `SellerSuspended`, `SellerReinstated`, `InboundPlanConfirmed`, `InboundDiscrepancyRecorded`, `SellerComplianceViolationRecorded`) go ONLY to `retailnetwork.seller-inbound.analytics` (the model marks them analytics only). Every event leaves through a **transactional outbox**: the aggregate row and the already-encoded events are written in ONE database transaction and an always-on relay drains them to Kafka (at-least-once; the CloudEvents `id` is stored with the outbox row, so a retry republishes the same `id`).
+
+**Consumed.** Eight types from three producers (ADR 0003): node-topology `NodeRegistered`, `NodeOperationalProfileDeclared`, `NodeActivated`, `NodeSuspended`, `NodeRetired` (local NodeInboundView); offer-availability `CatalogItemPackagingDeclared`, `CatalogItemPackLevelRetired` (local CatalogPackagingView); vendor-connectivity `InboundReceiptSubmitted`. Each is deduplicated on the CloudEvents `id` in the `processed_events` inbox table, dispatched on the full `type`, decoded tolerantly (unknown fields are ignored) and dead-lettered to `<topic>.dlq` when it cannot be processed. The consumed `data` below lists only the fields this context relies on. There are no synchronous calls to any neighbour.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka header `content-type: application/cloudevents+json; charset=UTF-8`. `specversion`, `id`, `source` (`/retailnetwork/seller-inbound`), `type`, `subject` (the aggregate root id: `sellerId`, `planId` or `shipmentId`), `time`, `datacontenttype` (`application/json`) and `dataschema` (`urn:retailnetwork:seller-inbound:<stream>:<EventName>:v1`, stream `events` or `analytics`) are all required. Kafka key = the subject, so one shipment's events stay ordered on one partition. Type = `com.retailnetwork.partner.seller-inbound.<entity>.<EventName>` with entity `seller`, `inboundplan` or `inboundshipment`.
+
+**Conventions.** `data` is camelCase; timestamps are RFC 3339 UTC; quantities are ALWAYS eaches (`qtyEaches`); optional fields are omitted when absent (never null); arrays are always present. GTINs are 14 digits, SSCCs 18 digits, both with a GS1 mod-10 check digit.
+
+
+## Architecture diagram
+<NodeGraph />
