@@ -21,6 +21,12 @@ function noConsumerReasonFor(type) {
 }
 
 // Same rule as the generators: leave code spans/blocks alone, escape what breaks MDX elsewhere.
+// The order is load-bearing — each escape must come after the escapes it is built from,
+// or the sanitizer itself can be neutralised by input containing those characters:
+//   • `\` first: otherwise an input `\{` would become `\\{`, an escaped backslash
+//     followed by a live, unescaped `{` (the exact hole js/incomplete-sanitization flags);
+//   • `&` before `<`: otherwise an input `&lt;` would smuggle a literal `<` through the
+//     `&lt;` escape as a pre-cooked entity.
 export function escapeMdx(text = '') {
   const kept = [];
   const masked = text.replace(/```[\s\S]*?```|`[^`\n]*`/g, (m) => {
@@ -28,10 +34,14 @@ export function escapeMdx(text = '') {
     return `__CODE_${kept.length - 1}__`;
   });
   return masked
+    .replace(/\\/g, '\\\\')
+    .replace(/&/g, '&amp;')
     .replace(/\{/g, '\\{')
     .replace(/}/g, '\\}')
     .replace(/</g, '&lt;')
-    .replace(/__CODE_(\d+)__/g, (_, i) => kept[Number(i)]);
+    // `?? m`: a `__CODE_n__` that occurs in the input itself (not our placeholder)
+    // must survive verbatim instead of collapsing to "undefined".
+    .replace(/__CODE_(\d+)__/g, (m, i) => kept[Number(i)] ?? m);
 }
 
 const table = (rows) => rows.map(([k, v]) => `| ${k} | ${v} |`).join('\n');
