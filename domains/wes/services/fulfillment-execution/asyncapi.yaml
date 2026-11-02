@@ -898,7 +898,7 @@ channels:
             title: TaskCPTMissed
             summary: A task is still open (Pending or Claimed) past its CPT deadline.
             description: >-
-              Raised by the CPT-missed sweep (`POST /tasks/sweep-cpt-misses`,
+              Raised by the CPT-missed sweep (`POST /cpt-miss-sweeps`,
               ADR-0025). Re-fires on every sweep pass while the task stays open
               past its CPT, so consumers must dedupe on their own
               (order-management's RepromiseOrder is idempotent by design).
@@ -5747,12 +5747,11 @@ components:
       title: TaskCPTMissed
       summary: A task is still open (Pending or Claimed) past its CPT deadline.
       description: >-
-        Raised by the CPT-missed sweep (`POST /tasks/sweep-cpt-misses`,
-        ADR-0025). Re-fires on every sweep pass while the task stays open past
-        its CPT, so consumers must dedupe on their own (order-management's
-        RepromiseOrder is idempotent by design). Published on
-        `warehouse.fulfillment.events`, keyed by task id. Consumed by
-        order-management.
+        Raised by the CPT-missed sweep (`POST /cpt-miss-sweeps`, ADR-0025).
+        Re-fires on every sweep pass while the task stays open past its CPT, so
+        consumers must dedupe on their own (order-management's RepromiseOrder is
+        idempotent by design). Published on `warehouse.fulfillment.events`,
+        keyed by task id. Consumed by order-management.
       contentType: application/cloudevents+json
       tags:
         - name: task
@@ -10073,6 +10072,328 @@ components:
             data:
               path_id: PICK
       messageId: ProcessPathDeactivated
+    ProductPackLevelDeclared:
+      name: ProductPackLevelDeclared
+      title: ProductPackLevelDeclared
+      summary: product-master declared or revised a pack level of a SKU (consumed).
+      description: >-
+        Published by product-master on `warehouse.product-master.events` (its
+        AsyncAPI is the source of truth); consumed here into the local PackView
+        read per scanned GTIN at scan time (ADR 0054), by the always-on consumer
+        under the required `PACK_VIEW_CONSUMER_GROUP`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      headers:
+        type: object
+        description: Kafka message headers carried by every message.
+        required:
+          - content-type
+        properties:
+          content-type:
+            type: string
+            const: application/cloudevents+json; charset=UTF-8
+            description: CloudEvents structured-mode media type.
+            x-parser-schema-id: <anonymous-schema-1>
+          traceparent:
+            type: string
+            description: W3C traceparent of the publishing span.
+            x-parser-schema-id: <anonymous-schema-2>
+          tracestate:
+            type: string
+            description: W3C tracestate, present only when a vendor added entries.
+            x-parser-schema-id: <anonymous-schema-3>
+        x-parser-schema-id: KafkaHeaders
+      payload:
+        allOf:
+          - type: object
+            description: >-
+              CloudEvents 1.0 context attributes; every attribute is required in
+              this fleet.
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                description: CloudEvents spec version.
+                x-parser-schema-id: <anonymous-schema-5>
+              id:
+                type: string
+                format: uuid
+                description: >-
+                  UUID v4, minted once per occurrence and stable across outbox
+                  redelivery.
+                x-parser-schema-id: <anonymous-schema-6>
+              source:
+                type: string
+                format: uri-reference
+                description: Producing service, `/warehouse/<repo>`.
+                x-parser-schema-id: <anonymous-schema-7>
+              type:
+                type: string
+                description: >-
+                  `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                x-parser-schema-id: <anonymous-schema-8>
+              subject:
+                type: string
+                minLength: 1
+                description: Aggregate instance id; equal to the Kafka message key.
+                x-parser-schema-id: <anonymous-schema-9>
+              time:
+                type: string
+                format: date-time
+                description: Domain occurred-at, UTC, RFC 3339.
+                x-parser-schema-id: <anonymous-schema-10>
+              datacontenttype:
+                type: string
+                const: application/json
+                description: Content type of `data`.
+                x-parser-schema-id: <anonymous-schema-11>
+              dataschema:
+                type: string
+                format: uri
+                description: '`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.'
+                x-parser-schema-id: <anonymous-schema-12>
+              data:
+                type: object
+                description: Event payload (snake_case keys).
+                x-parser-schema-id: <anonymous-schema-13>
+            x-parser-schema-id: CloudEvent
+          - type: object
+            required:
+              - type
+              - source
+              - dataschema
+              - data
+            properties:
+              type:
+                type: string
+                const: >-
+                  com.warehouse.wms.product-master.product.ProductPackLevelDeclared
+                x-parser-schema-id: <anonymous-schema-313>
+              source:
+                type: string
+                const: /warehouse/product-master
+                x-parser-schema-id: <anonymous-schema-314>
+              dataschema:
+                type: string
+                const: >-
+                  urn:warehouse:product-master:events:ProductPackLevelDeclared:v1
+                x-parser-schema-id: <anonymous-schema-315>
+              data:
+                type: object
+                required:
+                  - sku
+                  - level
+                  - gtin
+                  - units_per_pack
+                  - is_orderable
+                  - is_despatch_unit
+                  - effective_from
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    description: >-
+                      The SKU (also the Kafka key and the CloudEvents
+                      `subject`).
+                    x-parser-schema-id: <anonymous-schema-317>
+                  level:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-318>
+                  gtin:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-319>
+                  child_gtin:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-320>
+                  qty_of_child:
+                    type: integer
+                    minimum: 2
+                    description: Absent for EACH.
+                    x-parser-schema-id: <anonymous-schema-321>
+                  units_per_pack:
+                    type: integer
+                    minimum: 1
+                    description: Direct factor to eaches; 1 for EACH.
+                    x-parser-schema-id: <anonymous-schema-322>
+                  is_orderable:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-323>
+                  is_despatch_unit:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-324>
+                  effective_from:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-325>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-326>
+                x-parser-schema-id: <anonymous-schema-316>
+            x-parser-schema-id: <anonymous-schema-312>
+        x-parser-schema-id: <anonymous-schema-311>
+      messageId: ProductPackLevelDeclared
+    ProductPackLevelRetired:
+      name: ProductPackLevelRetired
+      title: ProductPackLevelRetired
+      summary: product-master retired a pack level of a SKU (consumed).
+      description: >-
+        Published by product-master on `warehouse.product-master.events` (its
+        AsyncAPI is the source of truth); consumed here into the local PackView
+        read per scanned GTIN at scan time (ADR 0054), by the always-on consumer
+        under the required `PACK_VIEW_CONSUMER_GROUP`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      headers:
+        type: object
+        description: Kafka message headers carried by every message.
+        required:
+          - content-type
+        properties:
+          content-type:
+            type: string
+            const: application/cloudevents+json; charset=UTF-8
+            description: CloudEvents structured-mode media type.
+            x-parser-schema-id: <anonymous-schema-1>
+          traceparent:
+            type: string
+            description: W3C traceparent of the publishing span.
+            x-parser-schema-id: <anonymous-schema-2>
+          tracestate:
+            type: string
+            description: W3C tracestate, present only when a vendor added entries.
+            x-parser-schema-id: <anonymous-schema-3>
+        x-parser-schema-id: KafkaHeaders
+      payload:
+        allOf:
+          - type: object
+            description: >-
+              CloudEvents 1.0 context attributes; every attribute is required in
+              this fleet.
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                description: CloudEvents spec version.
+                x-parser-schema-id: <anonymous-schema-5>
+              id:
+                type: string
+                format: uuid
+                description: >-
+                  UUID v4, minted once per occurrence and stable across outbox
+                  redelivery.
+                x-parser-schema-id: <anonymous-schema-6>
+              source:
+                type: string
+                format: uri-reference
+                description: Producing service, `/warehouse/<repo>`.
+                x-parser-schema-id: <anonymous-schema-7>
+              type:
+                type: string
+                description: >-
+                  `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                x-parser-schema-id: <anonymous-schema-8>
+              subject:
+                type: string
+                minLength: 1
+                description: Aggregate instance id; equal to the Kafka message key.
+                x-parser-schema-id: <anonymous-schema-9>
+              time:
+                type: string
+                format: date-time
+                description: Domain occurred-at, UTC, RFC 3339.
+                x-parser-schema-id: <anonymous-schema-10>
+              datacontenttype:
+                type: string
+                const: application/json
+                description: Content type of `data`.
+                x-parser-schema-id: <anonymous-schema-11>
+              dataschema:
+                type: string
+                format: uri
+                description: '`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.'
+                x-parser-schema-id: <anonymous-schema-12>
+              data:
+                type: object
+                description: Event payload (snake_case keys).
+                x-parser-schema-id: <anonymous-schema-13>
+            x-parser-schema-id: CloudEvent
+          - type: object
+            required:
+              - type
+              - source
+              - dataschema
+              - data
+            properties:
+              type:
+                type: string
+                const: >-
+                  com.warehouse.wms.product-master.product.ProductPackLevelRetired
+                x-parser-schema-id: <anonymous-schema-329>
+              source:
+                type: string
+                const: /warehouse/product-master
+                x-parser-schema-id: <anonymous-schema-330>
+              dataschema:
+                type: string
+                const: urn:warehouse:product-master:events:ProductPackLevelRetired:v1
+                x-parser-schema-id: <anonymous-schema-331>
+              data:
+                type: object
+                required:
+                  - sku
+                  - level
+                  - gtin
+                  - effective_to
+                  - reason
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-333>
+                  level:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-334>
+                  gtin:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-335>
+                  effective_to:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-336>
+                  reason:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-337>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-338>
+                x-parser-schema-id: <anonymous-schema-332>
+            x-parser-schema-id: <anonymous-schema-328>
+        x-parser-schema-id: <anonymous-schema-327>
+      messageId: ProductPackLevelRetired
     ProductClassified:
       name: ProductClassified
       title: ProductClassified

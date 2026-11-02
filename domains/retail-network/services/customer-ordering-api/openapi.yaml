@@ -5,18 +5,18 @@ info:
   contact:
     name: customer-ordering maintainers
     url: https://github.com/IQVO/customer-ordering
-  description: 'REST contract of the customer-ordering bounded context of the retail network, derived from retail-network-docs model/model.yaml (contexts[customer-ordering].rest) and adjusted by the final cross-context decisions (contracts-delta E7, E9, E11 and Gap Register G7, G10, G12, G25). It turns a shopper''s cart into a customer order: checkout promises and confirms every shipment group at delivery-promise before the order is placed, the order carries the ship-to address (synthetic PII, held only here), the tracking view is fed by events, and a customer cancellation is a request that order-sourcing decides. One restricted in-organization route, GET /orders/\{orderId\}/ship-to, is called only by shipping-and-tracking to print a label and is the only route that returns the address. There is no authentication anywhere in the network; "restricted" means the route is not exposed through the storefront edge. Errors are RFC 9457 problem details (application/problem+json) whose type is /problems/&lt;slug>. The shared problem types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422). Optional fields are omitted when absent, never null.'
+  description: 'REST contract of the customer-ordering bounded context of the retail network, derived from the retail-network model (warehouse-docs network/model/model.yaml, contexts[customer-ordering].rest) and adjusted by the final cross-context decisions (contracts-delta E7, E9, E11 and Gap Register G7, G10, G12, G25, and the storefront extension NG1-NG3: saved addresses, checkout by saved address, shopper by e-mail and the order history). It turns a shopper''s cart into a customer order: checkout promises and confirms every shipment group at delivery-promise before the order is placed, the order carries the ship-to address (synthetic PII, held only here), the tracking view is fed by events, and a customer cancellation is a request that order-sourcing decides. One restricted in-organization route, GET /orders/\{orderId\}/ship-to, is called only by shipping-and-tracking to print a label and is the only route that returns the address. There is no authentication anywhere in the network; "restricted" means the route is not exposed through the storefront edge. Errors are RFC 9457 problem details (application/problem+json) whose type is /problems/&lt;slug>. The shared problem types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422). Optional fields are omitted when absent, never null.'
 servers:
   - url: http://localhost:8080
 tags:
   - name: Checkout
     description: Turn a cart into a customer order, promising and confirming every shipment group (PlaceOrder).
   - name: Orders
-    description: Read and cancel customer orders (GetOrder, GetTracking, CancelOrder).
+    description: Read and cancel customer orders (GetOrder, GetTracking, CancelOrder) and list a shopper's order history (ListOrdersByShopper).
   - name: Ship-To
     description: Restricted, in-organization read of the ship-to address for label printing (GetShipTo). Caller is shipping-and-tracking only.
   - name: Shoppers
-    description: Register a synthetic shopper (RegisterShopper).
+    description: Register a synthetic shopper (RegisterShopper), read a profile with its saved addresses (GetShopper, FindShopperByEmail) and save an address (AddSavedAddress).
   - name: Operations
     description: Liveness and readiness probes.
 paths:
@@ -26,7 +26,7 @@ paths:
         - Checkout
       operationId: placeOrder
       summary: Place a customer order, promising and confirming every shipment group
-      description: PlaceOrder. For each shipment group the service calls delivery-promise MakePromise (POST /promises) with the offer the shopper saw and then ConfirmPromise (POST /promises/{promiseId}:confirm) before anything is stored. If an offer expired or was consumed, or a confirm fails, it re-quotes (QuoteDeliveryOffers, POST /delivery-offers:quote) and answers 409 offer-not-quotable with the new offers; no order is placed. On success the order is PLACED and CustomerOrderPlaced is published through the outbox in the same transaction. The order id is derived from the Idempotency-Key, so a retry after a timeout reuses the same promises.
+      description: PlaceOrder. For each shipment group the service calls delivery-promise MakePromise (POST /promises) with the offer the shopper saw and then ConfirmPromise (POST /promises/{promiseId}/confirmations) before anything is stored. If an offer expired or was consumed, or a confirm fails, it re-quotes (QuoteDeliveryOffers, POST /delivery-quotes) and answers 409 offer-not-quotable with the new offers; no order is placed. On success the order is PLACED and CustomerOrderPlaced is published through the outbox in the same transaction. The order id is derived from the Idempotency-Key, so a retry after a timeout reuses the same promises.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -38,6 +38,9 @@ paths:
       responses:
         '201':
           description: Order placed.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -45,19 +48,51 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
-          description: An offer expired or was consumed or a promise could not be confirmed (offer-not-quotable, the body carries re-quoted offers), promise capacity exhausted (promise-capacity-exhausted), book closed (book-closed) or a concurrent update (concurrent-update).
+          description: An offer expired or was consumed or a promise could not be confirmed (offer-not-quotable, the body carries re-quoted offers), promise capacity exhausted (promise-capacity-exhausted), book closed (book-closed), a concurrent update (concurrent-update), or the Idempotency-Key was already used with a different request (idempotency-key-reused).
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/CheckoutConflictProblem'
         '422':
-          description: validation-failed, line-without-promise (ErrLineWithoutPromise), promise-destination-mismatch (ErrPromiseDestinationMismatch) or group-spans-nodes from delivery-promise.
+          description: 'validation-failed (including the shipTo / shipToAddressId choice: both, neither, an unknown id or another shopper''s address), line-without-promise (ErrLineWithoutPromise), promise-destination-mismatch (ErrPromiseDestinationMismatch) or group-spans-nodes from delivery-promise.'
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         '503':
           description: delivery-promise unreachable or timed out (delivery-promise-unavailable). Retry with the same Idempotency-Key.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /orders:
+    get:
+      tags:
+        - Orders
+      operationId: listOrdersByShopper
+      summary: List a shopper's order history, newest first
+      description: 'ListOrdersByShopper. Keyset pagination: the page is ordered placedAt descending with the orderId as the ascending tiebreak, `limit` defaults to 100 and is at most 500, and `cursor` is the nextCursor of the previous page (opaque). A bad limit is 400 invalid-limit, an undecodable cursor is 400 invalid-cursor and any other query parameter is 400 unknown-query-parameter. An unknown shopper is 404 not-found; a shopper without orders is an empty page. The items never carry the ship-to address.'
+      parameters:
+        - $ref: '#/components/parameters/ShopperIdQuery'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: One page of the shopper's orders.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerOrderList'
+        '400':
+          description: invalid-limit, invalid-cursor, or unknown-query-parameter (any query parameter other than shopperId, limit and cursor, such as the retired after).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: shopperId is missing or empty (validation-failed).
           content:
             application/problem+json:
               schema:
@@ -86,7 +121,8 @@ paths:
         - Orders
       operationId: getOrderTracking
       summary: Get the order's tracking view per shipment group and package
-      description: Served from the event-fed read model OrderTrackingView (delivery-promise, order-sourcing and shipping-and-tracking events) joined with the order's groups. A package scanned before its label or shipment event arrived is listed once the order is known.
+      description: Served from the event-fed read model OrderTrackingView (delivery-promise, order-sourcing and shipping-and-tracking events) joined with the order's groups. A package scanned before its label or shipment event arrived is listed once the order is known. One composite view of a single order, bounded by the order's shipment groups, so it is not paginated.
+      x-pagination-exempt: view
       parameters:
         - $ref: '#/components/parameters/OrderId'
       responses:
@@ -98,12 +134,12 @@ paths:
                 $ref: '#/components/schemas/OrderTracking'
         '404':
           $ref: '#/components/responses/NotFound'
-  /orders/{orderId}:cancel:
+  /orders/{orderId}/cancellations:
     post:
       tags:
         - Orders
       operationId: cancelOrder
-      summary: Request the cancellation of every group that is not yet locked
+      summary: Request the cancellation of every group that is not yet locked (creates a cancellation request)
       description: 'CancelOrder is a request (G12, G25). Every group still PROMISED (no node locked yet) moves to CANCELLATION_REQUESTED and CustomerOrderCancelled is published through the outbox with those groupNos; locked, shipped and delivered groups are untouched. order-sourcing decides: FulfillmentCancelled makes the group CANCELLED (the order is CANCELLED once every group is), FulfillmentCancelRefused returns the group to fulfilment (the vendor ships; the shopper path becomes a return). Refused with 409 cancel-after-lock (ErrCancelAfterLock) when no group is unlocked. Repeating the request, or cancelling a CANCELLED order, returns the order unchanged and publishes nothing.'
       parameters:
         - $ref: '#/components/parameters/OrderId'
@@ -117,6 +153,9 @@ paths:
       responses:
         '200':
           description: The order after the request.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -126,7 +165,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: cancel-after-lock (ErrCancelAfterLock), status-regression (ErrStatusRegression), or concurrent-update.
+          description: cancel-after-lock (ErrCancelAfterLock), status-regression (ErrStatusRegression), concurrent-update, or the Idempotency-Key was already used with a different request (idempotency-key-reused).
           content:
             application/problem+json:
               schema:
@@ -152,6 +191,24 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
   /shoppers:
+    get:
+      tags:
+        - Shoppers
+      operationId: findShopperByEmail
+      summary: Find a shopper by e-mail
+      description: FindShopperByEmail. The match is trimmed and lower-cased, like the uniqueness of the registration (case-insensitive). No shopper with that e-mail is 404 not-found; an absent or empty e-mail matches nothing and is 404 too. The e-mail is unique, so this is a lookup of one shopper (a single resource that merely contains its saved addresses), not a collection.
+      x-pagination-exempt: view
+      parameters:
+        - $ref: '#/components/parameters/ShopperEmail'
+      responses:
+        '200':
+          description: The shopper with its saved addresses.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shopper'
+        '404':
+          $ref: '#/components/responses/NotFound'
     post:
       tags:
         - Shoppers
@@ -169,6 +226,9 @@ paths:
       responses:
         '201':
           description: Shopper registered.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -176,13 +236,77 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
-          description: shopper-exists (ErrShopperExists).
+          description: shopper-exists (ErrShopperExists), or the Idempotency-Key was already used with a different request (idempotency-key-reused).
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /shoppers/{shopperId}:
+    get:
+      tags:
+        - Shoppers
+      operationId: getShopper
+      summary: Get a shopper profile with its saved addresses
+      description: GetShopper. The saved addresses are synthetic PII; they leave the service only on the shopper routes (and the restricted ship-to route of an order), never an event.
+      parameters:
+        - $ref: '#/components/parameters/ShopperId'
+      responses:
+        '200':
+          description: The shopper.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shopper'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /shoppers/{shopperId}/addresses:
+    post:
+      tags:
+        - Shoppers
+      operationId: addSavedAddress
+      summary: Save an address on a shopper
+      description: AddSavedAddress. The addressId derives from the Idempotency-Key, so a replay (even after the idempotency record expired) returns the same address. A shopper holds at most 20 saved addresses; the twenty-first is 422 too-many-addresses (ErrTooManyAddresses). A checkout can then name the address by its id (CheckoutRequest.shipToAddressId) and the address is copied into the order at placement.
+      parameters:
+        - $ref: '#/components/parameters/ShopperId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShipTo'
+      responses:
+        '201':
+          description: Address saved.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedAddress'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: No shopper with this id (not-found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: The Idempotency-Key was already used with a different request (idempotency-key-reused).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: The body breaks a value-object rule (validation-failed) or the twentieth address is already saved (too-many-addresses).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /healthz:
     get:
       tags:
@@ -226,17 +350,69 @@ components:
       description: The customer order id (aggregate root id, CloudEvents subject).
       schema:
         type: string
+    ShopperId:
+      name: shopperId
+      in: path
+      required: true
+      description: The shopper id (aggregate root id).
+      schema:
+        type: string
+        maxLength: 64
+    ShopperIdQuery:
+      name: shopperId
+      in: query
+      required: true
+      description: The shopper whose order history is listed.
+      schema:
+        type: string
+        maxLength: 64
+    ShopperEmail:
+      name: email
+      in: query
+      required: true
+      description: The e-mail to find; the match is trimmed and lower-cased.
+      schema:
+        type: string
+        format: email
+        maxLength: 254
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: The nextCursor of the previous page (opaque; anything that does not decode is 400 invalid-cursor).
+      schema:
+        type: string
+        maxLength: 512
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size, default 100, at most 500 (anything else is 400 invalid-limit).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: true
-      description: Client-chosen key (route, key; 24 hour TTL); a replay with the same body returns the stored response.
+      description: 'Client-generated UUID per logical submit, 1 to 128 printable ASCII characters (missing is 400 idempotency-key-required, malformed is 400 idempotency-key-invalid). A key is global and kept for 24 hours; the same key with the same method, path and body replays the stored answer with Idempotency-Replayed: true; the same key with anything else is 409 idempotency-key-reused.'
       schema:
         type: string
-        maxLength: 200
+        minLength: 1
+        maxLength: 128
+        pattern: ^[\x20-\x7E]+$
+  headers:
+    IdempotencyReplayed:
+      description: '"true" when the answer is the stored one of an earlier request with the same Idempotency-Key; absent on the first execution.'
+      schema:
+        type: string
+        enum:
+          - 'true'
   responses:
     BadRequest:
-      description: The request is not valid JSON, has an unknown field or contains a NUL character (malformed-request), or the Idempotency-Key header is missing (idempotency-key-required).
+      description: The request is not valid JSON, has an unknown field or contains a NUL character (malformed-request), or the Idempotency-Key header is missing (idempotency-key-required) or is not 1 to 128 printable ASCII characters (idempotency-key-invalid).
       content:
         application/problem+json:
           schema:
@@ -248,7 +424,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
     Unprocessable:
-      description: The body is well-formed JSON but breaks a value-object rule (validation-failed), or the Idempotency-Key was reused with another request (idempotency-key-reused).
+      description: The body is well-formed JSON but breaks a value-object rule (validation-failed).
       content:
         application/problem+json:
           schema:
@@ -319,9 +495,16 @@ components:
         deliverByLatest:
           type: string
           format: date-time
+        timeZone:
+          $ref: '#/components/schemas/TimeZone'
         expiresAt:
           type: string
           format: date-time
+    TimeZone:
+      type: string
+      maxLength: 64
+      example: America/Chicago
+      description: 'IANA time zone of the delivery station serving the destination: the local calendar deliverByEarliest and deliverByLatest belong to. Convert both instants into it before taking a date or an hour (e.g. 2026-10-31T14:00:00Z..2026-11-01T02:00:00Z in America/Chicago is the single day 2026-10-31, 9 AM to 9 PM). Copied from delivery-promise (its ADR 0011). Optional and additive (ADR 0009): omitted when unknown, i.e. for a group or offer delivery-promise stored before it carried the zone; read the window in UTC then.'
     Tier:
       type: string
       enum:
@@ -432,9 +615,9 @@ components:
             minimum: 1
     CheckoutRequest:
       type: object
+      description: 'The cart to place. Exactly one of shipTo and shipToAddressId is required: an inline address, or the addressId of an address saved on the shopper (AddSavedAddress), which is copied into the order at placement. Giving both, neither, an unknown id or the id of another shopper''s address is 422 validation-failed.'
       required:
         - shopperId
-        - shipTo
         - lines
         - groups
       properties:
@@ -442,6 +625,10 @@ components:
           type: string
         shipTo:
           $ref: '#/components/schemas/ShipTo'
+        shipToAddressId:
+          type: string
+          maxLength: 64
+          description: A saved address of this shopper; the address is copied into the order.
         lines:
           type: array
           minItems: 1
@@ -479,6 +666,8 @@ components:
         deliverByLatest:
           type: string
           format: date-time
+        timeZone:
+          $ref: '#/components/schemas/TimeZone'
         lineNos:
           type: array
           items:
@@ -586,6 +775,8 @@ components:
         deliverByLatest:
           type: string
           format: date-time
+        timeZone:
+          $ref: '#/components/schemas/TimeZone'
         atRiskReason:
           type: string
           description: From PromiseAtRisk.
@@ -650,8 +841,48 @@ components:
         savedAddresses:
           type: array
           maxItems: 20
+          description: Addresses saved with the registration; the service mints their ids.
           items:
             $ref: '#/components/schemas/ShipTo'
+    SavedAddress:
+      type: object
+      description: 'A saved address: the ShipTo the shopper sent plus the addressId the service minted (derived from the add''s Idempotency-Key). Synthetic PII, returned only on the shopper routes.'
+      required:
+        - addressId
+        - name
+        - line1
+        - city
+        - region
+        - postalCode
+        - countryCode
+      properties:
+        addressId:
+          type: string
+        name:
+          type: string
+          maxLength: 100
+        line1:
+          type: string
+          maxLength: 100
+        line2:
+          type: string
+          maxLength: 100
+        city:
+          type: string
+          maxLength: 100
+        region:
+          type: string
+          maxLength: 100
+        postalCode:
+          type: string
+          maxLength: 20
+        countryCode:
+          type: string
+          minLength: 2
+          maxLength: 2
+        phone:
+          type: string
+          maxLength: 40
     Shopper:
       type: object
       required:
@@ -659,6 +890,7 @@ components:
         - email
         - status
         - registeredAt
+        - savedAddresses
       properties:
         shopperId:
           type: string
@@ -672,3 +904,22 @@ components:
         registeredAt:
           type: string
           format: date-time
+        savedAddresses:
+          type: array
+          maxItems: 20
+          description: The shopper's saved addresses, oldest first; possibly empty.
+          items:
+            $ref: '#/components/schemas/SavedAddress'
+    CustomerOrderList:
+      type: object
+      description: One page of a shopper's order history, newest first; the items never carry the address.
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomerOrder'
+        nextCursor:
+          type: string
+          description: Present when a next page exists; pass it as cursor.

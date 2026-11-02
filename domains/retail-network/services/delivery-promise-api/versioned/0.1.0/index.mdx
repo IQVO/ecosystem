@@ -1,0 +1,76 @@
+---
+id: delivery-promise-api
+version: 0.1.0
+name: Delivery Promise API
+summary: >-
+  REST API of delivery-promise. Tells a shopper, before and at purchase, the
+  date a package will arrive, and makes that date true by construction: a
+  delivery offer is quoted only from a feasible witness path (node cutoff,
+  scheduled departures, delivery wave) that has remaining capacity, and a
+  promise holds that capacity until the order is placed or the hold expires.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Delivery Promise API
+badges:
+  - content: DeliveryOffers
+    textColor: blue
+    backgroundColor: blue
+  - content: Promises
+    textColor: blue
+    backgroundColor: blue
+  - content: PromiseBooks
+    textColor: blue
+    backgroundColor: blue
+  - content: PromisePolicy
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: delivery-promise-api-quoteDeliveryOffers
+    version: 0.1.0
+  - id: delivery-promise-api-getDeliveryOffer
+    version: 0.1.0
+  - id: delivery-promise-api-makePromise
+    version: 0.1.0
+  - id: delivery-promise-api-listPromisesByOrder
+    version: 0.1.0
+  - id: delivery-promise-api-getPromise
+    version: 0.1.0
+  - id: delivery-promise-api-listPromiseBooks
+    version: 0.1.0
+  - id: delivery-promise-api-confirmPromise
+    version: 0.1.0
+  - id: delivery-promise-api-cancelPromise
+    version: 0.1.0
+  - id: delivery-promise-api-publishPromisePolicy
+    version: 0.1.0
+  - id: delivery-promise-api-getCurrentPromisePolicy
+    version: 0.1.0
+---
+## Purpose
+Tells a shopper, before and at purchase, the date a package will arrive, and makes that date true by construction: a delivery offer is quoted only from a feasible witness path (node cutoff, scheduled departures, delivery wave) that has remaining capacity, and a promise holds that capacity until the order is placed or the hold expires. Judges every promise kept or broken.
+
+| | |
+|---|---|
+| Bounded context | `delivery-promise` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Core |
+| Tier | Retail Network, commerce tier |
+| Repository | [IQVO/delivery-promise](https://github.com/IQVO/delivery-promise) |
+| Events | [delivery-promise](/docs/services/delivery-promise) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+REST contract of the delivery-promise bounded context (Core, commerce tier) of the retail network, derived from retail-network-docs model/model.yaml (contexts[delivery-promise].rest) and the FINAL cross-context decisions (contracts-delta E7, E8, E9; gap register G8, G9, G19, G21, G22). The quote route is an Open Host Service for the storefront and an in-organization Customer/Supplier contract for customer-ordering; POST /promises POST /promises/\{promiseId\}:confirm and POST /promises/\{promiseId\}:cancel (checkout compensation) are called only by customer-ordering inside checkout. The promise hot path makes no synchronous call to any other context: every input is an event-fed local read model. No authentication, consistent with the fleet. No personal data appears in any schema: the destination is a postal prefix, never an address. Errors are RFC 9457 application/problem+json whose `type` is https://retailnetwork.example/problems/&lt;slug>. Shared slugs: not-found (404), illegal-transition (409), concurrent-update (409), validation-failed (422). Model slugs (kebab-case of the Err name): offer-not-quotable, promise-capacity-exhausted, book-closed, promise-hold-expired, promise-closed, revision-moves-earlier (409); group-spans-nodes, invalid-promise-terms, nominal-basis-not-allowed-for-tier (422). Infrastructure slug: idempotency-key-reused (422). Every state-changing POST takes Idempotency-Key; a repeat with the same key and body replays the first response for 24 hours.  
+
+## Architecture diagram
+<NodeGraph />

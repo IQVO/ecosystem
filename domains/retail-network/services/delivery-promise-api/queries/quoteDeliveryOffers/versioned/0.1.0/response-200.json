@@ -1,0 +1,174 @@
+{
+  "type": "object",
+  "required": [
+    "offers",
+    "unavailable"
+  ],
+  "properties": {
+    "offers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "offerId",
+          "state",
+          "groupNo",
+          "destinationPostalPrefix",
+          "tier",
+          "lines",
+          "window",
+          "witnessPath",
+          "basis",
+          "policyVersion",
+          "quotedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "offerId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "QUOTED",
+              "EXPIRED",
+              "CONSUMED"
+            ]
+          },
+          "destinationPostalPrefix": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "string",
+            "description": "Service tier (promise.Tier).",
+            "enum": [
+              "SAME_DAY",
+              "NEXT_DAY",
+              "TWO_DAY",
+              "STANDARD"
+            ]
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "catalogItemId",
+                "quantity"
+              ],
+              "properties": {
+                "catalogItemId": {
+                  "type": "string"
+                },
+                "quantity": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "window": {
+            "type": "object",
+            "required": [
+              "earliest",
+              "latest"
+            ],
+            "properties": {
+              "earliest": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "latest": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "witnessPath": {
+            "type": "object",
+            "description": "The node, pickup departure, departure legs and delivery wave that prove feasibility. A NOMINAL path (STANDARD only) carries no departure or wave ids: pickupDepartureId and deliveryWaveId are omitted and legs is empty (E8).",
+            "required": [
+              "nodeId",
+              "legs"
+            ],
+            "properties": {
+              "nodeId": {
+                "type": "string"
+              },
+              "pickupDepartureId": {
+                "type": "string"
+              },
+              "legs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "description": "departureId"
+                }
+              },
+              "deliveryWaveId": {
+                "type": "string"
+              }
+            }
+          },
+          "quotedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "min(quotedAt + offerTtl, the latest instant the witness pickup cutoff can still be met)."
+          },
+          "groupNo": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Quote-relative shipment group number (1 for a single-node cart)."
+          },
+          "basis": {
+            "type": "string",
+            "description": "Promise basis; NOMINAL only for STANDARD.",
+            "enum": [
+              "SCHEDULED",
+              "NOMINAL"
+            ]
+          },
+          "policyVersion": {
+            "type": "string",
+            "description": "The promise policy version the quote used (G8)."
+          }
+        }
+      },
+      "description": "One offer per (group, tier) with a feasible path, ordered by groupNo then tier."
+    },
+    "unavailable": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "tier",
+          "constraint"
+        ],
+        "properties": {
+          "tier": "[Circular]",
+          "constraint": {
+            "type": "string",
+            "description": "Why a tier has no offer. PAST_ORDER_DEADLINE: the tier's order deadline in the destination region has passed (G19).",
+            "enum": [
+              "DESTINATION_NOT_SERVED",
+              "ITEM_QUANTITY_NOT_AVAILABLE",
+              "DELIVERY_SLA_UNAVAILABLE",
+              "NODE_CAPACITY_EXHAUSTED",
+              "PAST_ORDER_DEADLINE"
+            ]
+          },
+          "groupNo": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The quote-relative shipment group the constraint applies to; omitted when it applies to the whole quote (DESTINATION_NOT_SERVED, ITEM_QUANTITY_NOT_AVAILABLE)."
+          }
+        }
+      }
+    }
+  },
+  "isSchema": true
+}
