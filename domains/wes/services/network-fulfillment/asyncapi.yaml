@@ -3221,8 +3221,13 @@ channels:
       This service's own integration topic (its `kafka.Topic` constant). Carries
       all three ProcessPath* event types plus CPTScheduleChanged (ADR 0010) as
       CloudEvents 1.0 (ADR 0016), dispatched by consumers on the full `type`.
-      Only published when EVENT_PUBLISHER=kafka; the default is a local log
-      publisher (no Kafka required for local dev).
+      Kafka message key = the CloudEvents `subject` (`path_id`, or `site_id` for
+      CPTScheduleChanged), hash-balanced. Every message carries the Kafka header
+      `content-type: application/cloudevents+json; charset=UTF-8` plus
+      `traceparent` / `tracestate` when raised inside a traced operation. Events
+      travel through the transactional outbox (Postgres is mandatory, ADR 0037);
+      there is no log or in-memory publisher in the shipped binary. The topic is
+      auto-created by the broker on first write.
     x-eventcatalog-channel-version: 1.0.0
     subscribe:
       operationId: consumeProcessPathEvents
@@ -3788,10 +3793,6 @@ channels:
                     identity); the full contents stay with inbound-receiving.
                   required:
                     - receipt_id
-                    - asn_number
-                    - sealed
-                    - lpn
-                    - contents
                     - received_at
                   properties:
                     receipt_id:
@@ -3799,17 +3800,40 @@ channels:
                       x-parser-schema-id: <anonymous-schema-168>
                     asn_number:
                       type: string
+                      description: >-
+                        Falls back to the Kafka key when empty; the event is
+                        rejected when both are empty.
                       x-parser-schema-id: <anonymous-schema-169>
                     sscc:
                       type: string
+                      description: >-
+                        At least one of `sscc` and `lpn` must be non-empty, else
+                        the event is rejected.
                       x-parser-schema-id: <anonymous-schema-170>
                     lpn:
                       type: string
                       x-parser-schema-id: <anonymous-schema-171>
+                    contents:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          gtin:
+                            type: string
+                            x-parser-schema-id: <anonymous-schema-174>
+                          qty:
+                            type: integer
+                            format: int64
+                            x-parser-schema-id: <anonymous-schema-175>
+                          condition:
+                            type: string
+                            x-parser-schema-id: <anonymous-schema-176>
+                        x-parser-schema-id: <anonymous-schema-173>
+                      x-parser-schema-id: <anonymous-schema-172>
                     received_at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-172>
+                      x-parser-schema-id: <anonymous-schema-177>
                   x-parser-schema-id: <anonymous-schema-167>
               x-parser-schema-id: ReceiptCartonReceivedEvent
             messageId: ReceiptCartonReceived
@@ -3845,37 +3869,37 @@ channels:
                   type: string
                   enum:
                     - '1.0'
-                  x-parser-schema-id: <anonymous-schema-173>
+                  x-parser-schema-id: <anonymous-schema-178>
                 id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-174>
+                  x-parser-schema-id: <anonymous-schema-179>
                 source:
                   type: string
                   enum:
                     - /warehouse/inbound-receiving
-                  x-parser-schema-id: <anonymous-schema-175>
+                  x-parser-schema-id: <anonymous-schema-180>
                 type:
                   type: string
                   const: >-
                     com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised
-                  x-parser-schema-id: <anonymous-schema-176>
+                  x-parser-schema-id: <anonymous-schema-181>
                 subject:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-177>
+                  x-parser-schema-id: <anonymous-schema-182>
                 time:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-178>
+                  x-parser-schema-id: <anonymous-schema-183>
                 datacontenttype:
                   type: string
                   enum:
                     - application/json
-                  x-parser-schema-id: <anonymous-schema-179>
+                  x-parser-schema-id: <anonymous-schema-184>
                 dataschema:
                   type: string
                   const: >-
                     urn:warehouse:inbound-receiving:events:CartonDiscrepancyRaised:v1
-                  x-parser-schema-id: <anonymous-schema-180>
+                  x-parser-schema-id: <anonymous-schema-185>
                 data:
                   type: object
                   required:
@@ -3885,24 +3909,24 @@ channels:
                   properties:
                     receipt_id:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-182>
+                      x-parser-schema-id: <anonymous-schema-187>
                     sscc:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-183>
+                      x-parser-schema-id: <anonymous-schema-188>
                     kind:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-184>
+                      x-parser-schema-id: <anonymous-schema-189>
                     expected:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-185>
+                      x-parser-schema-id: <anonymous-schema-190>
                     actual:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-186>
+                      x-parser-schema-id: <anonymous-schema-191>
                     at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-187>
-                  x-parser-schema-id: <anonymous-schema-181>
+                      x-parser-schema-id: <anonymous-schema-192>
+                  x-parser-schema-id: <anonymous-schema-186>
               x-parser-schema-id: CartonDiscrepancyRaisedEvent
             messageId: CartonDiscrepancyRaised
           - name: ReceiptClosed
@@ -3937,35 +3961,35 @@ channels:
                   type: string
                   enum:
                     - '1.0'
-                  x-parser-schema-id: <anonymous-schema-188>
+                  x-parser-schema-id: <anonymous-schema-193>
                 id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-189>
+                  x-parser-schema-id: <anonymous-schema-194>
                 source:
                   type: string
                   enum:
                     - /warehouse/inbound-receiving
-                  x-parser-schema-id: <anonymous-schema-190>
+                  x-parser-schema-id: <anonymous-schema-195>
                 type:
                   type: string
                   const: com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed
-                  x-parser-schema-id: <anonymous-schema-191>
+                  x-parser-schema-id: <anonymous-schema-196>
                 subject:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-192>
+                  x-parser-schema-id: <anonymous-schema-197>
                 time:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-193>
+                  x-parser-schema-id: <anonymous-schema-198>
                 datacontenttype:
                   type: string
                   enum:
                     - application/json
-                  x-parser-schema-id: <anonymous-schema-194>
+                  x-parser-schema-id: <anonymous-schema-199>
                 dataschema:
                   type: string
                   const: urn:warehouse:inbound-receiving:events:ReceiptClosed:v1
-                  x-parser-schema-id: <anonymous-schema-195>
+                  x-parser-schema-id: <anonymous-schema-200>
                 data:
                   type: object
                   required:
@@ -3976,21 +4000,21 @@ channels:
                   properties:
                     receipt_id:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-197>
+                      x-parser-schema-id: <anonymous-schema-202>
                     asn_number:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-198>
+                      x-parser-schema-id: <anonymous-schema-203>
                     closed_at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-199>
+                      x-parser-schema-id: <anonymous-schema-204>
                     discrepancies:
                       type: array
                       items:
                         type: object
-                        x-parser-schema-id: <anonymous-schema-201>
-                      x-parser-schema-id: <anonymous-schema-200>
-                  x-parser-schema-id: <anonymous-schema-196>
+                        x-parser-schema-id: <anonymous-schema-206>
+                      x-parser-schema-id: <anonymous-schema-205>
+                  x-parser-schema-id: <anonymous-schema-201>
               x-parser-schema-id: ReceiptClosedEvent
             messageId: ReceiptClosed
 components:
@@ -7498,10 +7522,6 @@ components:
               full contents stay with inbound-receiving.
             required:
               - receipt_id
-              - asn_number
-              - sealed
-              - lpn
-              - contents
               - received_at
             properties:
               receipt_id:
@@ -7509,17 +7529,40 @@ components:
                 x-parser-schema-id: <anonymous-schema-168>
               asn_number:
                 type: string
+                description: >-
+                  Falls back to the Kafka key when empty; the event is rejected
+                  when both are empty.
                 x-parser-schema-id: <anonymous-schema-169>
               sscc:
                 type: string
+                description: >-
+                  At least one of `sscc` and `lpn` must be non-empty, else the
+                  event is rejected.
                 x-parser-schema-id: <anonymous-schema-170>
               lpn:
                 type: string
                 x-parser-schema-id: <anonymous-schema-171>
+              contents:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    gtin:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-174>
+                    qty:
+                      type: integer
+                      format: int64
+                      x-parser-schema-id: <anonymous-schema-175>
+                    condition:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-176>
+                  x-parser-schema-id: <anonymous-schema-173>
+                x-parser-schema-id: <anonymous-schema-172>
               received_at:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-172>
+                x-parser-schema-id: <anonymous-schema-177>
             x-parser-schema-id: <anonymous-schema-167>
         x-parser-schema-id: ReceiptCartonReceivedEvent
       messageId: ReceiptCartonReceived
@@ -7556,36 +7599,36 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-173>
+            x-parser-schema-id: <anonymous-schema-178>
           id:
             type: string
-            x-parser-schema-id: <anonymous-schema-174>
+            x-parser-schema-id: <anonymous-schema-179>
           source:
             type: string
             enum:
               - /warehouse/inbound-receiving
-            x-parser-schema-id: <anonymous-schema-175>
+            x-parser-schema-id: <anonymous-schema-180>
           type:
             type: string
             const: >-
               com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised
-            x-parser-schema-id: <anonymous-schema-176>
+            x-parser-schema-id: <anonymous-schema-181>
           subject:
             type: string
-            x-parser-schema-id: <anonymous-schema-177>
+            x-parser-schema-id: <anonymous-schema-182>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-178>
+            x-parser-schema-id: <anonymous-schema-183>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-179>
+            x-parser-schema-id: <anonymous-schema-184>
           dataschema:
             type: string
             const: urn:warehouse:inbound-receiving:events:CartonDiscrepancyRaised:v1
-            x-parser-schema-id: <anonymous-schema-180>
+            x-parser-schema-id: <anonymous-schema-185>
           data:
             type: object
             required:
@@ -7595,24 +7638,24 @@ components:
             properties:
               receipt_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-182>
+                x-parser-schema-id: <anonymous-schema-187>
               sscc:
                 type: string
-                x-parser-schema-id: <anonymous-schema-183>
+                x-parser-schema-id: <anonymous-schema-188>
               kind:
                 type: string
-                x-parser-schema-id: <anonymous-schema-184>
+                x-parser-schema-id: <anonymous-schema-189>
               expected:
                 type: string
-                x-parser-schema-id: <anonymous-schema-185>
+                x-parser-schema-id: <anonymous-schema-190>
               actual:
                 type: string
-                x-parser-schema-id: <anonymous-schema-186>
+                x-parser-schema-id: <anonymous-schema-191>
               at:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-187>
-            x-parser-schema-id: <anonymous-schema-181>
+                x-parser-schema-id: <anonymous-schema-192>
+            x-parser-schema-id: <anonymous-schema-186>
         x-parser-schema-id: CartonDiscrepancyRaisedEvent
       messageId: CartonDiscrepancyRaised
     ReceiptClosed:
@@ -7648,35 +7691,35 @@ components:
             type: string
             enum:
               - '1.0'
-            x-parser-schema-id: <anonymous-schema-188>
+            x-parser-schema-id: <anonymous-schema-193>
           id:
             type: string
-            x-parser-schema-id: <anonymous-schema-189>
+            x-parser-schema-id: <anonymous-schema-194>
           source:
             type: string
             enum:
               - /warehouse/inbound-receiving
-            x-parser-schema-id: <anonymous-schema-190>
+            x-parser-schema-id: <anonymous-schema-195>
           type:
             type: string
             const: com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed
-            x-parser-schema-id: <anonymous-schema-191>
+            x-parser-schema-id: <anonymous-schema-196>
           subject:
             type: string
-            x-parser-schema-id: <anonymous-schema-192>
+            x-parser-schema-id: <anonymous-schema-197>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-193>
+            x-parser-schema-id: <anonymous-schema-198>
           datacontenttype:
             type: string
             enum:
               - application/json
-            x-parser-schema-id: <anonymous-schema-194>
+            x-parser-schema-id: <anonymous-schema-199>
           dataschema:
             type: string
             const: urn:warehouse:inbound-receiving:events:ReceiptClosed:v1
-            x-parser-schema-id: <anonymous-schema-195>
+            x-parser-schema-id: <anonymous-schema-200>
           data:
             type: object
             required:
@@ -7687,21 +7730,21 @@ components:
             properties:
               receipt_id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-197>
+                x-parser-schema-id: <anonymous-schema-202>
               asn_number:
                 type: string
-                x-parser-schema-id: <anonymous-schema-198>
+                x-parser-schema-id: <anonymous-schema-203>
               closed_at:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-199>
+                x-parser-schema-id: <anonymous-schema-204>
               discrepancies:
                 type: array
                 items:
                   type: object
-                  x-parser-schema-id: <anonymous-schema-201>
-                x-parser-schema-id: <anonymous-schema-200>
-            x-parser-schema-id: <anonymous-schema-196>
+                  x-parser-schema-id: <anonymous-schema-206>
+                x-parser-schema-id: <anonymous-schema-205>
+            x-parser-schema-id: <anonymous-schema-201>
         x-parser-schema-id: ReceiptClosedEvent
       messageId: ReceiptClosed
   schemas:
@@ -10286,10 +10329,6 @@ components:
             full contents stay with inbound-receiving.
           required:
             - receipt_id
-            - asn_number
-            - sealed
-            - lpn
-            - contents
             - received_at
           properties:
             receipt_id:
@@ -10297,17 +10336,40 @@ components:
               x-parser-schema-id: <anonymous-schema-168>
             asn_number:
               type: string
+              description: >-
+                Falls back to the Kafka key when empty; the event is rejected
+                when both are empty.
               x-parser-schema-id: <anonymous-schema-169>
             sscc:
               type: string
+              description: >-
+                At least one of `sscc` and `lpn` must be non-empty, else the
+                event is rejected.
               x-parser-schema-id: <anonymous-schema-170>
             lpn:
               type: string
               x-parser-schema-id: <anonymous-schema-171>
+            contents:
+              type: array
+              items:
+                type: object
+                properties:
+                  gtin:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-174>
+                  qty:
+                    type: integer
+                    format: int64
+                    x-parser-schema-id: <anonymous-schema-175>
+                  condition:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-176>
+                x-parser-schema-id: <anonymous-schema-173>
+              x-parser-schema-id: <anonymous-schema-172>
             received_at:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-172>
+              x-parser-schema-id: <anonymous-schema-177>
           x-parser-schema-id: <anonymous-schema-167>
       x-parser-schema-id: ReceiptCartonReceivedEvent
     CartonDiscrepancyRaisedEvent:
@@ -10331,35 +10393,35 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-173>
+          x-parser-schema-id: <anonymous-schema-178>
         id:
           type: string
-          x-parser-schema-id: <anonymous-schema-174>
+          x-parser-schema-id: <anonymous-schema-179>
         source:
           type: string
           enum:
             - /warehouse/inbound-receiving
-          x-parser-schema-id: <anonymous-schema-175>
+          x-parser-schema-id: <anonymous-schema-180>
         type:
           type: string
           const: com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised
-          x-parser-schema-id: <anonymous-schema-176>
+          x-parser-schema-id: <anonymous-schema-181>
         subject:
           type: string
-          x-parser-schema-id: <anonymous-schema-177>
+          x-parser-schema-id: <anonymous-schema-182>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-178>
+          x-parser-schema-id: <anonymous-schema-183>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-179>
+          x-parser-schema-id: <anonymous-schema-184>
         dataschema:
           type: string
           const: urn:warehouse:inbound-receiving:events:CartonDiscrepancyRaised:v1
-          x-parser-schema-id: <anonymous-schema-180>
+          x-parser-schema-id: <anonymous-schema-185>
         data:
           type: object
           required:
@@ -10369,24 +10431,24 @@ components:
           properties:
             receipt_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-182>
+              x-parser-schema-id: <anonymous-schema-187>
             sscc:
               type: string
-              x-parser-schema-id: <anonymous-schema-183>
+              x-parser-schema-id: <anonymous-schema-188>
             kind:
               type: string
-              x-parser-schema-id: <anonymous-schema-184>
+              x-parser-schema-id: <anonymous-schema-189>
             expected:
               type: string
-              x-parser-schema-id: <anonymous-schema-185>
+              x-parser-schema-id: <anonymous-schema-190>
             actual:
               type: string
-              x-parser-schema-id: <anonymous-schema-186>
+              x-parser-schema-id: <anonymous-schema-191>
             at:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-187>
-          x-parser-schema-id: <anonymous-schema-181>
+              x-parser-schema-id: <anonymous-schema-192>
+          x-parser-schema-id: <anonymous-schema-186>
       x-parser-schema-id: CartonDiscrepancyRaisedEvent
     ReceiptClosedEvent:
       type: object
@@ -10409,35 +10471,35 @@ components:
           type: string
           enum:
             - '1.0'
-          x-parser-schema-id: <anonymous-schema-188>
+          x-parser-schema-id: <anonymous-schema-193>
         id:
           type: string
-          x-parser-schema-id: <anonymous-schema-189>
+          x-parser-schema-id: <anonymous-schema-194>
         source:
           type: string
           enum:
             - /warehouse/inbound-receiving
-          x-parser-schema-id: <anonymous-schema-190>
+          x-parser-schema-id: <anonymous-schema-195>
         type:
           type: string
           const: com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed
-          x-parser-schema-id: <anonymous-schema-191>
+          x-parser-schema-id: <anonymous-schema-196>
         subject:
           type: string
-          x-parser-schema-id: <anonymous-schema-192>
+          x-parser-schema-id: <anonymous-schema-197>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-193>
+          x-parser-schema-id: <anonymous-schema-198>
         datacontenttype:
           type: string
           enum:
             - application/json
-          x-parser-schema-id: <anonymous-schema-194>
+          x-parser-schema-id: <anonymous-schema-199>
         dataschema:
           type: string
           const: urn:warehouse:inbound-receiving:events:ReceiptClosed:v1
-          x-parser-schema-id: <anonymous-schema-195>
+          x-parser-schema-id: <anonymous-schema-200>
         data:
           type: object
           required:
@@ -10448,21 +10510,21 @@ components:
           properties:
             receipt_id:
               type: string
-              x-parser-schema-id: <anonymous-schema-197>
+              x-parser-schema-id: <anonymous-schema-202>
             asn_number:
               type: string
-              x-parser-schema-id: <anonymous-schema-198>
+              x-parser-schema-id: <anonymous-schema-203>
             closed_at:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-199>
+              x-parser-schema-id: <anonymous-schema-204>
             discrepancies:
               type: array
               items:
                 type: object
-                x-parser-schema-id: <anonymous-schema-201>
-              x-parser-schema-id: <anonymous-schema-200>
-          x-parser-schema-id: <anonymous-schema-196>
+                x-parser-schema-id: <anonymous-schema-206>
+              x-parser-schema-id: <anonymous-schema-205>
+          x-parser-schema-id: <anonymous-schema-201>
       x-parser-schema-id: ReceiptClosedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

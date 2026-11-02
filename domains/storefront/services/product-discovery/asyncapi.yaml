@@ -39,11 +39,17 @@ info:
 
     **Processing.** CloudEvents 1.0 structured mode. Idempotent on the
     CloudEvents `id` (inbox table written in the same transaction as the
-    projection), dispatch on the full `type` string, unknown types ignored,
-    undecodable or unfoldable messages dead-lettered. Per-key monotonic guards
-    on top of the inbox: listing `asOf`, content `revision`, price `version`,
-    category tree `version`. A fact for an item the item master has not
-    announced yet creates an invisible stub row that CatalogItemCreated
+    projection), dispatch on the full `type` string, unknown types and messages
+    that are not valid CloudEvents are skipped (committed past and counted in
+    `discovery.kafka.poison_messages`), an event of a handled type whose `data`
+    cannot be decoded or folded (`shared.ErrInvalidFact`) is dead-lettered at
+    once without retry, and a transient failure is retried with capped
+    exponential backoff and dead-lettered after 5 handler attempts. The
+    dead-letter topic is `<topic>.dlq` (same key and value, headers
+    `x-dlq-source-topic`, `x-dlq-error`, `x-dlq-failed-at`). Per-key monotonic
+    guards on top of the inbox: listing `asOf`, content `revision`, price
+    `version`, category tree `version`. A fact for an item the item master has
+    not announced yet creates an invisible stub row that CatalogItemCreated
     completes (ADR 0002).
 servers:
   production:
@@ -537,12 +543,6 @@ channels:
                     listingId:
                       type: string
                       x-parser-schema-id: <anonymous-schema-31>
-                    nodeId:
-                      type: string
-                      x-parser-schema-id: <anonymous-schema-32>
-                    reason:
-                      type: string
-                      x-parser-schema-id: <anonymous-schema-33>
                   x-parser-schema-id: ListingRef
               x-parser-schema-id: <anonymous-schema-30>
           x-parser-schema-id: <anonymous-schema-29>
@@ -561,8 +561,6 @@ channels:
               dataschema: urn:retailnetwork:offer-availability:events:ListingSuppressed:v1
               data:
                 listingId: LST-000184
-                nodeId: NODE-VWS-FC01
-                reason: NODE_NOT_SELLABLE
         x-parser-unique-object-id: ListingSuppressed
       ListingRestored:
         name: ListingRestored
@@ -632,15 +630,9 @@ channels:
                     listingId:
                       type: string
                       x-parser-schema-id: <anonymous-schema-31>
-                    nodeId:
-                      type: string
-                      x-parser-schema-id: <anonymous-schema-32>
-                    reason:
-                      type: string
-                      x-parser-schema-id: <anonymous-schema-33>
                   x-parser-schema-id: ListingRef
-              x-parser-schema-id: <anonymous-schema-35>
-          x-parser-schema-id: <anonymous-schema-34>
+              x-parser-schema-id: <anonymous-schema-33>
+          x-parser-schema-id: <anonymous-schema-32>
         examples:
           - name: listingRestored
             summary: The node is active again.
@@ -656,7 +648,6 @@ channels:
               dataschema: urn:retailnetwork:offer-availability:events:ListingRestored:v1
               data:
                 listingId: LST-000184
-                nodeId: NODE-VWS-FC01
         x-parser-unique-object-id: ListingRestored
     x-eventcatalog-channel-version: 1.0.0
     x-parser-unique-object-id: offerAvailabilityEvents
@@ -665,8 +656,11 @@ channels:
     title: product-content integration topic (consumed)
     description: >-
       This service's integration topic. Written by the outbox relay; key =
-      subject (the catalogItemId or the categoryTreeId). Every message carries
-      the CloudEvents content-type header.
+      subject (the catalogItemId or the categoryTreeId; Hash balancer, so one
+      aggregate stays on one partition). Every message carries the Kafka header
+      `content-type: application/cloudevents+json; charset=UTF-8` and, when the
+      writing request or consumer span is sampled, the W3C
+      `traceparent`/`tracestate` headers stored with the outbox row.
     messages:
       ProductContentPublished:
         name: ProductContentPublished
@@ -737,20 +731,20 @@ channels:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-38>
+                      x-parser-schema-id: <anonymous-schema-36>
                     revision:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-39>
+                      x-parser-schema-id: <anonymous-schema-37>
                     description:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-38>
                     bullets:
                       type: array
                       items:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-42>
-                      x-parser-schema-id: <anonymous-schema-41>
+                        x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-39>
                     attributes:
                       type: array
                       items:
@@ -761,15 +755,15 @@ channels:
                         properties:
                           name:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-45>
+                            x-parser-schema-id: <anonymous-schema-43>
                           value:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-46>
+                            x-parser-schema-id: <anonymous-schema-44>
                           unit:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-47>
-                        x-parser-schema-id: <anonymous-schema-44>
-                      x-parser-schema-id: <anonymous-schema-43>
+                            x-parser-schema-id: <anonymous-schema-45>
+                        x-parser-schema-id: <anonymous-schema-42>
+                      x-parser-schema-id: <anonymous-schema-41>
                     media:
                       type: array
                       items:
@@ -782,27 +776,27 @@ channels:
                         properties:
                           mediaId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-50>
+                            x-parser-schema-id: <anonymous-schema-48>
                           url:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-51>
+                            x-parser-schema-id: <anonymous-schema-49>
                           altText:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-52>
+                            x-parser-schema-id: <anonymous-schema-50>
                           role:
                             type: string
-                            enum:
-                              - PRIMARY
-                              - GALLERY
-                            x-parser-schema-id: <anonymous-schema-53>
-                        x-parser-schema-id: <anonymous-schema-49>
-                      x-parser-schema-id: <anonymous-schema-48>
+                            description: >-
+                              Copied as is; PRIMARY marks the media shown as a
+                              hit's primaryMedia.
+                            x-parser-schema-id: <anonymous-schema-51>
+                        x-parser-schema-id: <anonymous-schema-47>
+                      x-parser-schema-id: <anonymous-schema-46>
                     primaryCategoryId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-54>
+                      x-parser-schema-id: <anonymous-schema-52>
                   x-parser-schema-id: ProductContentPublishedData
-              x-parser-schema-id: <anonymous-schema-37>
-          x-parser-schema-id: <anonymous-schema-36>
+              x-parser-schema-id: <anonymous-schema-35>
+          x-parser-schema-id: <anonymous-schema-34>
         examples:
           - name: productContentPublished
             summary: Revision 2 of the kettle's content.
@@ -902,14 +896,14 @@ channels:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-57>
+                      x-parser-schema-id: <anonymous-schema-55>
                     revision:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-58>
+                      x-parser-schema-id: <anonymous-schema-56>
                   x-parser-schema-id: ContentRetiredData
-              x-parser-schema-id: <anonymous-schema-56>
-          x-parser-schema-id: <anonymous-schema-55>
+              x-parser-schema-id: <anonymous-schema-54>
+          x-parser-schema-id: <anonymous-schema-53>
         examples:
           - name: productContentRetired
             summary: The kettle's content was retired.
@@ -998,7 +992,7 @@ channels:
                     version:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-59>
                     categories:
                       type: array
                       items:
@@ -1010,21 +1004,21 @@ channels:
                         properties:
                           categoryId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-64>
+                            x-parser-schema-id: <anonymous-schema-62>
                           parentId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-65>
+                            x-parser-schema-id: <anonymous-schema-63>
                           name:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-66>
+                            x-parser-schema-id: <anonymous-schema-64>
                           path:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-67>
-                        x-parser-schema-id: <anonymous-schema-63>
-                      x-parser-schema-id: <anonymous-schema-62>
+                            x-parser-schema-id: <anonymous-schema-65>
+                        x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-60>
                   x-parser-schema-id: CategoryTreePublishedData
-              x-parser-schema-id: <anonymous-schema-60>
-          x-parser-schema-id: <anonymous-schema-59>
+              x-parser-schema-id: <anonymous-schema-58>
+          x-parser-schema-id: <anonymous-schema-57>
         examples:
           - name: categoryTreePublished
             summary: Version 5 of the tree.
@@ -1131,29 +1125,25 @@ channels:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-70>
+                      x-parser-schema-id: <anonymous-schema-68>
                     currency:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-69>
                     listPriceMinor:
                       type: integer
                       format: int64
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-70>
                     effectivePriceMinor:
                       type: integer
                       format: int64
-                      x-parser-schema-id: <anonymous-schema-73>
-                    saleEndsAt:
-                      type: string
-                      format: date-time
-                      x-parser-schema-id: Instant
+                      x-parser-schema-id: <anonymous-schema-71>
                     version:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-74>
+                      x-parser-schema-id: <anonymous-schema-72>
                   x-parser-schema-id: ItemPriceChangedData
-              x-parser-schema-id: <anonymous-schema-69>
-          x-parser-schema-id: <anonymous-schema-68>
+              x-parser-schema-id: <anonymous-schema-67>
+          x-parser-schema-id: <anonymous-schema-66>
         examples:
           - name: itemPriceChanged
             summary: The kettle is on sale.
@@ -1171,7 +1161,6 @@ channels:
                 currency: BRL
                 listPriceMinor: 12990
                 effectivePriceMinor: 9990
-                saleEndsAt: '2026-10-31T23:59:59Z'
                 version: 7
         x-parser-unique-object-id: ItemPriceChanged
       ItemPriceWithdrawn:
@@ -1243,14 +1232,14 @@ channels:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-75>
                     version:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-78>
+                      x-parser-schema-id: <anonymous-schema-76>
                   x-parser-schema-id: ItemPriceWithdrawnData
-              x-parser-schema-id: <anonymous-schema-76>
-          x-parser-schema-id: <anonymous-schema-75>
+              x-parser-schema-id: <anonymous-schema-74>
+          x-parser-schema-id: <anonymous-schema-73>
         examples:
           - name: itemPriceWithdrawn
             summary: The kettle's price was withdrawn.
@@ -1761,12 +1750,6 @@ operations:
                       listingId:
                         type: string
                         x-parser-schema-id: <anonymous-schema-31>
-                      nodeId:
-                        type: string
-                        x-parser-schema-id: <anonymous-schema-32>
-                      reason:
-                        type: string
-                        x-parser-schema-id: <anonymous-schema-33>
                     x-parser-schema-id: ListingRef
                 x-parser-schema-id: <anonymous-schema-30>
             x-parser-schema-id: <anonymous-schema-29>
@@ -1786,8 +1769,6 @@ operations:
                   urn:retailnetwork:offer-availability:events:ListingSuppressed:v1
                 data:
                   listingId: LST-000184
-                  nodeId: NODE-VWS-FC01
-                  reason: NODE_NOT_SELLABLE
           x-parser-unique-object-id: ListingSuppressed
         ListingRestored:
           name: ListingRestored
@@ -1857,15 +1838,9 @@ operations:
                       listingId:
                         type: string
                         x-parser-schema-id: <anonymous-schema-31>
-                      nodeId:
-                        type: string
-                        x-parser-schema-id: <anonymous-schema-32>
-                      reason:
-                        type: string
-                        x-parser-schema-id: <anonymous-schema-33>
                     x-parser-schema-id: ListingRef
-                x-parser-schema-id: <anonymous-schema-35>
-            x-parser-schema-id: <anonymous-schema-34>
+                x-parser-schema-id: <anonymous-schema-33>
+            x-parser-schema-id: <anonymous-schema-32>
           examples:
             - name: listingRestored
               summary: The node is active again.
@@ -1881,7 +1856,6 @@ operations:
                 dataschema: urn:retailnetwork:offer-availability:events:ListingRestored:v1
                 data:
                   listingId: LST-000184
-                  nodeId: NODE-VWS-FC01
           x-parser-unique-object-id: ListingRestored
       x-eventcatalog-channel-version: 1.0.0
       x-parser-unique-object-id: offerAvailabilityEvents
@@ -2352,12 +2326,6 @@ operations:
                     listingId:
                       type: string
                       x-parser-schema-id: <anonymous-schema-31>
-                    nodeId:
-                      type: string
-                      x-parser-schema-id: <anonymous-schema-32>
-                    reason:
-                      type: string
-                      x-parser-schema-id: <anonymous-schema-33>
                   x-parser-schema-id: ListingRef
               x-parser-schema-id: <anonymous-schema-30>
           x-parser-schema-id: <anonymous-schema-29>
@@ -2376,8 +2344,6 @@ operations:
               dataschema: urn:retailnetwork:offer-availability:events:ListingSuppressed:v1
               data:
                 listingId: LST-000184
-                nodeId: NODE-VWS-FC01
-                reason: NODE_NOT_SELLABLE
         x-parser-unique-object-id: ListingSuppressed
       - name: ListingRestored
         title: ListingRestored
@@ -2446,15 +2412,9 @@ operations:
                     listingId:
                       type: string
                       x-parser-schema-id: <anonymous-schema-31>
-                    nodeId:
-                      type: string
-                      x-parser-schema-id: <anonymous-schema-32>
-                    reason:
-                      type: string
-                      x-parser-schema-id: <anonymous-schema-33>
                   x-parser-schema-id: ListingRef
-              x-parser-schema-id: <anonymous-schema-35>
-          x-parser-schema-id: <anonymous-schema-34>
+              x-parser-schema-id: <anonymous-schema-33>
+          x-parser-schema-id: <anonymous-schema-32>
         examples:
           - name: listingRestored
             summary: The node is active again.
@@ -2470,7 +2430,6 @@ operations:
               dataschema: urn:retailnetwork:offer-availability:events:ListingRestored:v1
               data:
                 listingId: LST-000184
-                nodeId: NODE-VWS-FC01
         x-parser-unique-object-id: ListingRestored
     x-parser-unique-object-id: receiveOfferAvailabilityEvents
   receiveProductContentEvents:
@@ -2485,8 +2444,11 @@ operations:
       title: product-content integration topic (consumed)
       description: >-
         This service's integration topic. Written by the outbox relay; key =
-        subject (the catalogItemId or the categoryTreeId). Every message carries
-        the CloudEvents content-type header.
+        subject (the catalogItemId or the categoryTreeId; Hash balancer, so one
+        aggregate stays on one partition). Every message carries the Kafka
+        header `content-type: application/cloudevents+json; charset=UTF-8` and,
+        when the writing request or consumer span is sampled, the W3C
+        `traceparent`/`tracestate` headers stored with the outbox row.
       messages:
         ProductContentPublished:
           name: ProductContentPublished
@@ -2557,20 +2519,20 @@ operations:
                     properties:
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-38>
+                        x-parser-schema-id: <anonymous-schema-36>
                       revision:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-39>
+                        x-parser-schema-id: <anonymous-schema-37>
                       description:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-40>
+                        x-parser-schema-id: <anonymous-schema-38>
                       bullets:
                         type: array
                         items:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-42>
-                        x-parser-schema-id: <anonymous-schema-41>
+                          x-parser-schema-id: <anonymous-schema-40>
+                        x-parser-schema-id: <anonymous-schema-39>
                       attributes:
                         type: array
                         items:
@@ -2581,15 +2543,15 @@ operations:
                           properties:
                             name:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-45>
+                              x-parser-schema-id: <anonymous-schema-43>
                             value:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-46>
+                              x-parser-schema-id: <anonymous-schema-44>
                             unit:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-47>
-                          x-parser-schema-id: <anonymous-schema-44>
-                        x-parser-schema-id: <anonymous-schema-43>
+                              x-parser-schema-id: <anonymous-schema-45>
+                          x-parser-schema-id: <anonymous-schema-42>
+                        x-parser-schema-id: <anonymous-schema-41>
                       media:
                         type: array
                         items:
@@ -2602,27 +2564,27 @@ operations:
                           properties:
                             mediaId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-50>
+                              x-parser-schema-id: <anonymous-schema-48>
                             url:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-51>
+                              x-parser-schema-id: <anonymous-schema-49>
                             altText:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-52>
+                              x-parser-schema-id: <anonymous-schema-50>
                             role:
                               type: string
-                              enum:
-                                - PRIMARY
-                                - GALLERY
-                              x-parser-schema-id: <anonymous-schema-53>
-                          x-parser-schema-id: <anonymous-schema-49>
-                        x-parser-schema-id: <anonymous-schema-48>
+                              description: >-
+                                Copied as is; PRIMARY marks the media shown as a
+                                hit's primaryMedia.
+                              x-parser-schema-id: <anonymous-schema-51>
+                          x-parser-schema-id: <anonymous-schema-47>
+                        x-parser-schema-id: <anonymous-schema-46>
                       primaryCategoryId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-54>
+                        x-parser-schema-id: <anonymous-schema-52>
                     x-parser-schema-id: ProductContentPublishedData
-                x-parser-schema-id: <anonymous-schema-37>
-            x-parser-schema-id: <anonymous-schema-36>
+                x-parser-schema-id: <anonymous-schema-35>
+            x-parser-schema-id: <anonymous-schema-34>
           examples:
             - name: productContentPublished
               summary: Revision 2 of the kettle's content.
@@ -2722,14 +2684,14 @@ operations:
                     properties:
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-57>
+                        x-parser-schema-id: <anonymous-schema-55>
                       revision:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-58>
+                        x-parser-schema-id: <anonymous-schema-56>
                     x-parser-schema-id: ContentRetiredData
-                x-parser-schema-id: <anonymous-schema-56>
-            x-parser-schema-id: <anonymous-schema-55>
+                x-parser-schema-id: <anonymous-schema-54>
+            x-parser-schema-id: <anonymous-schema-53>
           examples:
             - name: productContentRetired
               summary: The kettle's content was retired.
@@ -2818,7 +2780,7 @@ operations:
                       version:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-61>
+                        x-parser-schema-id: <anonymous-schema-59>
                       categories:
                         type: array
                         items:
@@ -2830,21 +2792,21 @@ operations:
                           properties:
                             categoryId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-64>
+                              x-parser-schema-id: <anonymous-schema-62>
                             parentId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-65>
+                              x-parser-schema-id: <anonymous-schema-63>
                             name:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-66>
+                              x-parser-schema-id: <anonymous-schema-64>
                             path:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-67>
-                          x-parser-schema-id: <anonymous-schema-63>
-                        x-parser-schema-id: <anonymous-schema-62>
+                              x-parser-schema-id: <anonymous-schema-65>
+                          x-parser-schema-id: <anonymous-schema-61>
+                        x-parser-schema-id: <anonymous-schema-60>
                     x-parser-schema-id: CategoryTreePublishedData
-                x-parser-schema-id: <anonymous-schema-60>
-            x-parser-schema-id: <anonymous-schema-59>
+                x-parser-schema-id: <anonymous-schema-58>
+            x-parser-schema-id: <anonymous-schema-57>
           examples:
             - name: categoryTreePublished
               summary: Version 5 of the tree.
@@ -2941,20 +2903,20 @@ operations:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-38>
+                      x-parser-schema-id: <anonymous-schema-36>
                     revision:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-39>
+                      x-parser-schema-id: <anonymous-schema-37>
                     description:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-38>
                     bullets:
                       type: array
                       items:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-42>
-                      x-parser-schema-id: <anonymous-schema-41>
+                        x-parser-schema-id: <anonymous-schema-40>
+                      x-parser-schema-id: <anonymous-schema-39>
                     attributes:
                       type: array
                       items:
@@ -2965,15 +2927,15 @@ operations:
                         properties:
                           name:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-45>
+                            x-parser-schema-id: <anonymous-schema-43>
                           value:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-46>
+                            x-parser-schema-id: <anonymous-schema-44>
                           unit:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-47>
-                        x-parser-schema-id: <anonymous-schema-44>
-                      x-parser-schema-id: <anonymous-schema-43>
+                            x-parser-schema-id: <anonymous-schema-45>
+                        x-parser-schema-id: <anonymous-schema-42>
+                      x-parser-schema-id: <anonymous-schema-41>
                     media:
                       type: array
                       items:
@@ -2986,27 +2948,27 @@ operations:
                         properties:
                           mediaId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-50>
+                            x-parser-schema-id: <anonymous-schema-48>
                           url:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-51>
+                            x-parser-schema-id: <anonymous-schema-49>
                           altText:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-52>
+                            x-parser-schema-id: <anonymous-schema-50>
                           role:
                             type: string
-                            enum:
-                              - PRIMARY
-                              - GALLERY
-                            x-parser-schema-id: <anonymous-schema-53>
-                        x-parser-schema-id: <anonymous-schema-49>
-                      x-parser-schema-id: <anonymous-schema-48>
+                            description: >-
+                              Copied as is; PRIMARY marks the media shown as a
+                              hit's primaryMedia.
+                            x-parser-schema-id: <anonymous-schema-51>
+                        x-parser-schema-id: <anonymous-schema-47>
+                      x-parser-schema-id: <anonymous-schema-46>
                     primaryCategoryId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-54>
+                      x-parser-schema-id: <anonymous-schema-52>
                   x-parser-schema-id: ProductContentPublishedData
-              x-parser-schema-id: <anonymous-schema-37>
-          x-parser-schema-id: <anonymous-schema-36>
+              x-parser-schema-id: <anonymous-schema-35>
+          x-parser-schema-id: <anonymous-schema-34>
         examples:
           - name: productContentPublished
             summary: Revision 2 of the kettle's content.
@@ -3105,14 +3067,14 @@ operations:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-57>
+                      x-parser-schema-id: <anonymous-schema-55>
                     revision:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-58>
+                      x-parser-schema-id: <anonymous-schema-56>
                   x-parser-schema-id: ContentRetiredData
-              x-parser-schema-id: <anonymous-schema-56>
-          x-parser-schema-id: <anonymous-schema-55>
+              x-parser-schema-id: <anonymous-schema-54>
+          x-parser-schema-id: <anonymous-schema-53>
         examples:
           - name: productContentRetired
             summary: The kettle's content was retired.
@@ -3200,7 +3162,7 @@ operations:
                     version:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-59>
                     categories:
                       type: array
                       items:
@@ -3212,21 +3174,21 @@ operations:
                         properties:
                           categoryId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-64>
+                            x-parser-schema-id: <anonymous-schema-62>
                           parentId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-65>
+                            x-parser-schema-id: <anonymous-schema-63>
                           name:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-66>
+                            x-parser-schema-id: <anonymous-schema-64>
                           path:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-67>
-                        x-parser-schema-id: <anonymous-schema-63>
-                      x-parser-schema-id: <anonymous-schema-62>
+                            x-parser-schema-id: <anonymous-schema-65>
+                        x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-60>
                   x-parser-schema-id: CategoryTreePublishedData
-              x-parser-schema-id: <anonymous-schema-60>
-          x-parser-schema-id: <anonymous-schema-59>
+              x-parser-schema-id: <anonymous-schema-58>
+          x-parser-schema-id: <anonymous-schema-57>
         examples:
           - name: categoryTreePublished
             summary: Version 5 of the tree.
@@ -3339,29 +3301,25 @@ operations:
                     properties:
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-70>
+                        x-parser-schema-id: <anonymous-schema-68>
                       currency:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-71>
+                        x-parser-schema-id: <anonymous-schema-69>
                       listPriceMinor:
                         type: integer
                         format: int64
-                        x-parser-schema-id: <anonymous-schema-72>
+                        x-parser-schema-id: <anonymous-schema-70>
                       effectivePriceMinor:
                         type: integer
                         format: int64
-                        x-parser-schema-id: <anonymous-schema-73>
-                      saleEndsAt:
-                        type: string
-                        format: date-time
-                        x-parser-schema-id: Instant
+                        x-parser-schema-id: <anonymous-schema-71>
                       version:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-74>
+                        x-parser-schema-id: <anonymous-schema-72>
                     x-parser-schema-id: ItemPriceChangedData
-                x-parser-schema-id: <anonymous-schema-69>
-            x-parser-schema-id: <anonymous-schema-68>
+                x-parser-schema-id: <anonymous-schema-67>
+            x-parser-schema-id: <anonymous-schema-66>
           examples:
             - name: itemPriceChanged
               summary: The kettle is on sale.
@@ -3380,7 +3338,6 @@ operations:
                   currency: BRL
                   listPriceMinor: 12990
                   effectivePriceMinor: 9990
-                  saleEndsAt: '2026-10-31T23:59:59Z'
                   version: 7
           x-parser-unique-object-id: ItemPriceChanged
         ItemPriceWithdrawn:
@@ -3452,14 +3409,14 @@ operations:
                     properties:
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-77>
+                        x-parser-schema-id: <anonymous-schema-75>
                       version:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-78>
+                        x-parser-schema-id: <anonymous-schema-76>
                     x-parser-schema-id: ItemPriceWithdrawnData
-                x-parser-schema-id: <anonymous-schema-76>
-            x-parser-schema-id: <anonymous-schema-75>
+                x-parser-schema-id: <anonymous-schema-74>
+            x-parser-schema-id: <anonymous-schema-73>
           examples:
             - name: itemPriceWithdrawn
               summary: The kettle's price was withdrawn.
@@ -3551,29 +3508,25 @@ operations:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-70>
+                      x-parser-schema-id: <anonymous-schema-68>
                     currency:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-69>
                     listPriceMinor:
                       type: integer
                       format: int64
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-70>
                     effectivePriceMinor:
                       type: integer
                       format: int64
-                      x-parser-schema-id: <anonymous-schema-73>
-                    saleEndsAt:
-                      type: string
-                      format: date-time
-                      x-parser-schema-id: Instant
+                      x-parser-schema-id: <anonymous-schema-71>
                     version:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-74>
+                      x-parser-schema-id: <anonymous-schema-72>
                   x-parser-schema-id: ItemPriceChangedData
-              x-parser-schema-id: <anonymous-schema-69>
-          x-parser-schema-id: <anonymous-schema-68>
+              x-parser-schema-id: <anonymous-schema-67>
+          x-parser-schema-id: <anonymous-schema-66>
         examples:
           - name: itemPriceChanged
             summary: The kettle is on sale.
@@ -3591,7 +3544,6 @@ operations:
                 currency: BRL
                 listPriceMinor: 12990
                 effectivePriceMinor: 9990
-                saleEndsAt: '2026-10-31T23:59:59Z'
                 version: 7
         x-parser-unique-object-id: ItemPriceChanged
       - name: ItemPriceWithdrawn
@@ -3662,14 +3614,14 @@ operations:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-75>
                     version:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-78>
+                      x-parser-schema-id: <anonymous-schema-76>
                   x-parser-schema-id: ItemPriceWithdrawnData
-              x-parser-schema-id: <anonymous-schema-76>
-          x-parser-schema-id: <anonymous-schema-75>
+              x-parser-schema-id: <anonymous-schema-74>
+          x-parser-schema-id: <anonymous-schema-73>
         examples:
           - name: itemPriceWithdrawn
             summary: The kettle's price was withdrawn.
@@ -4160,12 +4112,6 @@ components:
                   listingId:
                     type: string
                     x-parser-schema-id: <anonymous-schema-31>
-                  nodeId:
-                    type: string
-                    x-parser-schema-id: <anonymous-schema-32>
-                  reason:
-                    type: string
-                    x-parser-schema-id: <anonymous-schema-33>
                 x-parser-schema-id: ListingRef
             x-parser-schema-id: <anonymous-schema-30>
         x-parser-schema-id: <anonymous-schema-29>
@@ -4184,8 +4130,6 @@ components:
             dataschema: urn:retailnetwork:offer-availability:events:ListingSuppressed:v1
             data:
               listingId: LST-000184
-              nodeId: NODE-VWS-FC01
-              reason: NODE_NOT_SELLABLE
       x-parser-unique-object-id: ListingSuppressed
     ListingRestored:
       name: ListingRestored
@@ -4255,15 +4199,9 @@ components:
                   listingId:
                     type: string
                     x-parser-schema-id: <anonymous-schema-31>
-                  nodeId:
-                    type: string
-                    x-parser-schema-id: <anonymous-schema-32>
-                  reason:
-                    type: string
-                    x-parser-schema-id: <anonymous-schema-33>
                 x-parser-schema-id: ListingRef
-            x-parser-schema-id: <anonymous-schema-35>
-        x-parser-schema-id: <anonymous-schema-34>
+            x-parser-schema-id: <anonymous-schema-33>
+        x-parser-schema-id: <anonymous-schema-32>
       examples:
         - name: listingRestored
           summary: The node is active again.
@@ -4279,7 +4217,6 @@ components:
             dataschema: urn:retailnetwork:offer-availability:events:ListingRestored:v1
             data:
               listingId: LST-000184
-              nodeId: NODE-VWS-FC01
       x-parser-unique-object-id: ListingRestored
     ProductContentPublished:
       name: ProductContentPublished
@@ -4350,20 +4287,20 @@ components:
                 properties:
                   catalogItemId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-38>
+                    x-parser-schema-id: <anonymous-schema-36>
                   revision:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-39>
+                    x-parser-schema-id: <anonymous-schema-37>
                   description:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-40>
+                    x-parser-schema-id: <anonymous-schema-38>
                   bullets:
                     type: array
                     items:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-42>
-                    x-parser-schema-id: <anonymous-schema-41>
+                      x-parser-schema-id: <anonymous-schema-40>
+                    x-parser-schema-id: <anonymous-schema-39>
                   attributes:
                     type: array
                     items:
@@ -4374,15 +4311,15 @@ components:
                       properties:
                         name:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-45>
+                          x-parser-schema-id: <anonymous-schema-43>
                         value:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-46>
+                          x-parser-schema-id: <anonymous-schema-44>
                         unit:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-47>
-                      x-parser-schema-id: <anonymous-schema-44>
-                    x-parser-schema-id: <anonymous-schema-43>
+                          x-parser-schema-id: <anonymous-schema-45>
+                      x-parser-schema-id: <anonymous-schema-42>
+                    x-parser-schema-id: <anonymous-schema-41>
                   media:
                     type: array
                     items:
@@ -4395,27 +4332,27 @@ components:
                       properties:
                         mediaId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-50>
+                          x-parser-schema-id: <anonymous-schema-48>
                         url:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-51>
+                          x-parser-schema-id: <anonymous-schema-49>
                         altText:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-52>
+                          x-parser-schema-id: <anonymous-schema-50>
                         role:
                           type: string
-                          enum:
-                            - PRIMARY
-                            - GALLERY
-                          x-parser-schema-id: <anonymous-schema-53>
-                      x-parser-schema-id: <anonymous-schema-49>
-                    x-parser-schema-id: <anonymous-schema-48>
+                          description: >-
+                            Copied as is; PRIMARY marks the media shown as a
+                            hit's primaryMedia.
+                          x-parser-schema-id: <anonymous-schema-51>
+                      x-parser-schema-id: <anonymous-schema-47>
+                    x-parser-schema-id: <anonymous-schema-46>
                   primaryCategoryId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-54>
+                    x-parser-schema-id: <anonymous-schema-52>
                 x-parser-schema-id: ProductContentPublishedData
-            x-parser-schema-id: <anonymous-schema-37>
-        x-parser-schema-id: <anonymous-schema-36>
+            x-parser-schema-id: <anonymous-schema-35>
+        x-parser-schema-id: <anonymous-schema-34>
       examples:
         - name: productContentPublished
           summary: Revision 2 of the kettle's content.
@@ -4515,14 +4452,14 @@ components:
                 properties:
                   catalogItemId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-57>
+                    x-parser-schema-id: <anonymous-schema-55>
                   revision:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-58>
+                    x-parser-schema-id: <anonymous-schema-56>
                 x-parser-schema-id: ContentRetiredData
-            x-parser-schema-id: <anonymous-schema-56>
-        x-parser-schema-id: <anonymous-schema-55>
+            x-parser-schema-id: <anonymous-schema-54>
+        x-parser-schema-id: <anonymous-schema-53>
       examples:
         - name: productContentRetired
           summary: The kettle's content was retired.
@@ -4610,7 +4547,7 @@ components:
                   version:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-61>
+                    x-parser-schema-id: <anonymous-schema-59>
                   categories:
                     type: array
                     items:
@@ -4622,21 +4559,21 @@ components:
                       properties:
                         categoryId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-64>
+                          x-parser-schema-id: <anonymous-schema-62>
                         parentId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-65>
+                          x-parser-schema-id: <anonymous-schema-63>
                         name:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-66>
+                          x-parser-schema-id: <anonymous-schema-64>
                         path:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-67>
-                      x-parser-schema-id: <anonymous-schema-63>
-                    x-parser-schema-id: <anonymous-schema-62>
+                          x-parser-schema-id: <anonymous-schema-65>
+                      x-parser-schema-id: <anonymous-schema-61>
+                    x-parser-schema-id: <anonymous-schema-60>
                 x-parser-schema-id: CategoryTreePublishedData
-            x-parser-schema-id: <anonymous-schema-60>
-        x-parser-schema-id: <anonymous-schema-59>
+            x-parser-schema-id: <anonymous-schema-58>
+        x-parser-schema-id: <anonymous-schema-57>
       examples:
         - name: categoryTreePublished
           summary: Version 5 of the tree.
@@ -4732,29 +4669,25 @@ components:
                 properties:
                   catalogItemId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-70>
+                    x-parser-schema-id: <anonymous-schema-68>
                   currency:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-71>
+                    x-parser-schema-id: <anonymous-schema-69>
                   listPriceMinor:
                     type: integer
                     format: int64
-                    x-parser-schema-id: <anonymous-schema-72>
+                    x-parser-schema-id: <anonymous-schema-70>
                   effectivePriceMinor:
                     type: integer
                     format: int64
-                    x-parser-schema-id: <anonymous-schema-73>
-                  saleEndsAt:
-                    type: string
-                    format: date-time
-                    x-parser-schema-id: Instant
+                    x-parser-schema-id: <anonymous-schema-71>
                   version:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-74>
+                    x-parser-schema-id: <anonymous-schema-72>
                 x-parser-schema-id: ItemPriceChangedData
-            x-parser-schema-id: <anonymous-schema-69>
-        x-parser-schema-id: <anonymous-schema-68>
+            x-parser-schema-id: <anonymous-schema-67>
+        x-parser-schema-id: <anonymous-schema-66>
       examples:
         - name: itemPriceChanged
           summary: The kettle is on sale.
@@ -4772,7 +4705,6 @@ components:
               currency: BRL
               listPriceMinor: 12990
               effectivePriceMinor: 9990
-              saleEndsAt: '2026-10-31T23:59:59Z'
               version: 7
       x-parser-unique-object-id: ItemPriceChanged
     ItemPriceWithdrawn:
@@ -4843,14 +4775,14 @@ components:
                 properties:
                   catalogItemId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-77>
+                    x-parser-schema-id: <anonymous-schema-75>
                   version:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-78>
+                    x-parser-schema-id: <anonymous-schema-76>
                 x-parser-schema-id: ItemPriceWithdrawnData
-            x-parser-schema-id: <anonymous-schema-76>
-        x-parser-schema-id: <anonymous-schema-75>
+            x-parser-schema-id: <anonymous-schema-74>
+        x-parser-schema-id: <anonymous-schema-73>
       examples:
         - name: itemPriceWithdrawn
           summary: The kettle's price was withdrawn.
@@ -4934,12 +4866,6 @@ components:
         listingId:
           type: string
           x-parser-schema-id: <anonymous-schema-31>
-        nodeId:
-          type: string
-          x-parser-schema-id: <anonymous-schema-32>
-        reason:
-          type: string
-          x-parser-schema-id: <anonymous-schema-33>
       x-parser-schema-id: ListingRef
     CatalogItemCreatedData:
       type: object
@@ -5011,11 +4937,11 @@ components:
       properties:
         catalogItemId:
           type: string
-          x-parser-schema-id: <anonymous-schema-57>
+          x-parser-schema-id: <anonymous-schema-55>
         revision:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-58>
+          x-parser-schema-id: <anonymous-schema-56>
       x-parser-schema-id: ContentRetiredData
     ProductContentPublishedData:
       type: object
@@ -5025,20 +4951,20 @@ components:
       properties:
         catalogItemId:
           type: string
-          x-parser-schema-id: <anonymous-schema-38>
+          x-parser-schema-id: <anonymous-schema-36>
         revision:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-39>
+          x-parser-schema-id: <anonymous-schema-37>
         description:
           type: string
-          x-parser-schema-id: <anonymous-schema-40>
+          x-parser-schema-id: <anonymous-schema-38>
         bullets:
           type: array
           items:
             type: string
-            x-parser-schema-id: <anonymous-schema-42>
-          x-parser-schema-id: <anonymous-schema-41>
+            x-parser-schema-id: <anonymous-schema-40>
+          x-parser-schema-id: <anonymous-schema-39>
         attributes:
           type: array
           items:
@@ -5049,15 +4975,15 @@ components:
             properties:
               name:
                 type: string
-                x-parser-schema-id: <anonymous-schema-45>
+                x-parser-schema-id: <anonymous-schema-43>
               value:
                 type: string
-                x-parser-schema-id: <anonymous-schema-46>
+                x-parser-schema-id: <anonymous-schema-44>
               unit:
                 type: string
-                x-parser-schema-id: <anonymous-schema-47>
-            x-parser-schema-id: <anonymous-schema-44>
-          x-parser-schema-id: <anonymous-schema-43>
+                x-parser-schema-id: <anonymous-schema-45>
+            x-parser-schema-id: <anonymous-schema-42>
+          x-parser-schema-id: <anonymous-schema-41>
         media:
           type: array
           items:
@@ -5070,24 +4996,24 @@ components:
             properties:
               mediaId:
                 type: string
-                x-parser-schema-id: <anonymous-schema-50>
+                x-parser-schema-id: <anonymous-schema-48>
               url:
                 type: string
-                x-parser-schema-id: <anonymous-schema-51>
+                x-parser-schema-id: <anonymous-schema-49>
               altText:
                 type: string
-                x-parser-schema-id: <anonymous-schema-52>
+                x-parser-schema-id: <anonymous-schema-50>
               role:
                 type: string
-                enum:
-                  - PRIMARY
-                  - GALLERY
-                x-parser-schema-id: <anonymous-schema-53>
-            x-parser-schema-id: <anonymous-schema-49>
-          x-parser-schema-id: <anonymous-schema-48>
+                description: >-
+                  Copied as is; PRIMARY marks the media shown as a hit's
+                  primaryMedia.
+                x-parser-schema-id: <anonymous-schema-51>
+            x-parser-schema-id: <anonymous-schema-47>
+          x-parser-schema-id: <anonymous-schema-46>
         primaryCategoryId:
           type: string
-          x-parser-schema-id: <anonymous-schema-54>
+          x-parser-schema-id: <anonymous-schema-52>
       x-parser-schema-id: ProductContentPublishedData
     CategoryTreePublishedData:
       type: object
@@ -5098,7 +5024,7 @@ components:
         version:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-61>
+          x-parser-schema-id: <anonymous-schema-59>
         categories:
           type: array
           items:
@@ -5110,18 +5036,18 @@ components:
             properties:
               categoryId:
                 type: string
-                x-parser-schema-id: <anonymous-schema-64>
+                x-parser-schema-id: <anonymous-schema-62>
               parentId:
                 type: string
-                x-parser-schema-id: <anonymous-schema-65>
+                x-parser-schema-id: <anonymous-schema-63>
               name:
                 type: string
-                x-parser-schema-id: <anonymous-schema-66>
+                x-parser-schema-id: <anonymous-schema-64>
               path:
                 type: string
-                x-parser-schema-id: <anonymous-schema-67>
-            x-parser-schema-id: <anonymous-schema-63>
-          x-parser-schema-id: <anonymous-schema-62>
+                x-parser-schema-id: <anonymous-schema-65>
+            x-parser-schema-id: <anonymous-schema-61>
+          x-parser-schema-id: <anonymous-schema-60>
       x-parser-schema-id: CategoryTreePublishedData
     ItemPriceChangedData:
       type: object
@@ -5134,26 +5060,22 @@ components:
       properties:
         catalogItemId:
           type: string
-          x-parser-schema-id: <anonymous-schema-70>
+          x-parser-schema-id: <anonymous-schema-68>
         currency:
           type: string
-          x-parser-schema-id: <anonymous-schema-71>
+          x-parser-schema-id: <anonymous-schema-69>
         listPriceMinor:
           type: integer
           format: int64
-          x-parser-schema-id: <anonymous-schema-72>
+          x-parser-schema-id: <anonymous-schema-70>
         effectivePriceMinor:
           type: integer
           format: int64
-          x-parser-schema-id: <anonymous-schema-73>
-        saleEndsAt:
-          type: string
-          format: date-time
-          x-parser-schema-id: Instant
+          x-parser-schema-id: <anonymous-schema-71>
         version:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-74>
+          x-parser-schema-id: <anonymous-schema-72>
       x-parser-schema-id: ItemPriceChangedData
     ItemPriceWithdrawnData:
       type: object
@@ -5163,11 +5085,11 @@ components:
       properties:
         catalogItemId:
           type: string
-          x-parser-schema-id: <anonymous-schema-77>
+          x-parser-schema-id: <anonymous-schema-75>
         version:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-78>
+          x-parser-schema-id: <anonymous-schema-76>
       x-parser-schema-id: ItemPriceWithdrawnData
 x-parser-spec-parsed: true
 x-parser-api-version: 3

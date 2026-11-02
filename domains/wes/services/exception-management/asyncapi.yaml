@@ -108,10 +108,11 @@ channels:
   warehouse.exception-management.events:
     description: |
       This service's integration topic. Written by the outbox relay; key = case
-      id (source type for the policy event); every message carries the
-      CloudEvents content-type header (plus the optional W3C `traceparent` of
-      the writing request). Dispatch on the full `type`, ignore unknown types,
-      dedupe on `id`.
+      id (source type for the policy event); the only Kafka header on every
+      message is the CloudEvents `content-type` (the relay sets no
+      `traceparent`). Rows the relay can never encode are parked raw on
+      `warehouse.exception-management.events.dlq`. Dispatch on the full
+      `type`, ignore unknown types, dedupe on `id`.
     x-eventcatalog-channel-version: 1.0.0
     publish:
       operationId: receiveExceptionEvents
@@ -789,7 +790,9 @@ channels:
 
               subject and key = the case id. `rule_id` names the policy's
 
-              auto-resolve rule that fired; `correlated_type` and
+              auto-resolve rule that fired; it is derived, `&lt;governed source
+
+              type>->&lt;correlated type>`; `correlated_type` and
 
               `correlated_event_id` are the full CloudEvents type and id of the
 
@@ -894,7 +897,8 @@ channels:
                     urn:warehouse:exception-management:events:ExceptionAutoResolved:v1
                   data:
                     case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
-                    rule_id: cpt-missed-repromised-v1
+                    rule_id: >-
+                      com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed->com.warehouse.wes.order-management.order.OrderRepromised
                     correlated_type: com.warehouse.wes.order-management.order.OrderRepromised
                     correlated_event_id: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
                     at: '2026-10-21T09:20:00Z'
@@ -1811,7 +1815,8 @@ channels:
                     urn:warehouse:exception-management:analytics:ExceptionAutoResolved:v1
                   data:
                     case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
-                    rule_id: cpt-missed-repromised-v1
+                    rule_id: >-
+                      com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed->com.warehouse.wes.order-management.order.OrderRepromised
                     correlated_type: com.warehouse.wes.order-management.order.OrderRepromised
                     correlated_event_id: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
                     at: '2026-10-21T09:20:00Z'
@@ -2302,12 +2307,12 @@ channels:
                           type: string
                           x-parser-schema-id: <anonymous-schema-75>
                         expected_g:
-                          type: number
-                          format: double
+                          type: integer
+                          format: int64
                           x-parser-schema-id: <anonymous-schema-76>
                         actual_g:
-                          type: number
-                          format: double
+                          type: integer
+                          format: int64
                           x-parser-schema-id: <anonymous-schema-77>
                       x-parser-schema-id: <anonymous-schema-74>
                   x-parser-schema-id: <anonymous-schema-73>
@@ -2859,15 +2864,25 @@ channels:
     description: |
       This service's integration topic. Written by the outbox relay; key = the
       event's subject; every message carries the CloudEvents content-type
-      header (plus the optional W3C `traceparent` of the writing request).
+      header. An outbox row that can never be encoded (malformed payload, an
+      event the service does not publish, an empty aggregate id) is written
+      verbatim to `warehouse.returns-processing.events.dlq` (headers
+      `content-type: application/json` and `dlq-reason`) instead.
       Dispatch on the full `type`, ignore unknown types, dedupe on `id`.
     x-eventcatalog-channel-version: 1.0.0
     subscribe:
       operationId: consumeReturnsEvents
       summary: Consume unexpected returns as problem-solve facts.
-      description: |
-        A return line that arrived with no authorization opens one case per
-        receipt line. The CloudEvents `id` claim and the effect commit in one
+      description: >
+        A return that arrived with no authorization opens one case per
+
+        (receipt id, site): the dedup subject is `receipt_id` alone, so
+
+        further lines of the same receipt touch the open case (`line_no`
+
+        stays in the frozen payload only). The CloudEvents `id` claim and the
+        effect commit in one
+
         transaction.
       tags:
         - name: consumed
@@ -3010,12 +3025,20 @@ channels:
     subscribe:
       operationId: consumeInboundReceivingEvents
       summary: Consume carton discrepancies as routed cases.
-      description: |
-        One case per (receipt_id, sscc or "-", kind). Missing, Duplicate,
-        Unexpected, CaseQtyMismatch, MixedCaseDeclaredAsCasePack,
+      description: >
+        One case per (receipt_id, sscc or "-", kind); the dedup subject is
+
+        `<receipt_id>/<sscc or ->/<kind>`. The kinds MissingCarton,
+
+        DuplicateSscc, UnexpectedCarton, CaseQtyMismatch,
+        MixedCaseDeclaredAsCasePack,
+
         MixedCartonContentMismatch, UnknownGtin and any unknown kind route to
+
         the problem-solve policy; UnlabelledCarton and CartonOverLimit to the
+
         receiving-lead policy (informational). The CloudEvents `id` claim and
+
         the effect commit in one transaction.
       tags:
         - name: consumed
@@ -4043,7 +4066,9 @@ components:
 
         subject and key = the case id. `rule_id` names the policy's
 
-        auto-resolve rule that fired; `correlated_type` and
+        auto-resolve rule that fired; it is derived, `&lt;governed source
+
+        type>->&lt;correlated type>`; `correlated_type` and
 
         `correlated_event_id` are the full CloudEvents type and id of the
 
@@ -4147,7 +4172,8 @@ components:
             dataschema: urn:warehouse:exception-management:events:ExceptionAutoResolved:v1
             data:
               case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
-              rule_id: cpt-missed-repromised-v1
+              rule_id: >-
+                com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed->com.warehouse.wes.order-management.order.OrderRepromised
               correlated_type: com.warehouse.wes.order-management.order.OrderRepromised
               correlated_event_id: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
               at: '2026-10-21T09:20:00Z'
@@ -4595,12 +4621,12 @@ components:
                     type: string
                     x-parser-schema-id: <anonymous-schema-75>
                   expected_g:
-                    type: number
-                    format: double
+                    type: integer
+                    format: int64
                     x-parser-schema-id: <anonymous-schema-76>
                   actual_g:
-                    type: number
-                    format: double
+                    type: integer
+                    format: int64
                     x-parser-schema-id: <anonymous-schema-77>
                 x-parser-schema-id: <anonymous-schema-74>
             x-parser-schema-id: <anonymous-schema-73>
@@ -6236,7 +6262,8 @@ components:
               urn:warehouse:exception-management:analytics:ExceptionAutoResolved:v1
             data:
               case_id: case-1d2e3f4a-5b6c-4789-9abc-def012345678
-              rule_id: cpt-missed-repromised-v1
+              rule_id: >-
+                com.warehouse.wes.fulfillment-execution.task.TaskCPTMissed->com.warehouse.wes.order-management.order.OrderRepromised
               correlated_type: com.warehouse.wes.order-management.order.OrderRepromised
               correlated_event_id: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
               at: '2026-10-21T09:20:00Z'
@@ -7273,12 +7300,12 @@ components:
                   type: string
                   x-parser-schema-id: <anonymous-schema-75>
                 expected_g:
-                  type: number
-                  format: double
+                  type: integer
+                  format: int64
                   x-parser-schema-id: <anonymous-schema-76>
                 actual_g:
-                  type: number
-                  format: double
+                  type: integer
+                  format: int64
                   x-parser-schema-id: <anonymous-schema-77>
               x-parser-schema-id: <anonymous-schema-74>
           x-parser-schema-id: <anonymous-schema-73>

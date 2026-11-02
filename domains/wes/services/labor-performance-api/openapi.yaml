@@ -59,8 +59,16 @@ paths:
                     type: string
                     example: ready
         '503':
-          description: The service is draining (shutdown in progress), or Postgres or Kafka is not reachable (problem type `dependency-unavailable`, the detail names the failing dependencies), and must not receive new traffic.
+          description: 'Not ready, in one of two shapes. While the service is draining (shutdown in progress) the body is `{"status":"not_ready"}` with `Content-Type: application/json`. When Postgres or Kafka is not reachable the body is an RFC 7807 problem (`application/problem+json`, type `dependency-unavailable`, the detail names the failing dependencies).'
           content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - not_ready
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
@@ -117,7 +125,7 @@ paths:
                 $ref: '#/components/schemas/Standard'
         '400':
           description: |
-            Unknown task type, unknown handling unit (not EACH, CASE or PALLET), malformed body, a missing Idempotency-Key header (idempotency-key-required), or an Idempotency-Key that is not 1-128 printable ASCII characters (idempotency-key-invalid).
+            Unknown task type (including an absent or empty `taskType`), unknown handling unit (not EACH, CASE or PALLET), a body that is not valid JSON or contains a NUL character (malformed-request-body), a missing Idempotency-Key header (idempotency-key-required), or an Idempotency-Key that is not 1-128 printable ASCII characters (idempotency-key-invalid).
           content:
             application/problem+json:
               schema:
@@ -135,6 +143,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /standards/{taskType}:
     get:
       tags:
@@ -185,6 +195,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /associates/{associateId}/scorecard:
     get:
       tags:
@@ -212,6 +224,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /task-types/{taskType}/performance:
     get:
       tags:
@@ -235,6 +249,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /task-types/{taskType}/utilization:
     get:
       tags:
@@ -259,6 +275,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /associates/{associateId}/utilization:
     get:
       tags:
@@ -281,7 +299,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Utilization'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
+  responses:
+    InternalError:
+      description: Unexpected server error (problem type `internal-error`). Also the answer when an infrastructure failure aborts the request; a 5xx on POST /standards is never stored against its Idempotency-Key, so the same key can be retried.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
   parameters:
     TaskTypePathParam:
       name: taskType
@@ -314,7 +341,7 @@ components:
       in: query
       required: false
       description: |
-        A Go duration string (e.g. "1h", "30m") for the trailing window to measure over. Defaults to 1 hour when omitted or malformed.
+        A Go duration string (e.g. "1h", "30m") for the trailing window to measure over. Defaults to 1 hour when omitted, malformed or not positive (never a 400).
       schema:
         type: string
         example: 1h
@@ -363,6 +390,8 @@ components:
       allOf:
         - $ref: '#/components/schemas/TeamLiftRequest'
         - type: object
+          required:
+            - operators
           properties:
             operators:
               type: integer
@@ -385,11 +414,20 @@ components:
           minimum: 1
           example: 45
         travelComponentSeconds:
-          $ref: '#/components/schemas/TravelComponentSeconds'
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: Optional; omitted or null means not broken out. When present, must be between 0 and expectedSeconds inclusive (otherwise 422).
+          example: 15
         teamLift:
           $ref: '#/components/schemas/TeamLiftRequest'
     Standard:
       type: object
+      required:
+        - taskType
+        - expectedSeconds
+        - effectiveFrom
       properties:
         taskType:
           $ref: '#/components/schemas/TaskType'
@@ -409,17 +447,18 @@ components:
         effectiveTo:
           type: string
           format: date-time
-          nullable: true
-          description: Present only on a superseded (closed) standard.
+          description: Present only on a superseded (closed) standard; omitted entirely (never null) on the open one.
     TravelComponentSeconds:
       type: integer
       format: int64
       minimum: 0
-      nullable: true
-      description: 'Optional declaration of how much of expectedSeconds is attributable to travel between locations for this TaskType. This service never computes it: it is supplied by the caller, grounded in a real distance estimate performed elsewhere (e.g. facility-layout''s estimate_travel_distance) since this service has no REST dependency in either direction with any sibling context (ADR 0015). Omitted entirely means not broken out, the default and most common case. When present, must be between 0 and expectedSeconds inclusive.'
+      description: 'Optional declaration of how much of expectedSeconds is attributable to travel between locations for this TaskType. This service never computes it: it is supplied by the caller, grounded in a real distance estimate performed elsewhere (e.g. facility-layout''s estimate_travel_distance) since this service has no REST dependency in either direction with any sibling context (ADR 0015). In a response it is omitted entirely (never null or 0) when the standard did not declare one. When present, it is between 0 and expectedSeconds inclusive.'
       example: 15
     TaskTypeBreakdown:
       type: object
+      required:
+        - taskCount
+        - meanEfficiencyPct
       properties:
         taskCount:
           type: integer
@@ -429,6 +468,13 @@ components:
           nullable: true
     Scorecard:
       type: object
+      required:
+        - associateId
+        - taskCount
+        - meanEfficiencyPct
+        - byTaskType
+        - trend
+        - coachingFlag
       properties:
         associateId:
           type: string
@@ -457,6 +503,11 @@ components:
             True iff this associate's 3 most recent SCORED tasks were all below the coaching floor (85% efficiency). Visibility only -- this service never automates coaching, pay, or task-claim decisions from this signal.
     TaskTypePerformance:
       type: object
+      required:
+        - taskType
+        - taskCount
+        - meanEfficiencyPct
+        - meanActualSeconds
       properties:
         taskType:
           $ref: '#/components/schemas/TaskType'
@@ -479,6 +530,7 @@ components:
         type:
           type: string
           format: uri
+          description: '`https://errors.labor-performance.warehouse-systems.dev/<slug>`.'
         title:
           type: string
         status:
@@ -487,6 +539,7 @@ components:
           type: string
         instance:
           type: string
+          description: The request path (omitted when empty).
       required:
         - type
         - title
@@ -496,6 +549,13 @@ components:
       type: object
       description: |
         Idle-gap / utilization read model for either one TaskType (fleet-wide) or one associate, over a trailing window. taskType and associateId are mutually exclusive -- whichever endpoint served the request populates its own identifying field and omits the other.
+      required:
+        - associates
+        - windowSeconds
+        - taskSeconds
+        - idleSeconds
+        - openGapSeconds
+        - utilizationPct
       properties:
         taskType:
           $ref: '#/components/schemas/TaskType'

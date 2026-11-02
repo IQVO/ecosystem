@@ -52,9 +52,9 @@ info:
 
     `NodeSuspended`, `NodeRetired`) from `retailnetwork.node-topology.events`,
 
-    in the consumer group given by `NODE_STATUS_CONSUMER_GROUP` (proposed value
+    in the consumer group given by the mandatory `NODE_TOPOLOGY_CONSUMER_GROUP`
 
-    `offer-availability-node-status`). They feed the local NodeStatusView and
+    (a boot error when unset). They feed the local NodeStatusView and
 
     drive the SuppressOnNodeUnavailable policy (ADR 0003). The consumer
 
@@ -1330,13 +1330,10 @@ channels:
                 nodeId:
                   type: string
                   x-parser-schema-id: <anonymous-schema-80>
-                reason:
-                  type: string
-                  x-parser-schema-id: <anonymous-schema-81>
                 suspendedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-82>
+                  x-parser-schema-id: <anonymous-schema-81>
               x-parser-schema-id: <anonymous-schema-79>
           x-parser-schema-id: NodeSuspendedIn
         examples:
@@ -1353,7 +1350,6 @@ channels:
               dataschema: urn:retailnetwork:node-topology:events:NodeSuspended:v1
               data:
                 nodeId: node-0f3a91
-                reason: inventory audit
                 suspendedAt: '2026-10-23T08:00:00Z'
         x-parser-unique-object-id: NodeSuspended
       NodeRetired:
@@ -1381,15 +1377,15 @@ channels:
           properties:
             id:
               type: string
-              x-parser-schema-id: <anonymous-schema-83>
+              x-parser-schema-id: <anonymous-schema-82>
             type:
               type: string
               const: com.retailnetwork.logistics.node-topology.node.NodeRetired
-              x-parser-schema-id: <anonymous-schema-84>
+              x-parser-schema-id: <anonymous-schema-83>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-85>
+              x-parser-schema-id: <anonymous-schema-84>
             data:
               type: object
               required:
@@ -1398,12 +1394,12 @@ channels:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-87>
+                  x-parser-schema-id: <anonymous-schema-86>
                 retiredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-88>
-              x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-87>
+              x-parser-schema-id: <anonymous-schema-85>
           x-parser-schema-id: NodeRetiredIn
         examples:
           - name: nodeRetired
@@ -3503,13 +3499,24 @@ operations:
     summary: Fold node status into NodeStatusView and apply SuppressOnNodeUnavailable.
     description: |
       Consumed from `retailnetwork.node-topology.events` in the group named by
-      NODE_STATUS_CONSUMER_GROUP. NodeRegistered inserts the node as PROPOSED;
+      NODE_TOPOLOGY_CONSUMER_GROUP. NodeRegistered inserts the node as PROPOSED;
       NodeActivated sets it ACTIVE and restores the listings of the node that
       are suppressed for NODE_NOT_SELLABLE; NodeSuspended and NodeRetired set it
       SUSPENDED or RETIRED and suppress every LIVE listing of the node. The
       fields read are exactly the ones in the payload schemas below; everything
       else in the producer's payload is ignored. Each CloudEvents id is recorded
       in `processed_events` in the same transaction as its effects.
+
+      Failure handling: a message that is not a valid CloudEvents 1.0 event is
+      logged and skipped (offset committed); a node type of the four with an
+      undecodable `data`, a missing `nodeId` or instant, or a value the use case
+      refuses (validation) is dead-lettered at once; any other failure is tried
+      5 times in all, then dead-lettered. The dead-letter topic is
+      `retailnetwork.node-topology.events.dlq` (same key and value, headers
+      `x-dlq-source-topic`, `x-dlq-source-partition`, `x-dlq-source-offset`,
+      `x-dlq-error`, `x-dlq-failed-at`). Offsets are committed after the event
+      was handled. The instant applied is `activatedAt`, `suspendedAt` or
+      `retiredAt`; for NodeRegistered it is the CloudEvents `time`.
     tags:
       - name: node-topology
     channel:
@@ -3696,13 +3703,10 @@ operations:
                   nodeId:
                     type: string
                     x-parser-schema-id: <anonymous-schema-80>
-                  reason:
-                    type: string
-                    x-parser-schema-id: <anonymous-schema-81>
                   suspendedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-82>
+                    x-parser-schema-id: <anonymous-schema-81>
                 x-parser-schema-id: <anonymous-schema-79>
             x-parser-schema-id: NodeSuspendedIn
           examples:
@@ -3719,7 +3723,6 @@ operations:
                 dataschema: urn:retailnetwork:node-topology:events:NodeSuspended:v1
                 data:
                   nodeId: node-0f3a91
-                  reason: inventory audit
                   suspendedAt: '2026-10-23T08:00:00Z'
           x-parser-unique-object-id: NodeSuspended
         NodeRetired:
@@ -3748,15 +3751,15 @@ operations:
             properties:
               id:
                 type: string
-                x-parser-schema-id: <anonymous-schema-83>
+                x-parser-schema-id: <anonymous-schema-82>
               type:
                 type: string
                 const: com.retailnetwork.logistics.node-topology.node.NodeRetired
-                x-parser-schema-id: <anonymous-schema-84>
+                x-parser-schema-id: <anonymous-schema-83>
               time:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-85>
+                x-parser-schema-id: <anonymous-schema-84>
               data:
                 type: object
                 required:
@@ -3765,12 +3768,12 @@ operations:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-87>
+                    x-parser-schema-id: <anonymous-schema-86>
                   retiredAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-88>
-                x-parser-schema-id: <anonymous-schema-86>
+                    x-parser-schema-id: <anonymous-schema-87>
+                x-parser-schema-id: <anonymous-schema-85>
             x-parser-schema-id: NodeRetiredIn
           examples:
             - name: nodeRetired
@@ -3959,13 +3962,10 @@ operations:
                 nodeId:
                   type: string
                   x-parser-schema-id: <anonymous-schema-80>
-                reason:
-                  type: string
-                  x-parser-schema-id: <anonymous-schema-81>
                 suspendedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-82>
+                  x-parser-schema-id: <anonymous-schema-81>
               x-parser-schema-id: <anonymous-schema-79>
           x-parser-schema-id: NodeSuspendedIn
         examples:
@@ -3982,7 +3982,6 @@ operations:
               dataschema: urn:retailnetwork:node-topology:events:NodeSuspended:v1
               data:
                 nodeId: node-0f3a91
-                reason: inventory audit
                 suspendedAt: '2026-10-23T08:00:00Z'
         x-parser-unique-object-id: NodeSuspended
       - name: NodeRetired
@@ -4009,15 +4008,15 @@ operations:
           properties:
             id:
               type: string
-              x-parser-schema-id: <anonymous-schema-83>
+              x-parser-schema-id: <anonymous-schema-82>
             type:
               type: string
               const: com.retailnetwork.logistics.node-topology.node.NodeRetired
-              x-parser-schema-id: <anonymous-schema-84>
+              x-parser-schema-id: <anonymous-schema-83>
             time:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-85>
+              x-parser-schema-id: <anonymous-schema-84>
             data:
               type: object
               required:
@@ -4026,12 +4025,12 @@ operations:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-87>
+                  x-parser-schema-id: <anonymous-schema-86>
                 retiredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-88>
-              x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-87>
+              x-parser-schema-id: <anonymous-schema-85>
           x-parser-schema-id: NodeRetiredIn
         examples:
           - name: nodeRetired
@@ -5250,13 +5249,10 @@ components:
               nodeId:
                 type: string
                 x-parser-schema-id: <anonymous-schema-80>
-              reason:
-                type: string
-                x-parser-schema-id: <anonymous-schema-81>
               suspendedAt:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-82>
+                x-parser-schema-id: <anonymous-schema-81>
             x-parser-schema-id: <anonymous-schema-79>
         x-parser-schema-id: NodeSuspendedIn
       examples:
@@ -5273,7 +5269,6 @@ components:
             dataschema: urn:retailnetwork:node-topology:events:NodeSuspended:v1
             data:
               nodeId: node-0f3a91
-              reason: inventory audit
               suspendedAt: '2026-10-23T08:00:00Z'
       x-parser-unique-object-id: NodeSuspended
     NodeRetired:
@@ -5301,15 +5296,15 @@ components:
         properties:
           id:
             type: string
-            x-parser-schema-id: <anonymous-schema-83>
+            x-parser-schema-id: <anonymous-schema-82>
           type:
             type: string
             const: com.retailnetwork.logistics.node-topology.node.NodeRetired
-            x-parser-schema-id: <anonymous-schema-84>
+            x-parser-schema-id: <anonymous-schema-83>
           time:
             type: string
             format: date-time
-            x-parser-schema-id: <anonymous-schema-85>
+            x-parser-schema-id: <anonymous-schema-84>
           data:
             type: object
             required:
@@ -5318,12 +5313,12 @@ components:
             properties:
               nodeId:
                 type: string
-                x-parser-schema-id: <anonymous-schema-87>
+                x-parser-schema-id: <anonymous-schema-86>
               retiredAt:
                 type: string
                 format: date-time
-                x-parser-schema-id: <anonymous-schema-88>
-            x-parser-schema-id: <anonymous-schema-86>
+                x-parser-schema-id: <anonymous-schema-87>
+            x-parser-schema-id: <anonymous-schema-85>
         x-parser-schema-id: NodeRetiredIn
       examples:
         - name: nodeRetired
@@ -6224,13 +6219,10 @@ components:
             nodeId:
               type: string
               x-parser-schema-id: <anonymous-schema-80>
-            reason:
-              type: string
-              x-parser-schema-id: <anonymous-schema-81>
             suspendedAt:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-82>
+              x-parser-schema-id: <anonymous-schema-81>
           x-parser-schema-id: <anonymous-schema-79>
       x-parser-schema-id: NodeSuspendedIn
     NodeRetiredIn:
@@ -6246,15 +6238,15 @@ components:
       properties:
         id:
           type: string
-          x-parser-schema-id: <anonymous-schema-83>
+          x-parser-schema-id: <anonymous-schema-82>
         type:
           type: string
           const: com.retailnetwork.logistics.node-topology.node.NodeRetired
-          x-parser-schema-id: <anonymous-schema-84>
+          x-parser-schema-id: <anonymous-schema-83>
         time:
           type: string
           format: date-time
-          x-parser-schema-id: <anonymous-schema-85>
+          x-parser-schema-id: <anonymous-schema-84>
         data:
           type: object
           required:
@@ -6263,12 +6255,12 @@ components:
           properties:
             nodeId:
               type: string
-              x-parser-schema-id: <anonymous-schema-87>
+              x-parser-schema-id: <anonymous-schema-86>
             retiredAt:
               type: string
               format: date-time
-              x-parser-schema-id: <anonymous-schema-88>
-          x-parser-schema-id: <anonymous-schema-86>
+              x-parser-schema-id: <anonymous-schema-87>
+          x-parser-schema-id: <anonymous-schema-85>
       x-parser-schema-id: NodeRetiredIn
 x-parser-spec-parsed: true
 x-parser-api-version: 3

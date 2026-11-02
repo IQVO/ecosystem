@@ -122,7 +122,9 @@ info:
 
     array: the demand sources (`CUSTOMER_ORDER`, `STOCK_TRANSFER`,
 
-    `SLOT_RELOCATION`, `INVENTORY_CONTROL`) allowed to route work onto the
+    `SLOT_RELOCATION`, `INVENTORY_CONTROL`, and since ADR 0036
+
+    `REPLENISHMENT`) allowed to route work onto the
 
     path. order-management's path selection considers only paths whose
 
@@ -178,9 +180,11 @@ info:
 
     `fulfillment-execution`, `wes-work-planning`, `workforce-management`
 
-    (ProcessPath* catalogue caches) and `order-management` (ProcessPath*
+    (ProcessPath* catalogue caches), `order-management` and
 
-    and CPTScheduleChanged) consume the integration topic. The analytics
+    `network-fulfillment` (ProcessPath* and CPTScheduleChanged) consume the
+
+    integration topic. The analytics
 
     topic is consumed only by this service's own projector
 
@@ -213,8 +217,13 @@ channels:
       This service's own integration topic (its `kafka.Topic` constant). Carries
       all three ProcessPath* event types plus CPTScheduleChanged (ADR 0010) as
       CloudEvents 1.0 (ADR 0016), dispatched by consumers on the full `type`.
-      Only published when EVENT_PUBLISHER=kafka; the default is a local log
-      publisher (no Kafka required for local dev).
+      Kafka message key = the CloudEvents `subject` (`path_id`, or `site_id` for
+      CPTScheduleChanged), hash-balanced. Every message carries the Kafka header
+      `content-type: application/cloudevents+json; charset=UTF-8` plus
+      `traceparent` / `tracestate` when raised inside a traced operation. Events
+      travel through the transactional outbox (Postgres is mandatory, ADR 0037);
+      there is no log or in-memory publisher in the shipped binary. The topic is
+      auto-created by the broker on first write.
     x-eventcatalog-channel-version: 1.0.0
     publish:
       operationId: publishProcessPathEvents
@@ -241,6 +250,8 @@ channels:
         ordinary ones: same types, same `data`, same `dataschema`, no new
         attribute; applying one for an already-known path or site is an
         idempotent upsert. The republish is NOT written to the analytics topic.
+        It is bounded to 1000 paths and 1000 schedules per start; beyond that
+        the rest are not republished and an ERROR is logged.
       tags:
         - name: process-path
         - name: cpt-schedule
@@ -1208,7 +1219,8 @@ channels:
         Written in the same outbox transaction as the integration row, sharing
         its CloudEvents `id`. The startup catalogue republish (ADR 0038) is the
         one exception: it is not a catalogue change, so it is not written here
-        and never inflates the revised-paths report.
+        and never inflates the revised-paths report. Kafka key and headers are
+        the same as on the integration topic.
       tags:
         - name: process-path
         - name: cpt-schedule
