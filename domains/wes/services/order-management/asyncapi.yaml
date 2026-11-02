@@ -5861,9 +5861,10 @@ channels:
               event, and this data product tracks the re-promise-rate KPI
               fleet-wide rather than adding an OrderRepo lookup for a dimension
               nothing asked for (see ADR 0019's Decision §2 for the full
-              reasoning). cpt_id_old/cpt_id_new are both omitempty for a
-              LeadTime-basis promise on that side, same as the integration-topic
-              message.
+              reasoning). Unlike the integration-topic message,
+              cpt_id_old/cpt_id_new are ALWAYS present on the analytics payload
+              (no omitempty): the empty string for a LeadTime-basis promise on
+              that side.
             tags:
               - name: order
               - name: analytics
@@ -5991,6 +5992,8 @@ channels:
                       additionalProperties: false
                       required:
                         - order_id
+                        - cpt_id_old
+                        - cpt_id_new
                         - reason
                       properties:
                         order_id:
@@ -6000,14 +6003,16 @@ channels:
                           type: string
                           description: >-
                             The CPT identity the affected group targeted BEFORE
-                            the recompute. Absent for a LeadTime-basis previous
-                            promise.
+                            the recompute. Always present on the analytics
+                            payload; the empty string for a LeadTime-basis
+                            previous promise.
                           x-parser-schema-id: <anonymous-schema-366>
                         cpt_id_new:
                           type: string
                           description: >-
                             The CPT identity the affected group targets AFTER
-                            the recompute. Absent for a LeadTime-basis new
+                            the recompute. Always present on the analytics
+                            payload; the empty string for a LeadTime-basis new
                             promise.
                           x-parser-schema-id: <anonymous-schema-367>
                         reason:
@@ -6079,9 +6084,11 @@ channels:
               cancelled, re-released or retried because of it, and it is not
               retracted if a late confirmation arrives. Analytics-only — the
               integration topic `warehouse.order-management.events` keeps its
-              three-event contract — and the in-repo projector ignores the type.
-              `subject` and the Kafka key are the order id; `time` is when the
-              line was flagged, `released_at` when it was released.
+              four-event contract (OrderAllocated, OrderPartiallyAllocated,
+              OrderRepromised, SiteSkuDemandChanged) — and the in-repo projector
+              ignores the type. `subject` and the Kafka key are the order id;
+              `time` is when the line was flagged, `released_at` when it was
+              released.
             tags:
               - name: order-line
             traits:
@@ -9167,10 +9174,11 @@ components:
         naming it. A FACT, never an action: nothing is cancelled, re-released or
         retried because of it, and it is not retracted if a late confirmation
         arrives. Analytics-only — the integration topic
-        `warehouse.order-management.events` keeps its three-event contract — and
-        the in-repo projector ignores the type. `subject` and the Kafka key are
-        the order id; `time` is when the line was flagged, `released_at` when it
-        was released.
+        `warehouse.order-management.events` keeps its four-event contract
+        (OrderAllocated, OrderPartiallyAllocated, OrderRepromised,
+        SiteSkuDemandChanged) — and the in-repo projector ignores the type.
+        `subject` and the Kafka key are the order id; `time` is when the line
+        was flagged, `released_at` when it was released.
       tags:
         - name: order-line
       traits:
@@ -9766,9 +9774,10 @@ components:
         — OrderRepromised itself has no process-path dimension in its domain
         event, and this data product tracks the re-promise-rate KPI fleet-wide
         rather than adding an OrderRepo lookup for a dimension nothing asked for
-        (see ADR 0019's Decision §2 for the full reasoning).
-        cpt_id_old/cpt_id_new are both omitempty for a LeadTime-basis promise on
-        that side, same as the integration-topic message.
+        (see ADR 0019's Decision §2 for the full reasoning). Unlike the
+        integration-topic message, cpt_id_old/cpt_id_new are ALWAYS present on
+        the analytics payload (no omitempty): the empty string for a
+        LeadTime-basis promise on that side.
       tags:
         - name: order
         - name: analytics
@@ -9892,6 +9901,8 @@ components:
                 additionalProperties: false
                 required:
                   - order_id
+                  - cpt_id_old
+                  - cpt_id_new
                   - reason
                 properties:
                   order_id:
@@ -9901,13 +9912,15 @@ components:
                     type: string
                     description: >-
                       The CPT identity the affected group targeted BEFORE the
-                      recompute. Absent for a LeadTime-basis previous promise.
+                      recompute. Always present on the analytics payload; the
+                      empty string for a LeadTime-basis previous promise.
                     x-parser-schema-id: <anonymous-schema-366>
                   cpt_id_new:
                     type: string
                     description: >-
                       The CPT identity the affected group targets AFTER the
-                      recompute. Absent for a LeadTime-basis new promise.
+                      recompute. Always present on the analytics payload; the
+                      empty string for a LeadTime-basis new promise.
                     x-parser-schema-id: <anonymous-schema-367>
                   reason:
                     type: string
@@ -12779,6 +12792,8 @@ components:
       additionalProperties: false
       required:
         - order_id
+        - cpt_id_old
+        - cpt_id_new
         - reason
       properties:
         order_id:
@@ -12788,13 +12803,15 @@ components:
           type: string
           description: >-
             The CPT identity the affected group targeted BEFORE the recompute.
-            Absent for a LeadTime-basis previous promise.
+            Always present on the analytics payload; the empty string for a
+            LeadTime-basis previous promise.
           x-parser-schema-id: <anonymous-schema-366>
         cpt_id_new:
           type: string
           description: >-
             The CPT identity the affected group targets AFTER the recompute.
-            Absent for a LeadTime-basis new promise.
+            Always present on the analytics payload; the empty string for a
+            LeadTime-basis new promise.
           x-parser-schema-id: <anonymous-schema-367>
         reason:
           type: string
