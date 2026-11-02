@@ -37,6 +37,13 @@
         }
       }
     },
+    "fulfillmentSiteId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Z0-9]+$",
+      "description": "OPTIONAL. The site this order is to be fulfilled from, ASSIGNED BY THE CALLER (customer-ordering or network-fulfillment) — this service never infers, defaults or looks one up (ADR 0044). A site code in facility-layout's shape: uppercase letters and digits only. It applies to ordinary orders and to a network-originated hold (`releaseOnAllocation: false`, ADR 0020) alike.\n\nWhen present it is stored on the order, immutable for its lifetime (re-promise, release and cancel never change it), and is the site of every `SiteSkuDemandChanged` event for the order's lines (`assignment_version` `order-site-v1`, ADR 0044). It is also the site the order is PROMISED against (ADR 0047): the CPT window comes from that site's CPT schedule, at intake and on every re-promise, and the `capacityConstraint` annotation matches that site. A site with no CPT schedule known to this service is promised on the `LeadTime` basis, never on another site's windows. When absent the order behaves exactly as before: it is promised against the deployment's default site (`DEFAULT_SITE_ID`) and demand projects to the deployment's static site, if one is configured (`static-site-v1`, ADR 0035). The frozen `OrderAllocated` / `OrderPartiallyAllocated` / `OrderRepromised` events never carry it. A malformed value is rejected with `400` (problem type `invalid-fulfillment-site-id`); an explicit `null` is rejected too.\n",
+      "example": "WH1"
+    },
     "requiredShipBy": {
       "type": "string",
       "format": "date-time",
@@ -45,12 +52,12 @@
     "releaseOnAllocation": {
       "type": "boolean",
       "default": true,
-      "description": "When true (the default, and the behaviour of every caller that omits the field), the order is received, allocated and released in one call exactly as before ADR 0020. When false the order is HELD: lines are allocated, inventory reservations genuinely exist and a promise is computed and attached, but nothing is released and no work reaches the floor until `POST /orders/{id}/release`. Intended for a caller that must decide whether to commit to the order before it becomes work — see ADR 0020. A held order must be ship-complete: sending `releaseOnAllocation: false` together with `allowPartialShipment: true` is rejected with `422`.\n"
+      "description": "When true (the default, and the behaviour of every caller that omits the field), the order is received, allocated and released in one call exactly as before ADR 0020. When false the order is HELD: lines are allocated, inventory reservations genuinely exist and a promise is computed and attached, but nothing is released and no work reaches the floor until `POST /orders/{id}/releases`. Intended for a caller that must decide whether to commit to the order before it becomes work — see ADR 0020. A held order must be ship-complete: sending `releaseOnAllocation: false` together with `allowPartialShipment: true` is rejected with `422`.\n"
     },
     "allowPartialShipment": {
       "type": "boolean",
       "default": false,
-      "description": "When false (the default — ship-complete, BR3), a single backordered line holds the WHOLE order back from release until retry-allocation clears it. When true, allocated lines are independently eligible for release.\n",
+      "description": "When false (the default — ship-complete, BR3), a single backordered line holds the WHOLE order back from release until an allocation retry (`POST /orders/{id}/allocation-retries`) clears it. When true, allocated lines are independently eligible for release.\n",
       "example": false
     }
   }

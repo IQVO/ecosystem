@@ -72,7 +72,7 @@ info:
     consumes inbound-receiving's `ReceiptLineReceived` from
     `warehouse.inbound-receiving.events` (channel below, ADR 0037): a line with
     `condition=Good` is booked as a staged receipt through the existing
-    ReceiveStock use case (the same `StockReceived` as `POST /stock/receive`,
+    ReceiveStock use case (the same `StockReceived` as `POST /stock-receipts`,
     analytics topic; quantity staged, stow stays the RF action); `Damaged` is
     not booked in v1. And it consumes returns-processing's `ReturnLineStaged`
     from `warehouse.returns-processing.events` (channel below, ADR 0044): the
@@ -632,9 +632,9 @@ channels:
 
 
               **Integration topic only** (no analytics variant: the Inventory
-              Flow & Accuracy projection has no transfer dimension). Kafka key
-              and CloudEvents `subject` are the reservation id, so a transfer's
-              replies stay per-reservation ordered (ADR 0021).
+              Flow &amp; Accuracy projection has no transfer dimension). Kafka
+              key and CloudEvents `subject` are the reservation id, so a
+              transfer's replies stay per-reservation ordered (ADR 0021).
             contentType: application/cloudevents+json
             tags:
               - name: reservation
@@ -1076,9 +1076,10 @@ channels:
 
 
               **Integration topic only** (no analytics variant: the Inventory
-              Flow & Accuracy projection has no transfer dimension). Kafka key
-              and CloudEvents `subject` are the transfer_line_id, so a line's
-              stage-then-stow facts stay ordered on one partition (ADR 0021).
+              Flow &amp; Accuracy projection has no transfer dimension). Kafka
+              key and CloudEvents `subject` are the transfer_line_id, so a
+              line's stage-then-stow facts stay ordered on one partition (ADR
+              0021).
             contentType: application/cloudevents+json
             tags:
               - name: stock
@@ -1281,12 +1282,12 @@ channels:
               destination usable rose, exactly once.
             description: >-
               Raised by the StowTransferStock use case (ADR 0033 — POST
-              /transfers/\{transferLineId\}/stow): the ONLY path that raises the
-              destination site's usable stock for a transfer. One StockUnit per
-              bin leg was created AT the destination site (NewStockUnitAtSite),
-              every bin verified to belong to that site's custody, the
-              quantities summed exactly to the receipt's received_quantity, and
-              the receipt moved STAGED -> STOWED.
+              /transfers/\{transferLineId\}/stowages): the ONLY path that raises
+              the destination site's usable stock for a transfer. One StockUnit
+              per bin leg was created AT the destination site
+              (NewStockUnitAtSite), every bin verified to belong to that site's
+              custody, the quantities summed exactly to the receipt's
+              received_quantity, and the receipt moved STAGED -> STOWED.
 
 
               Idempotent at the database level: a replayed stow for a STOWED
@@ -6335,9 +6336,9 @@ channels:
         SAME transaction as the existing ReceiveStock use case, which raises
         `StockReceived` through the outbox (analytics topic): the units are
         staged and not yet usable, and stow stays the RF action (item scan plus
-        location scan). `POST /stock/receive` is unchanged and keeps working for
-        ad-hoc receipts. `condition=Damaged` is NOT booked in v1 (quarantine is
-        a later ADR): it is claimed, logged at INFO and counted in
+        location scan). `POST /stock-receipts` is unchanged and keeps working
+        for ad-hoc receipts. `condition=Damaged` is NOT booked in v1 (quarantine
+        is a later ADR): it is claimed, logged at INFO and counted in
         `inventory.inbound_receipt_units{outcome=damaged_not_booked}`. A
         redelivered `id` is a no-op. A transient failure retries the same
         message with capped backoff; a message that is not a valid CloudEvent,
@@ -6778,7 +6779,7 @@ channels:
         `processed_events` (consumer `return-line-staged`, the flow's provenance
         record — the mirror of `inbound-receipt-line`) in the SAME transaction
         as the existing ReceiveStock use case — the SAME staged-receipt seam an
-        inbound receipt line and `POST /stock/receive` drive — which raises
+        inbound receipt line and `POST /stock-receipts` drive — which raises
         `StockReceived` through the outbox (analytics topic): the units are
         staged and not yet usable, and stow stays the RF action (item scan plus
         location scan). Return context (`receipt_id`, `rma_id`,
@@ -10365,8 +10366,8 @@ components:
         replays return this same event's original outcome without re-deciding).
 
 
-        **Integration topic only** (no analytics variant: the Inventory Flow &
-        Accuracy projection has no transfer dimension). Kafka key and
+        **Integration topic only** (no analytics variant: the Inventory Flow
+        &amp; Accuracy projection has no transfer dimension). Kafka key and
         CloudEvents `subject` are the reservation id, so a transfer's replies
         stay per-reservation ordered (ADR 0021).
       contentType: application/cloudevents+json
@@ -10800,8 +10801,8 @@ components:
         publishes nothing that raises availability.
 
 
-        **Integration topic only** (no analytics variant: the Inventory Flow &
-        Accuracy projection has no transfer dimension). Kafka key and
+        **Integration topic only** (no analytics variant: the Inventory Flow
+        &amp; Accuracy projection has no transfer dimension). Kafka key and
         CloudEvents `subject` are the transfer_line_id, so a line's
         stage-then-stow facts stay ordered on one partition (ADR 0021).
       contentType: application/cloudevents+json
@@ -11001,7 +11002,7 @@ components:
         usable rose, exactly once.
       description: >-
         Raised by the StowTransferStock use case (ADR 0033 — POST
-        /transfers/\{transferLineId\}/stow): the ONLY path that raises the
+        /transfers/\{transferLineId\}/stowages): the ONLY path that raises the
         destination site's usable stock for a transfer. One StockUnit per bin
         leg was created AT the destination site (NewStockUnitAtSite), every bin
         verified to belong to that site's custody, the quantities summed exactly

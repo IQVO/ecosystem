@@ -5,7 +5,7 @@ info:
   contact:
     name: linehaul-transportation maintainers
     url: https://github.com/IQVO/linehaul-transportation
-  description: 'REST contract of the linehaul-transportation bounded context of the retail network, derived from retail-network-docs apis/linehaul-transportation/openapi.yaml and model/model.yaml (contexts[linehaul-transportation].rest), adjusted by the Model Gap Register decisions G3, G9, G14, G15, G28 and G29 and by the cross-context decisions E3, E13, E14 and E16 (ADR 0002). The service runs the middle mile: it turns lane schedules and the declared cutoffs of vendor nodes into scheduled departures, keeps each departure''s remaining capacity, builds loads of packages onto departures and reports when loads depart and arrive. The planner calls the lane-schedule routes, the departure cancel and change-capacity routes; sort-centre and station operators call the load routes; any context may call the departure reads. Domain events are published on Kafka (apis/asyncapi.yaml), never over REST. No authentication, consistent with the fleet. Errors are RFC 9457 problem details; the shared problem types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422), plus one type per model Err name. Every state-changing POST takes a required Idempotency-Key.'
+  description: 'REST contract of the linehaul-transportation bounded context of the retail network, derived from retail-network-docs apis/linehaul-transportation/openapi.yaml and model/model.yaml (contexts[linehaul-transportation].rest), adjusted by the Model Gap Register decisions G3, G9, G14, G15, G28 and G29 and by the cross-context decisions E3, E13, E14 and E16 (ADR 0002). The service runs the middle mile: it turns lane schedules and the declared cutoffs of vendor nodes into scheduled departures, keeps each departure''s remaining capacity, builds loads of packages onto departures and reports when loads depart and arrive. The planner calls the lane-schedule routes, the departure cancellation and capacity routes; sort-centre and station operators call the load routes; any context may call the departure reads. Domain events are published on Kafka (apis/asyncapi.yaml), never over REST. No authentication, consistent with the fleet. Errors are RFC 9457 problem details; the shared problem types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422), plus one type per model Err name. Every POST takes a required Idempotency-Key; PUT is idempotent by method.'
 servers:
   - url: http://localhost:8080
 tags:
@@ -34,12 +34,18 @@ paths:
       responses:
         '200':
           description: Slots of an ACTIVE schedule replaced.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LaneSchedule'
         '201':
           description: Schedule defined.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -54,7 +60,7 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /lane-schedules/{laneId}:retire:
+  /lane-schedules/{laneId}/retirements:
     post:
       tags:
         - Lane schedules
@@ -67,6 +73,9 @@ paths:
       responses:
         '200':
           description: Schedule retired (or already retired).
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -87,7 +96,7 @@ paths:
         - Departures
       operationId: listDepartures
       summary: List departures by origin, destination and time window (ListDepartures)
-      description: Open Host Service read for any context. Filters are ANDed; from and to bound cutoffAt (from inclusive, to exclusive). Ordered by cutoffAt then departureId, at most limit rows (default 500, maximum 1000).
+      description: 'Open Host Service read for any context. Filters are ANDed; from and to bound cutoffAt (from inclusive, to exclusive). Ordered by cutoffAt then departureId, keyset-paged: limit (1-500, default 100) and the opaque cursor from nextCursor; filters are repeated on every page request. Any other query parameter is 400 unknown-query-parameter.'
       parameters:
         - name: origin
           in: query
@@ -115,15 +124,8 @@ paths:
           schema:
             type: string
             format: date-time
-        - name: limit
-          in: query
-          required: false
-          description: Maximum number of departures returned.
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 1000
-            default: 500
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Matching departures.
@@ -131,6 +133,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DepartureList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /departures/{departureId}:
@@ -151,7 +155,7 @@ paths:
                 $ref: '#/components/schemas/Departure'
         '404':
           $ref: '#/components/responses/NotFound'
-  /departures/{departureId}:cancel:
+  /departures/{departureId}/cancellations:
     post:
       tags:
         - Departures
@@ -170,6 +174,9 @@ paths:
       responses:
         '200':
           description: Departure cancelled (or already cancelled).
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -184,8 +191,8 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /departures/{departureId}:change-capacity:
-    post:
+  /departures/{departureId}/capacity:
+    put:
       tags:
         - Departures
       operationId: changeDepartureCapacity
@@ -193,7 +200,6 @@ paths:
       description: Planner command added by gap G28. Allowed on a SCHEDULED departure; the new capacity may not be below the packages already booked (departure-full). Publishes DepartureCapacityChanged. A capacity equal to the current one changes nothing and publishes nothing. A load that is already open keeps the capacity snapshot it took at OpenLoad.
       parameters:
         - $ref: '#/components/parameters/DepartureId'
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -235,6 +241,9 @@ paths:
       responses:
         '201':
           description: Load opened.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -268,6 +277,9 @@ paths:
       responses:
         '200':
           description: Package added (or already on this load).
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -282,7 +294,7 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /loads/{loadId}:close:
+  /loads/{loadId}/closures:
     post:
       tags:
         - Loads
@@ -295,6 +307,9 @@ paths:
       responses:
         '200':
           description: Load closed (or already closed).
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -309,7 +324,7 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /loads/{loadId}:dispatch:
+  /loads/{loadId}/dispatches:
     post:
       tags:
         - Loads
@@ -322,6 +337,9 @@ paths:
       responses:
         '200':
           description: Load dispatched (or already dispatched).
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -336,7 +354,7 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /loads/{loadId}:receive:
+  /loads/{loadId}/receipts:
     post:
       tags:
         - Loads
@@ -349,6 +367,9 @@ paths:
       responses:
         '200':
           description: Load received (or already received).
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -365,11 +386,28 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: 'Client-chosen key (1 to 200 printable characters). A repeat of the same request on the same route with the same key within 24 hours returns the first response (status and body, header Idempotency-Replayed: true); a refusal (4xx) is replayed too, a server failure (5xx) is not stored. The same key with another request is 422 idempotency-key-reused.'
+      description: 'Client-generated key (1 to 128 printable ASCII characters), one per logical submit. A repeat of the same request (method, path, body) with the same key within 24 hours returns the first response (status and body, header Idempotency-Replayed: true); a refusal (4xx) is replayed too, a server failure (5xx) is not stored. The same key with another request is 409 idempotency-key-reused.'
       schema:
         type: string
         minLength: 1
-        maxLength: 200
+        maxLength: 128
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of items per page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor taken from nextCursor of the previous page.
+      schema:
+        type: string
     LaneId:
       name: laneId
       in: path
@@ -391,9 +429,16 @@ components:
       description: Load id.
       schema:
         type: string
+  headers:
+    IdempotencyReplayed:
+      description: Present, with the value true, only on a response replayed from a stored first execution.
+      schema:
+        type: string
+        enum:
+          - 'true'
   responses:
     BadRequest:
-      description: 'Malformed request. Types: malformed-request (bad JSON, unknown field, NUL character), idempotency-key-required and idempotency-key-invalid.'
+      description: 'Malformed request. Types: malformed-request (bad JSON, unknown field, NUL character), idempotency-key-required, idempotency-key-invalid, invalid-limit, invalid-cursor and unknown-query-parameter.'
       content:
         application/problem+json:
           schema:
@@ -411,13 +456,13 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
     Conflict:
-      description: 'State or capacity conflict. Types: departure-full (ErrDepartureFull), departure-closed (ErrDepartureClosed), lane-closed (ErrLaneClosed), package-already-loaded (ErrPackageAlreadyLoaded), load-over-capacity (ErrLoadOverCapacity), load-already-exists (ErrLoadAlreadyExists), illegal-transition and concurrent-update.'
+      description: 'State or capacity conflict, or Idempotency-Key reuse. Types: idempotency-key-reused (the key was already used with a different request), departure-full (ErrDepartureFull), departure-closed (ErrDepartureClosed), lane-closed (ErrLaneClosed), package-already-loaded (ErrPackageAlreadyLoaded), load-over-capacity (ErrLoadOverCapacity), load-already-exists (ErrLoadAlreadyExists), illegal-transition and concurrent-update.'
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
     Unprocessable:
-      description: 'Validation failure. Types: overlapping-slots (ErrOverlappingSlots), invalid-departure-times (ErrInvalidDepartureTimes), validation-failed and idempotency-key-reused.'
+      description: 'Validation failure. Types: overlapping-slots (ErrOverlappingSlots), invalid-departure-times (ErrInvalidDepartureTimes) and validation-failed.'
       content:
         application/problem+json:
           schema:
@@ -526,12 +571,15 @@ components:
     DepartureList:
       type: object
       required:
-        - departures
+        - items
       properties:
-        departures:
+        items:
           type: array
           items:
             $ref: '#/components/schemas/Departure'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
     CancelDepartureRequest:
       type: object
       required:

@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Delivery Promise API
-  version: 0.1.0
-  description: 'REST contract of the delivery-promise bounded context (Core, commerce tier) of the retail network, derived from retail-network-docs model/model.yaml (contexts[delivery-promise].rest) and the FINAL cross-context decisions (contracts-delta E7, E8, E9; gap register G8, G9, G19, G21, G22). The quote route is an Open Host Service for the storefront and an in-organization Customer/Supplier contract for customer-ordering; POST /promises POST /promises/\{promiseId\}:confirm and POST /promises/\{promiseId\}:cancel (checkout compensation) are called only by customer-ordering inside checkout. The promise hot path makes no synchronous call to any other context: every input is an event-fed local read model. No authentication, consistent with the fleet. No personal data appears in any schema: the destination is a postal prefix, never an address. Errors are RFC 9457 application/problem+json whose `type` is https://retailnetwork.example/problems/&lt;slug>. Shared slugs: not-found (404), illegal-transition (409), concurrent-update (409), validation-failed (422). Model slugs (kebab-case of the Err name): offer-not-quotable, promise-capacity-exhausted, book-closed, promise-hold-expired, promise-closed, revision-moves-earlier (409); group-spans-nodes, invalid-promise-terms, nominal-basis-not-allowed-for-tier (422). Infrastructure slug: idempotency-key-reused (422). Every state-changing POST takes Idempotency-Key; a repeat with the same key and body replays the first response for 24 hours.'
+  version: 0.2.0
+  description: 'REST contract of the delivery-promise bounded context (Core, commerce tier) of the retail network, derived from retail-network-docs model/model.yaml (contexts[delivery-promise].rest) and the FINAL cross-context decisions (contracts-delta E7, E8, E9; gap register G8, G9, G19, G21, G22). The quote route is an Open Host Service for the storefront and an in-organization Customer/Supplier contract for customer-ordering; POST /promises, POST /promises/\{promiseId\}/confirmations and POST /promises/\{promiseId\}/cancellations (checkout compensation) are called only by customer-ordering inside checkout. The promise hot path makes no synchronous call to any other context: every input is an event-fed local read model. No authentication, consistent with the fleet. No personal data appears in any schema: the destination is a postal prefix, never an address. Errors are RFC 9457 application/problem+json whose `type` is https://retailnetwork.example/problems/&lt;slug>. Shared slugs: not-found (404), illegal-transition (409), concurrent-update (409), validation-failed (422). Model slugs (kebab-case of the Err name): offer-not-quotable, promise-capacity-exhausted, book-closed, promise-hold-expired, promise-closed, revision-moves-earlier (409); group-spans-nodes, invalid-promise-terms, nominal-basis-not-allowed-for-tier (422). Infrastructure slugs: idempotency-key-required, idempotency-key-invalid (400), idempotency-key-reused (409). Every POST requires Idempotency-Key (fleet REST API guideline); a repeat with the same key, method, path and body replays the first response for 24 hours with the Idempotency-Replayed header.'
   contact:
     name: delivery-promise maintainers
     url: https://github.com/IQVO/delivery-promise
@@ -18,13 +18,13 @@ tags:
   - name: PromisePolicy
     description: 'Versioned promise policy: offer TTL, hold TTL, packages per order, capacity share and per-tier order deadlines (aggregate PromisePolicy, G19).'
 paths:
-  /delivery-offers:quote:
+  /delivery-quotes:
     post:
       tags:
         - DeliveryOffers
       operationId: quoteDeliveryOffers
       summary: Quote delivery offers per tier for a destination and a set of lines
-      description: 'Runs the PromisePolicy search over local read models. The cart is first split into shipment groups (ShipmentGrouping: one node for the whole cart when one can cover every line, otherwise the fewest groups). Returns one QUOTED offer per (group, requested tier) that has a feasible witness path, and an OfferConstraint for every (group, tier) that has none. "No offer" is a normal 200 answer. A tier whose order deadline in the destination region has passed is reported PAST_ORDER_DEADLINE. Each offer is persisted with a TTL so checkout can honour it. With an Idempotency-Key, a repeat inside the offers'' TTL returns the same offers. Makes no synchronous call.'
+      description: 'Runs the PromisePolicy search over local read models. The cart is first split into shipment groups (ShipmentGrouping: one node for the whole cart when one can cover every line, otherwise the fewest groups). Returns one QUOTED offer per (group, requested tier) that has a feasible witness path, and an OfferConstraint for every (group, tier) that has none. "No offer" is a normal 200 answer. A tier whose order deadline in the destination region has passed is reported PAST_ORDER_DEADLINE. Each offer is persisted with a TTL so checkout can honour it. The Idempotency-Key is required; a repeat inside the offers'' TTL returns the same offers. Makes no synchronous call.'
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -36,10 +36,17 @@ paths:
       responses:
         '200':
           description: Offers for the feasible tiers and constraints for the others.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/QuoteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /delivery-offers/{offerId}:
@@ -66,9 +73,9 @@ paths:
         - Promises
       operationId: makePromise
       summary: Make a provisional promise for one shipment group from a quoted offer
-      description: 'MakePromise. Consumes the offer (CONSUMED), creates the promise in PROVISIONAL with holdExpiresAt, and holds capacity on the witness PromiseBook (nodeId:pickupDepartureId), opening the book lazily on the first hold, in ONE transaction (documented exception to one aggregate per transaction, G22). A retry with the same Idempotency-Key and body replays the first response (200). Errors: not-found (404); offer-not-quotable, promise-capacity-exhausted, book-closed, concurrent-update (409); group-spans-nodes, invalid-promise-terms, nominal-basis-not-allowed-for-tier, idempotency-key-reused, validation-failed (422).'
+      description: 'MakePromise. Consumes the offer (CONSUMED), creates the promise in PROVISIONAL with holdExpiresAt, and holds capacity on the witness PromiseBook (nodeId:pickupDepartureId), opening the book lazily on the first hold, in ONE transaction (documented exception to one aggregate per transaction, G22). A retry with the same Idempotency-Key and body replays the first response (200). Errors: not-found (404); offer-not-quotable, promise-capacity-exhausted, book-closed, concurrent-update (409); group-spans-nodes, invalid-promise-terms, nominal-basis-not-allowed-for-tier, validation-failed (422); idempotency-key-required (400); idempotency-key-reused (409).'
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -78,6 +85,9 @@ paths:
       responses:
         '200':
           description: Idempotent replay; the promise made by the first request.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -85,6 +95,8 @@ paths:
         '201':
           description: Promise made (PROVISIONAL) and capacity held.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             Location:
               description: URL of the new promise.
               schema:
@@ -93,6 +105,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Promise'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -106,6 +120,8 @@ paths:
       summary: List the promises of one customer order
       description: Returns every promise confirmed for the order, one per shipment group.
       parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
         - name: orderId
           in: query
           required: true
@@ -114,11 +130,13 @@ paths:
             type: string
       responses:
         '200':
-          description: The order's promises, ordered by groupNo.
+          description: One page of the order's promises, ordered by groupNo.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromiseList'
+                $ref: '#/components/schemas/PromisePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /promises/{promiseId}:
@@ -147,6 +165,8 @@ paths:
       summary: List the promise books of one node for one date
       description: One book per pickup cutoff of the node whose cutoff falls on the date (node local time).
       parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
         - name: nodeId
           in: query
           required: true
@@ -162,14 +182,16 @@ paths:
             format: date
       responses:
         '200':
-          description: The node's books for that date, ordered by cutoffAt.
+          description: One page of the node's books for that date, ordered by cutoffAt.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromiseBookList'
+                $ref: '#/components/schemas/PromiseBookPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /promises/{promiseId}:confirm:
+  /promises/{promiseId}/confirmations:
     post:
       tags:
         - Promises
@@ -177,7 +199,7 @@ paths:
       summary: Confirm a provisional promise for a placed order (ConfirmPromise)
       description: 'Called by customer-ordering inside checkout, before the order is placed (E7). PROVISIONAL becomes CONFIRMED and the book hold moves from provisional to confirmed, in one transaction; PromiseConfirmed goes to the analytics topic. Idempotent: confirming an already CONFIRMED promise with the same orderId and groupNo is a no-op returning 200. A hold past holdExpiresAt is refused with promise-hold-expired (409), and a RELEASED or otherwise closed promise with promise-closed (409): checkout then re-quotes and no order is placed.'
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/PromiseId'
       requestBody:
         required: true
@@ -188,17 +210,22 @@ paths:
       responses:
         '200':
           description: The CONFIRMED promise (also the replay).
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Promise'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /promises/{promiseId}:cancel:
+  /promises/{promiseId}/cancellations:
     post:
       tags:
         - Promises
@@ -206,15 +233,20 @@ paths:
       summary: Cancel a confirmed promise on request (CancelPromise)
       description: 'Called by customer-ordering to compensate a checkout whose later group failed to confirm: the promises already CONFIRMED are cancelled so their capacity is given back. No request body. A CONFIRMED or AT_RISK promise becomes CANCELLED (cancelReason CANCELLED_ON_REQUEST), the confirmed hold goes back to its PromiseBook and PromiseCancelled goes to the analytics topic, in one transaction. Idempotent: cancelling an already CANCELLED promise is a no-op returning 200 with the same view. A PROVISIONAL, KEPT, BROKEN or RELEASED promise is refused with illegal-transition (409); a provisional hold is never cancelled, it lapses by itself (ReleaseExpiredHolds).'
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/PromiseId'
       responses:
         '200':
           description: The CANCELLED promise (also the replay and the repeat on an already cancelled promise).
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Promise'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -227,7 +259,7 @@ paths:
       summary: Publish a new promise policy version (PublishPromisePolicy)
       description: Stores the next policy version (strictly increasing) and publishes PromisePolicyPublished on the analytics topic. Offers and promises made afterwards record the new policyVersion.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -238,6 +270,8 @@ paths:
         '201':
           description: Policy published.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             Location:
               description: URL of the current policy.
               schema:
@@ -246,6 +280,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromisePolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
@@ -269,19 +305,29 @@ components:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
-      required: false
-      description: Client-chosen key; a repeat with the same key returns the first result.
-      schema:
-        type: string
-        maxLength: 128
-    IdempotencyKeyRequired:
-      name: Idempotency-Key
-      in: header
       required: true
-      description: Client-chosen key; a repeat with the same key and body returns the first result.
+      description: Client-generated key (a UUID per logical submit; a retry reuses it), 1-128 printable ASCII characters. The key is global, not per route. A repeat with the same key, method, path and body replays the first answer with the Idempotency-Replayed header set to "true"; a different request under the same key is a 409 idempotency-key-reused.
       schema:
         type: string
+        minLength: 1
         maxLength: 128
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size, 1-500 (default 100). Anything else is 400 invalid-limit.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from the previous page's nextCursor; filters are repeated on every page request. An undecodable cursor is 400 invalid-cursor, any undeclared query parameter 400 unknown-query-parameter.
+      schema:
+        type: string
     OfferId:
       name: offerId
       in: path
@@ -304,17 +350,44 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
     Conflict:
-      description: State, capacity, closed or concurrency conflict (illegal-transition, concurrent-update, offer-not-quotable, promise-capacity-exhausted, book-closed, promise-hold-expired, promise-closed, revision-moves-earlier).
+      description: State, capacity, closed or concurrency conflict (illegal-transition, concurrent-update, offer-not-quotable, promise-capacity-exhausted, book-closed, promise-hold-expired, promise-closed, revision-moves-earlier), or idempotency-key-reused when the Idempotency-Key was already used with a different method, path or body.
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+          examples:
+            idempotency-key-reused:
+              value:
+                type: https://retailnetwork.example/problems/idempotency-key-reused
+                title: Idempotency-Key was already used with a different request
+                status: 409
+                detail: the Idempotency-Key was already used with a different method, path or body
+    BadRequest:
+      description: The Idempotency-Key header is missing (idempotency-key-required) or malformed (idempotency-key-invalid), the request body is malformed, or a collection GET sent an undeclared query parameter (unknown-query-parameter), a bad limit (invalid-limit) or an undecodable cursor (invalid-cursor).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            idempotency-key-required:
+              value:
+                type: https://retailnetwork.example/problems/idempotency-key-required
+                title: Idempotency-Key header is required
+                status: 400
+                detail: send an Idempotency-Key header with a unique value per logical request
     Unprocessable:
-      description: Validation failure (validation-failed, group-spans-nodes, invalid-promise-terms, nominal-basis-not-allowed-for-tier, idempotency-key-reused).
+      description: Validation failure (validation-failed, group-spans-nodes, invalid-promise-terms, nominal-basis-not-allowed-for-tier).
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+  headers:
+    IdempotencyReplayed:
+      description: Present, with the value "true", only when the response is the stored answer replayed for the same Idempotency-Key, method, path and body. The first execution never carries it.
+      schema:
+        type: string
+        enum:
+          - 'true'
   schemas:
     Problem:
       type: object
@@ -376,6 +449,7 @@ components:
           minimum: 1
     DeliveryWindow:
       type: object
+      description: 'The delivery window as two instants (RFC 3339 UTC) and the local calendar they belong to. A delivery date is a day of the destination''s calendar: convert earliest and latest into timeZone before taking their date (e.g. 2026-10-31T14:00:00Z..2026-11-01T02:00:00Z in America/Chicago is the single day 2026-10-31).'
       required:
         - earliest
         - latest
@@ -386,6 +460,11 @@ components:
         latest:
           type: string
           format: date-time
+        timeZone:
+          type: string
+          maxLength: 64
+          example: America/Chicago
+          description: IANA time zone of the delivery station serving the destination. Always set on a new offer; omitted only for an offer stored before it was carried (ADR 0011), in which case read the window in UTC.
     WitnessPath:
       type: object
       description: 'The node, pickup departure, departure legs and delivery wave that prove feasibility. A NOMINAL path (STANDARD only) carries no departure or wave ids: pickupDepartureId and deliveryWaveId are omitted and legs is empty (E8).'
@@ -543,6 +622,11 @@ components:
         deliverByLatest:
           type: string
           format: date-time
+        timeZone:
+          type: string
+          maxLength: 64
+          example: America/Chicago
+          description: IANA time zone of the delivery station serving the destination, the local calendar deliverByEarliest and deliverByLatest belong to. Always set on a new promise; omitted only for a promise stored before it was carried (ADR 0011), in which case read the window in UTC.
         basis:
           $ref: '#/components/schemas/Basis'
         policyVersion:
@@ -656,7 +740,7 @@ components:
         atRiskReason:
           type: string
           description: Present while AT_RISK.
-    PromiseList:
+    PromisePage:
       type: object
       required:
         - items
@@ -665,6 +749,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Promise'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
     Capacity:
       type: object
       required:
@@ -714,7 +801,7 @@ components:
         version:
           type: integer
           minimum: 1
-    PromiseBookList:
+    PromiseBookPage:
       type: object
       required:
         - items
@@ -723,6 +810,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PromiseBook'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
     ConfirmPromiseRequest:
       type: object
       required:

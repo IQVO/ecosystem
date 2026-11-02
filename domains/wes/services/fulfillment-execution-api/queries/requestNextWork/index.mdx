@@ -1,0 +1,83 @@
+---
+id: fulfillment-execution-api-requestNextWork
+version: 1.0.0
+name: requestNextWork
+summary: Ask the Work Planning agent (over A2A) to admit the next unit for a path
+schemaPath: ''
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Work Planning Delegation'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/paths/{pathId}/work-requests'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '409'
+    - '502'
+    - '503'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+The PULL side of the execution/planning seam (ADR-0058): execution, whose claimable queue for a process path is draining, delegates "admit the next priority-ordered unit" to the wes-work-planning A2A agent. Planning keeps every release decision (release policy, WIP invariant); execution keeps the judgement of when to ask. The authoritative fact still arrives as the `WorkReleased` CloudEvent on Kafka through the existing consumer — the 200 body is only the delegation acknowledgement. Each call asks for exactly one unit, so the endpoint is deliberately NOT idempotent and NOT behind the idempotency middleware: repeating the request is a legitimate second pull. Answers 503 when this deployment has no `WORK_PLANNING_A2A_URL` configured, and 502 when the planning agent is unreachable or answers off-contract.
+
+
+
+
+
+## POST `(/paths/{pathId}/work-requests)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Caller-supplied key, 1-128 printable ASCII characters (a UUID minted once per LOGICAL submit; a retry reuses it, a new user action mints a new one). Required on every POST: a missing key is `400 idempotency-key-required`, a malformed one `400 idempotency-key-invalid`. The key is global to the service: a retry with the same method, path and body replays the stored answer (status, body and `Location`) with `Idempotency-Replayed: true` and runs nothing; the same key with a different method, path or body is `409 idempotency-key-reused`.
+
+- **pathId** (path) (required): The process path more work is requested for (e.g. pick-zone-a). Must be a path Work Planning knows; an unknown path answers 404.
+
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+Acknowledgement of an accepted work delegation (ADR-0058): the work unit Work Planning admitted for the path. The WorkReleased event on Kafka remains the authoritative fact.
+
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-red-500">502 Bad Gateway</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-502.json" maxHeight="500" id="response-502" />
+
+#### <span className="text-red-500">503 Service Unavailable</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-503.json" maxHeight="500" id="response-503" />
+
+
+
+## Architecture
+
+<NodeGraph />

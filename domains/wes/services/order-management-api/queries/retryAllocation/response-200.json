@@ -39,9 +39,14 @@
       "description": "The externally-dictated deadline this order was received with, or absent when it has none (the overwhelming majority). See the same field on ReceiveOrderRequest.\n",
       "example": "2026-09-25T08:00:00Z"
     },
+    "fulfillmentSiteId": {
+      "type": "string",
+      "description": "The caller-assigned fulfillment site this order was received with (ADR 0044), or absent when the caller named none (the overwhelming majority). Immutable. See the same field on ReceiveOrderRequest.\n",
+      "example": "WH1"
+    },
     "releaseOnAllocation": {
       "type": "boolean",
-      "description": "False means the order was HELD at intake (ADR 0020): allocated but deliberately not released, awaiting `POST /orders/{id}/release`. True for every order received without the flag, including every order predating ADR 0020.\n",
+      "description": "False means the order was HELD at intake (ADR 0020): allocated but deliberately not released, awaiting `POST /orders/{id}/releases`. True for every order received without the flag, including every order predating ADR 0020.\n",
       "example": true
     },
     "promiseDate": {
@@ -57,7 +62,7 @@
         "site",
         "windows"
       ],
-      "description": "Present on an Order ONLY when its promise overlaps a PUBLISHED warehouse-planning shortage window at the configured site (ADR 0031). The order's work window is `[now, promise cutoff)`; a window overlaps it when both half-open intervals share at least one instant (a window starting exactly at the cutoff does not). It is a derived, read-time annotation: the order is still accepted, allocated and released, its `promiseDate` is NOT moved, and nothing is reserved or revoked. Omitted entirely otherwise, so with no planning events consumed the Order response is unchanged.\n",
+      "description": "Present on an Order ONLY when its promise overlaps a PUBLISHED warehouse-planning shortage window at the order's site (ADR 0031, ADR 0047): its `fulfillmentSiteId` when it carries one, else the configured site. The order's work window is `[now, promise cutoff)`; a window overlaps it when both half-open intervals share at least one instant (a window starting exactly at the cutoff does not). It is a derived, read-time annotation: the order is still accepted, allocated and released, its `promiseDate` is NOT moved, and nothing is reserved or revoked. Omitted entirely otherwise, so with no planning events consumed the Order response is unchanged.\n",
       "properties": {
         "constrained": {
           "type": "boolean",
@@ -66,7 +71,7 @@
         },
         "site": {
           "type": "string",
-          "description": "The planning `location` the order was matched against — the single configured site (`PLANNED_CAPACITY_SITE_ID`, defaulting to `DEFAULT_SITE_ID`); orders do not carry a site of their own.\n",
+          "description": "The planning `location` the order was matched against — the order's own `fulfillmentSiteId` when it carries one (ADR 0047), else the configured site (`PLANNED_CAPACITY_SITE_ID`, defaulting to `DEFAULT_SITE_ID`).\n",
           "example": "SIM1"
         },
         "windows": {
@@ -153,7 +158,7 @@
           },
           "status": {
             "type": "string",
-            "description": "The per-line status. `Pending` -> `Allocated` (inventory-storage reserved) or `Backordered` (inventory-storage answered 409); `Backordered` -> `Allocated` ONLY via retry-allocation; `Allocated` -> `Released` (a pure domain transition made in the same call once ship-complete rule BR3 allows it, ADR 0005 — the released lines are then announced on Kafka for wes-work-planning to react to independently; nothing waits for it to accept the work); any pre-release state -> `Cancelled`.\n",
+            "description": "The per-line status. `Pending` -> `Allocated` (inventory-storage reserved) or `Backordered` (inventory-storage answered 409); `Backordered` -> `Allocated` ONLY via an allocation retry; `Allocated` -> `Released` (a pure domain transition made in the same call once ship-complete rule BR3 allows it, ADR 0005 — the released lines are then announced on Kafka for wes-work-planning to react to independently; nothing waits for it to accept the work); any pre-release state -> `Cancelled`.\n",
             "enum": [
               "Pending",
               "Allocated",
