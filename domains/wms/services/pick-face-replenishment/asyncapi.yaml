@@ -53,11 +53,20 @@ info:
 
     copy or closes a request (modes `INVENTORY_MODE`, `SLOTTING_MODE`,
 
-    `LAYOUT_MODE`, default `permissive`; consumer groups from
+    `LAYOUT_MODE`, `PACK_LEVEL_MODE`: default and only accepted value `kafka`,
+
+    `permissive` is rejected at boot; consumer groups are required, from
 
     `INVENTORY_CONSUMER_GROUP`, `SLOTTING_CONSUMER_GROUP`,
 
-    `LAYOUT_CONSUMER_GROUP`). The consumed messages below are the producers' own
+    `LAYOUT_CONSUMER_GROUP`, `PACK_LEVEL_CONSUMER_GROUP`). A message that fails
+
+    deterministically, or after the bounded retries, is published to
+
+    `<topic>.dlq` with `x-dlq-*` headers. `ProductPackLevelDeclared` and
+
+    `ProductPackLevelRetired` from product-master are consumed as well. The
+    consumed messages below are the producers' own
 
     contracts, decoded independently here and never imported.
 
@@ -1111,6 +1120,14 @@ channels:
               key = the SKU. Produced by product-master; consumed into the local
 
               packaging view (pack level -> eaches factor for case-level scans).
+
+              NOTE: the consumer decodes camelCase keys (`unitsPerPack`,
+              `effectiveFrom`),
+
+              while product-master's encoder writes snake_case
+              (`units_per_pack`,
+
+              `effective_from`); see the PR notes.
             contentType: application/cloudevents+json
             tags:
               - name: consumed
@@ -1168,10 +1185,8 @@ channels:
                         - sku
                         - level
                         - gtin
-                        - units_per_pack
-                        - is_orderable
-                        - is_despatch_unit
-                        - effective_from
+                        - unitsPerPack
+                        - effectiveFrom
                         - version
                       properties:
                         sku:
@@ -1199,11 +1214,14 @@ channels:
                           maximum: 1000000
                           description: Absent for EACH.
                           x-parser-schema-id: <anonymous-schema-53>
-                        units_per_pack:
+                        unitsPerPack:
                           type: integer
                           minimum: 1
                           maximum: 1000000
-                          description: Direct factor to eaches; 1 for EACH.
+                          description: >-
+                            Direct factor to eaches; 1 for EACH. The consumer
+                            decodes this camelCase key (see the product-master
+                            note in the message).
                           x-parser-schema-id: <anonymous-schema-54>
                         is_orderable:
                           type: boolean
@@ -1211,9 +1229,10 @@ channels:
                         is_despatch_unit:
                           type: boolean
                           x-parser-schema-id: <anonymous-schema-56>
-                        effective_from:
+                        effectiveFrom:
                           type: string
                           format: date-time
+                          description: camelCase key as decoded by the consumer.
                           x-parser-schema-id: <anonymous-schema-57>
                         version:
                           type: integer
@@ -1295,8 +1314,7 @@ channels:
                         - sku
                         - level
                         - gtin
-                        - effective_to
-                        - reason
+                        - effectiveTo
                         - version
                       properties:
                         sku:
@@ -1314,14 +1332,18 @@ channels:
                           type: string
                           pattern: ^[0-9]{14}$
                           x-parser-schema-id: <anonymous-schema-63>
-                        effective_to:
+                        effectiveTo:
                           type: string
                           format: date-time
+                          description: camelCase key as decoded by the consumer.
                           x-parser-schema-id: <anonymous-schema-64>
                         reason:
                           type: string
                           minLength: 1
                           maxLength: 200
+                          description: >-
+                            Sent by the producer; this consumer does not read
+                            it.
                           x-parser-schema-id: <anonymous-schema-65>
                         version:
                           type: integer
@@ -1400,7 +1422,10 @@ channels:
               bound by active reservations. Keep the highest `version` per bin
               and SKU
 
-              and ignore lower ones. Ignore unknown `reason` values.
+              and ignore lower ones. The consumer reads only `site_code`, `bin`,
+              `sku`,
+
+              `on_hand`, `reserved` and `version`; `reason` is not read.
             contentType: application/cloudevents+json
             tags:
               - name: consumed
@@ -1461,8 +1486,6 @@ channels:
                         - on_hand
                         - reserved
                         - version
-                        - reason
-                        - occurred_at
                       properties:
                         site_code:
                           type: string
@@ -1492,12 +1515,15 @@ channels:
                         reason:
                           type: string
                           description: >-
-                            STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE,
-                            REVOKE or UNLOCATED; unknown values are ignored.
+                            Sent by the producer; this consumer does not read
+                            it.
                           x-parser-schema-id: <anonymous-schema-75>
                         occurred_at:
                           type: string
                           format: date-time
+                          description: >-
+                            Sent by the producer; this consumer does not read
+                            it.
                           x-parser-schema-id: <anonymous-schema-76>
                       x-parser-schema-id: <anonymous-schema-68>
                   x-parser-schema-id: <anonymous-schema-67>
@@ -1612,7 +1638,6 @@ channels:
                         - quantity
                         - reason
                         - source_ref
-                        - occurred_at
                       properties:
                         relocation_id:
                           type: string
@@ -1649,6 +1674,9 @@ channels:
                         occurred_at:
                           type: string
                           format: date-time
+                          description: >-
+                            Sent by the producer; this consumer does not read
+                            it.
                           x-parser-schema-id: <anonymous-schema-87>
                       x-parser-schema-id: <anonymous-schema-78>
                   x-parser-schema-id: <anonymous-schema-77>
@@ -1776,7 +1804,6 @@ channels:
                     - site_id
                     - approved_at
                     - assignments
-                    - moves
                   properties:
                     plan_id:
                       type: string
@@ -1790,7 +1817,7 @@ channels:
                       x-parser-schema-id: <anonymous-schema-92>
                     supersedes_plan_id:
                       type: string
-                      description: Omitted when the site had no Approved plan.
+                      description: Sent by the producer; this consumer does not read it.
                       x-parser-schema-id: <anonymous-schema-93>
                     assignments:
                       type: array
@@ -1814,6 +1841,7 @@ channels:
                       x-parser-schema-id: <anonymous-schema-94>
                     moves:
                       type: array
+                      description: Sent by the producer; this consumer does not read it.
                       items:
                         type: object
                         required:
@@ -1968,10 +1996,7 @@ channels:
                       required:
                         - zoneId
                         - siteCode
-                        - areaCode
                         - zoneCode
-                        - temperatureClass
-                        - hazmat
                       properties:
                         zoneId:
                           type: string
@@ -2093,11 +2118,7 @@ channels:
                       type: object
                       required:
                         - locationCode
-                        - aisleId
                         - zoneId
-                        - locationType
-                        - maxWeightKg
-                        - maxVolumeM3
                       properties:
                         locationCode:
                           type: string
@@ -3173,7 +3194,10 @@ components:
 
         bound by active reservations. Keep the highest `version` per bin and SKU
 
-        and ignore lower ones. Ignore unknown `reason` values.
+        and ignore lower ones. The consumer reads only `site_code`, `bin`,
+        `sku`,
+
+        `on_hand`, `reserved` and `version`; `reason` is not read.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -3232,8 +3256,6 @@ components:
                   - on_hand
                   - reserved
                   - version
-                  - reason
-                  - occurred_at
                 properties:
                   site_code:
                     type: string
@@ -3262,13 +3284,12 @@ components:
                     x-parser-schema-id: <anonymous-schema-74>
                   reason:
                     type: string
-                    description: >-
-                      STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE,
-                      REVOKE or UNLOCATED; unknown values are ignored.
+                    description: Sent by the producer; this consumer does not read it.
                     x-parser-schema-id: <anonymous-schema-75>
                   occurred_at:
                     type: string
                     format: date-time
+                    description: Sent by the producer; this consumer does not read it.
                     x-parser-schema-id: <anonymous-schema-76>
                 x-parser-schema-id: <anonymous-schema-68>
             x-parser-schema-id: <anonymous-schema-67>
@@ -3377,7 +3398,6 @@ components:
                   - quantity
                   - reason
                   - source_ref
-                  - occurred_at
                 properties:
                   relocation_id:
                     type: string
@@ -3414,6 +3434,7 @@ components:
                   occurred_at:
                     type: string
                     format: date-time
+                    description: Sent by the producer; this consumer does not read it.
                     x-parser-schema-id: <anonymous-schema-87>
                 x-parser-schema-id: <anonymous-schema-78>
             x-parser-schema-id: <anonymous-schema-77>
@@ -3513,7 +3534,6 @@ components:
                   - site_id
                   - approved_at
                   - assignments
-                  - moves
                 properties:
                   plan_id:
                     type: string
@@ -3527,7 +3547,7 @@ components:
                     x-parser-schema-id: <anonymous-schema-92>
                   supersedes_plan_id:
                     type: string
-                    description: Omitted when the site had no Approved plan.
+                    description: Sent by the producer; this consumer does not read it.
                     x-parser-schema-id: <anonymous-schema-93>
                   assignments:
                     type: array
@@ -3551,6 +3571,7 @@ components:
                     x-parser-schema-id: <anonymous-schema-94>
                   moves:
                     type: array
+                    description: Sent by the producer; this consumer does not read it.
                     items:
                       type: object
                       required:
@@ -3678,10 +3699,7 @@ components:
                 required:
                   - zoneId
                   - siteCode
-                  - areaCode
                   - zoneCode
-                  - temperatureClass
-                  - hazmat
                 properties:
                   zoneId:
                     type: string
@@ -3800,11 +3818,7 @@ components:
                 type: object
                 required:
                   - locationCode
-                  - aisleId
                   - zoneId
-                  - locationType
-                  - maxWeightKg
-                  - maxVolumeM3
                 properties:
                   locationCode:
                     type: string
@@ -3978,6 +3992,13 @@ components:
         key = the SKU. Produced by product-master; consumed into the local
 
         packaging view (pack level -> eaches factor for case-level scans).
+
+        NOTE: the consumer decodes camelCase keys (`unitsPerPack`,
+        `effectiveFrom`),
+
+        while product-master's encoder writes snake_case (`units_per_pack`,
+
+        `effective_from`); see the PR notes.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -4033,10 +4054,8 @@ components:
                   - sku
                   - level
                   - gtin
-                  - units_per_pack
-                  - is_orderable
-                  - is_despatch_unit
-                  - effective_from
+                  - unitsPerPack
+                  - effectiveFrom
                   - version
                 properties:
                   sku:
@@ -4064,11 +4083,14 @@ components:
                     maximum: 1000000
                     description: Absent for EACH.
                     x-parser-schema-id: <anonymous-schema-53>
-                  units_per_pack:
+                  unitsPerPack:
                     type: integer
                     minimum: 1
                     maximum: 1000000
-                    description: Direct factor to eaches; 1 for EACH.
+                    description: >-
+                      Direct factor to eaches; 1 for EACH. The consumer decodes
+                      this camelCase key (see the product-master note in the
+                      message).
                     x-parser-schema-id: <anonymous-schema-54>
                   is_orderable:
                     type: boolean
@@ -4076,9 +4098,10 @@ components:
                   is_despatch_unit:
                     type: boolean
                     x-parser-schema-id: <anonymous-schema-56>
-                  effective_from:
+                  effectiveFrom:
                     type: string
                     format: date-time
+                    description: camelCase key as decoded by the consumer.
                     x-parser-schema-id: <anonymous-schema-57>
                   version:
                     type: integer
@@ -4159,8 +4182,7 @@ components:
                   - sku
                   - level
                   - gtin
-                  - effective_to
-                  - reason
+                  - effectiveTo
                   - version
                 properties:
                   sku:
@@ -4178,14 +4200,16 @@ components:
                     type: string
                     pattern: ^[0-9]{14}$
                     x-parser-schema-id: <anonymous-schema-63>
-                  effective_to:
+                  effectiveTo:
                     type: string
                     format: date-time
+                    description: camelCase key as decoded by the consumer.
                     x-parser-schema-id: <anonymous-schema-64>
                   reason:
                     type: string
                     minLength: 1
                     maxLength: 200
+                    description: Sent by the producer; this consumer does not read it.
                     x-parser-schema-id: <anonymous-schema-65>
                   version:
                     type: integer
@@ -4248,10 +4272,8 @@ components:
                 - sku
                 - level
                 - gtin
-                - units_per_pack
-                - is_orderable
-                - is_despatch_unit
-                - effective_from
+                - unitsPerPack
+                - effectiveFrom
                 - version
               properties:
                 sku:
@@ -4279,11 +4301,14 @@ components:
                   maximum: 1000000
                   description: Absent for EACH.
                   x-parser-schema-id: <anonymous-schema-53>
-                units_per_pack:
+                unitsPerPack:
                   type: integer
                   minimum: 1
                   maximum: 1000000
-                  description: Direct factor to eaches; 1 for EACH.
+                  description: >-
+                    Direct factor to eaches; 1 for EACH. The consumer decodes
+                    this camelCase key (see the product-master note in the
+                    message).
                   x-parser-schema-id: <anonymous-schema-54>
                 is_orderable:
                   type: boolean
@@ -4291,9 +4316,10 @@ components:
                 is_despatch_unit:
                   type: boolean
                   x-parser-schema-id: <anonymous-schema-56>
-                effective_from:
+                effectiveFrom:
                   type: string
                   format: date-time
+                  description: camelCase key as decoded by the consumer.
                   x-parser-schema-id: <anonymous-schema-57>
                 version:
                   type: integer
@@ -4354,8 +4380,7 @@ components:
                 - sku
                 - level
                 - gtin
-                - effective_to
-                - reason
+                - effectiveTo
                 - version
               properties:
                 sku:
@@ -4373,14 +4398,16 @@ components:
                   type: string
                   pattern: ^[0-9]{14}$
                   x-parser-schema-id: <anonymous-schema-63>
-                effective_to:
+                effectiveTo:
                   type: string
                   format: date-time
+                  description: camelCase key as decoded by the consumer.
                   x-parser-schema-id: <anonymous-schema-64>
                 reason:
                   type: string
                   minLength: 1
                   maxLength: 200
+                  description: Sent by the producer; this consumer does not read it.
                   x-parser-schema-id: <anonymous-schema-65>
                 version:
                   type: integer
@@ -4844,8 +4871,6 @@ components:
                 - on_hand
                 - reserved
                 - version
-                - reason
-                - occurred_at
               properties:
                 site_code:
                   type: string
@@ -4874,13 +4899,12 @@ components:
                   x-parser-schema-id: <anonymous-schema-74>
                 reason:
                   type: string
-                  description: >-
-                    STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE, REVOKE
-                    or UNLOCATED; unknown values are ignored.
+                  description: Sent by the producer; this consumer does not read it.
                   x-parser-schema-id: <anonymous-schema-75>
                 occurred_at:
                   type: string
                   format: date-time
+                  description: Sent by the producer; this consumer does not read it.
                   x-parser-schema-id: <anonymous-schema-76>
               x-parser-schema-id: <anonymous-schema-68>
           x-parser-schema-id: <anonymous-schema-67>
@@ -4942,7 +4966,6 @@ components:
                 - quantity
                 - reason
                 - source_ref
-                - occurred_at
               properties:
                 relocation_id:
                   type: string
@@ -4979,6 +5002,7 @@ components:
                 occurred_at:
                   type: string
                   format: date-time
+                  description: Sent by the producer; this consumer does not read it.
                   x-parser-schema-id: <anonymous-schema-87>
               x-parser-schema-id: <anonymous-schema-78>
           x-parser-schema-id: <anonymous-schema-77>
@@ -5075,7 +5099,6 @@ components:
                 - site_id
                 - approved_at
                 - assignments
-                - moves
               properties:
                 plan_id:
                   type: string
@@ -5089,7 +5112,7 @@ components:
                   x-parser-schema-id: <anonymous-schema-92>
                 supersedes_plan_id:
                   type: string
-                  description: Omitted when the site had no Approved plan.
+                  description: Sent by the producer; this consumer does not read it.
                   x-parser-schema-id: <anonymous-schema-93>
                 assignments:
                   type: array
@@ -5111,6 +5134,7 @@ components:
                   x-parser-schema-id: <anonymous-schema-94>
                 moves:
                   type: array
+                  description: Sent by the producer; this consumer does not read it.
                   items:
                     type: object
                     required:
@@ -5191,10 +5215,7 @@ components:
               required:
                 - zoneId
                 - siteCode
-                - areaCode
                 - zoneCode
-                - temperatureClass
-                - hazmat
               properties:
                 zoneId:
                   type: string
@@ -5271,11 +5292,7 @@ components:
               type: object
               required:
                 - locationCode
-                - aisleId
                 - zoneId
-                - locationType
-                - maxWeightKg
-                - maxVolumeM3
               properties:
                 locationCode:
                   type: string

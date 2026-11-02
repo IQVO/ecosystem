@@ -69,7 +69,8 @@ info:
 
     dispatches on the full `type`, ignores unknown types and fields, and parks a
 
-    poison message on a dead-letter topic.
+    poison message on `<topic>.dlq`; a transient failure is retried five times
+    first.
 
 
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
@@ -1092,10 +1093,7 @@ channels:
                 data:
                   type: object
                   required:
-                    - poNumber
-                    - nodeId
                     - trackingNumbers
-                    - shippedAt
                   properties:
                     poNumber:
                       type: string
@@ -1166,8 +1164,10 @@ channels:
           `com.retailnetwork.logistics.linehaul-transportation.load.LoadDeparted`.
           A load left a node. departureKind PICKUP at a vendor node is the
           handover (PICKUP_DEPARTURE); other kinds are DEPARTURE scans.
-          departureKind and nodeType are contracts-delta E3 additions; their
-          absence is tolerated (departureKind then defaults to LINEHAUL).
+          departureKind is a contracts-delta E3 addition; its absence is
+          tolerated (the scan is then a DEPARTURE, or the handover while the
+          journey is LABELLED). A missing timestamp falls back to the
+          CloudEvents `time`.
         contentType: application/cloudevents+json
         tags:
           - name: shipping-and-tracking
@@ -1220,10 +1220,7 @@ channels:
                 data:
                   type: object
                   required:
-                    - loadId
-                    - originNodeId
                     - trackingNumbers
-                    - departedAt
                   properties:
                     loadId:
                       type: string
@@ -1246,15 +1243,11 @@ channels:
                       x-parser-schema-id: <anonymous-schema-76>
                     departureKind:
                       type: string
-                      enum:
-                        - PICKUP
-                        - LINEHAUL
-                        - AIR
+                      description: >-
+                        PICKUP gives a PICKUP_DEPARTURE scan; any other value
+                        gives DEPARTURE. Absent: DEPARTURE, upgraded to a
+                        handover while the journey is LABELLED.
                       x-parser-schema-id: <anonymous-schema-77>
-                    nodeType:
-                      type: string
-                      description: Type of the node where it happened.
-                      x-parser-schema-id: <anonymous-schema-78>
                   x-parser-schema-id: <anonymous-schema-70>
               x-parser-schema-id: <anonymous-schema-69>
           x-parser-schema-id: LoadDepartedEvent
@@ -1344,43 +1337,39 @@ channels:
                 data:
                   type: object
                   required:
-                    - loadId
-                    - destinationNodeId
                     - trackingNumbers
-                    - arrivedAt
                   properties:
                     loadId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-81>
+                      x-parser-schema-id: <anonymous-schema-80>
                     departureId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-82>
+                      x-parser-schema-id: <anonymous-schema-81>
                     destinationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-83>
+                      x-parser-schema-id: <anonymous-schema-82>
                     trackingNumbers:
                       type: array
                       items:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-85>
-                      x-parser-schema-id: <anonymous-schema-84>
+                        x-parser-schema-id: <anonymous-schema-84>
+                      x-parser-schema-id: <anonymous-schema-83>
                     arrivedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-86>
-                    departureKind:
-                      type: string
-                      enum:
-                        - PICKUP
-                        - LINEHAUL
-                        - AIR
-                      x-parser-schema-id: <anonymous-schema-87>
+                      x-parser-schema-id: <anonymous-schema-85>
                     nodeType:
                       type: string
-                      description: Type of the node where it happened.
-                      x-parser-schema-id: <anonymous-schema-88>
-                  x-parser-schema-id: <anonymous-schema-80>
-              x-parser-schema-id: <anonymous-schema-79>
+                      description: >-
+                        DELIVERY_STATION gives a STATION_ARRIVAL scan, any other
+                        value TRANSIT_ARRIVAL.
+                      x-parser-schema-id: <anonymous-schema-86>
+                    destinationNodeType:
+                      type: string
+                      description: Read only when nodeType is empty; same meaning.
+                      x-parser-schema-id: <anonymous-schema-87>
+                  x-parser-schema-id: <anonymous-schema-79>
+              x-parser-schema-id: <anonymous-schema-78>
           x-parser-schema-id: LoadArrivedEvent
         examples:
           - name: loadArrived
@@ -1478,24 +1467,22 @@ channels:
                   type: object
                   required:
                     - trackingNumber
-                    - stationNodeId
-                    - at
                   properties:
                     routeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-91>
+                      x-parser-schema-id: <anonymous-schema-90>
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-92>
+                      x-parser-schema-id: <anonymous-schema-91>
                     stationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-93>
+                      x-parser-schema-id: <anonymous-schema-92>
                     at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-94>
-                  x-parser-schema-id: <anonymous-schema-90>
-              x-parser-schema-id: <anonymous-schema-89>
+                      x-parser-schema-id: <anonymous-schema-93>
+                  x-parser-schema-id: <anonymous-schema-89>
+              x-parser-schema-id: <anonymous-schema-88>
           x-parser-schema-id: PackageOutForDeliveryEvent
         examples:
           - name: packageOutForDelivery
@@ -1581,28 +1568,28 @@ channels:
                   type: object
                   required:
                     - trackingNumber
-                    - outcome
-                    - at
                   properties:
                     routeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-97>
+                      x-parser-schema-id: <anonymous-schema-96>
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-98>
+                      x-parser-schema-id: <anonymous-schema-97>
                     outcome:
                       type: string
-                      description: DELIVERED or FAILED.
-                      x-parser-schema-id: <anonymous-schema-99>
+                      description: >-
+                        DELIVERED gives a DELIVERED scan; any other value gives
+                        DELIVERY_FAILED.
+                      x-parser-schema-id: <anonymous-schema-98>
                     failureReason:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-100>
+                      x-parser-schema-id: <anonymous-schema-99>
                     at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-101>
-                  x-parser-schema-id: <anonymous-schema-96>
-              x-parser-schema-id: <anonymous-schema-95>
+                      x-parser-schema-id: <anonymous-schema-100>
+                  x-parser-schema-id: <anonymous-schema-95>
+              x-parser-schema-id: <anonymous-schema-94>
           x-parser-schema-id: DeliveryAttemptedEvent
         examples:
           - name: deliveryAttempted
@@ -1690,12 +1677,14 @@ channels:
                   properties:
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-104>
-                    assignmentId:
+                      x-parser-schema-id: <anonymous-schema-103>
+                    at:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-105>
-                  x-parser-schema-id: <anonymous-schema-103>
-              x-parser-schema-id: <anonymous-schema-102>
+                      format: date-time
+                      description: Falls back to the CloudEvents time.
+                      x-parser-schema-id: <anonymous-schema-104>
+                  x-parser-schema-id: <anonymous-schema-102>
+              x-parser-schema-id: <anonymous-schema-101>
           x-parser-schema-id: PackageReturnInitiatedEvent
         examples:
           - name: packageReturnInitiated
@@ -1791,30 +1780,30 @@ channels:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-108>
+                      x-parser-schema-id: <anonymous-schema-107>
                     title:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-109>
+                      x-parser-schema-id: <anonymous-schema-108>
                     lengthMm:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-110>
+                      x-parser-schema-id: <anonymous-schema-109>
                     widthMm:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-111>
+                      x-parser-schema-id: <anonymous-schema-110>
                     heightMm:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-112>
+                      x-parser-schema-id: <anonymous-schema-111>
                     weightG:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-113>
+                      x-parser-schema-id: <anonymous-schema-112>
                     hazmat:
                       type: boolean
-                      x-parser-schema-id: <anonymous-schema-114>
+                      x-parser-schema-id: <anonymous-schema-113>
                     fragile:
                       type: boolean
-                      x-parser-schema-id: <anonymous-schema-115>
-                  x-parser-schema-id: <anonymous-schema-107>
-              x-parser-schema-id: <anonymous-schema-106>
+                      x-parser-schema-id: <anonymous-schema-114>
+                  x-parser-schema-id: <anonymous-schema-106>
+              x-parser-schema-id: <anonymous-schema-105>
           x-parser-schema-id: CatalogItemCreatedEvent
         examples:
           - name: catalogItemCreated
@@ -3744,10 +3733,7 @@ operations:
                   data:
                     type: object
                     required:
-                      - poNumber
-                      - nodeId
                       - trackingNumbers
-                      - shippedAt
                     properties:
                       poNumber:
                         type: string
@@ -3862,10 +3848,7 @@ operations:
                 data:
                   type: object
                   required:
-                    - poNumber
-                    - nodeId
                     - trackingNumbers
-                    - shippedAt
                   properties:
                     poNumber:
                       type: string
@@ -3952,8 +3935,10 @@ operations:
             `com.retailnetwork.logistics.linehaul-transportation.load.LoadDeparted`.
             A load left a node. departureKind PICKUP at a vendor node is the
             handover (PICKUP_DEPARTURE); other kinds are DEPARTURE scans.
-            departureKind and nodeType are contracts-delta E3 additions; their
-            absence is tolerated (departureKind then defaults to LINEHAUL).
+            departureKind is a contracts-delta E3 addition; its absence is
+            tolerated (the scan is then a DEPARTURE, or the handover while the
+            journey is LABELLED). A missing timestamp falls back to the
+            CloudEvents `time`.
           contentType: application/cloudevents+json
           tags:
             - name: shipping-and-tracking
@@ -4006,10 +3991,7 @@ operations:
                   data:
                     type: object
                     required:
-                      - loadId
-                      - originNodeId
                       - trackingNumbers
-                      - departedAt
                     properties:
                       loadId:
                         type: string
@@ -4032,15 +4014,11 @@ operations:
                         x-parser-schema-id: <anonymous-schema-76>
                       departureKind:
                         type: string
-                        enum:
-                          - PICKUP
-                          - LINEHAUL
-                          - AIR
+                        description: >-
+                          PICKUP gives a PICKUP_DEPARTURE scan; any other value
+                          gives DEPARTURE. Absent: DEPARTURE, upgraded to a
+                          handover while the journey is LABELLED.
                         x-parser-schema-id: <anonymous-schema-77>
-                      nodeType:
-                        type: string
-                        description: Type of the node where it happened.
-                        x-parser-schema-id: <anonymous-schema-78>
                     x-parser-schema-id: <anonymous-schema-70>
                 x-parser-schema-id: <anonymous-schema-69>
             x-parser-schema-id: LoadDepartedEvent
@@ -4132,43 +4110,39 @@ operations:
                   data:
                     type: object
                     required:
-                      - loadId
-                      - destinationNodeId
                       - trackingNumbers
-                      - arrivedAt
                     properties:
                       loadId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-81>
+                        x-parser-schema-id: <anonymous-schema-80>
                       departureId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-82>
+                        x-parser-schema-id: <anonymous-schema-81>
                       destinationNodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-83>
+                        x-parser-schema-id: <anonymous-schema-82>
                       trackingNumbers:
                         type: array
                         items:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-85>
-                        x-parser-schema-id: <anonymous-schema-84>
+                          x-parser-schema-id: <anonymous-schema-84>
+                        x-parser-schema-id: <anonymous-schema-83>
                       arrivedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-86>
-                      departureKind:
-                        type: string
-                        enum:
-                          - PICKUP
-                          - LINEHAUL
-                          - AIR
-                        x-parser-schema-id: <anonymous-schema-87>
+                        x-parser-schema-id: <anonymous-schema-85>
                       nodeType:
                         type: string
-                        description: Type of the node where it happened.
-                        x-parser-schema-id: <anonymous-schema-88>
-                    x-parser-schema-id: <anonymous-schema-80>
-                x-parser-schema-id: <anonymous-schema-79>
+                        description: >-
+                          DELIVERY_STATION gives a STATION_ARRIVAL scan, any
+                          other value TRANSIT_ARRIVAL.
+                        x-parser-schema-id: <anonymous-schema-86>
+                      destinationNodeType:
+                        type: string
+                        description: Read only when nodeType is empty; same meaning.
+                        x-parser-schema-id: <anonymous-schema-87>
+                    x-parser-schema-id: <anonymous-schema-79>
+                x-parser-schema-id: <anonymous-schema-78>
             x-parser-schema-id: LoadArrivedEvent
           examples:
             - name: loadArrived
@@ -4205,8 +4179,10 @@ operations:
           `com.retailnetwork.logistics.linehaul-transportation.load.LoadDeparted`.
           A load left a node. departureKind PICKUP at a vendor node is the
           handover (PICKUP_DEPARTURE); other kinds are DEPARTURE scans.
-          departureKind and nodeType are contracts-delta E3 additions; their
-          absence is tolerated (departureKind then defaults to LINEHAUL).
+          departureKind is a contracts-delta E3 addition; its absence is
+          tolerated (the scan is then a DEPARTURE, or the handover while the
+          journey is LABELLED). A missing timestamp falls back to the
+          CloudEvents `time`.
         contentType: application/cloudevents+json
         tags:
           - name: shipping-and-tracking
@@ -4259,10 +4235,7 @@ operations:
                 data:
                   type: object
                   required:
-                    - loadId
-                    - originNodeId
                     - trackingNumbers
-                    - departedAt
                   properties:
                     loadId:
                       type: string
@@ -4285,15 +4258,11 @@ operations:
                       x-parser-schema-id: <anonymous-schema-76>
                     departureKind:
                       type: string
-                      enum:
-                        - PICKUP
-                        - LINEHAUL
-                        - AIR
+                      description: >-
+                        PICKUP gives a PICKUP_DEPARTURE scan; any other value
+                        gives DEPARTURE. Absent: DEPARTURE, upgraded to a
+                        handover while the journey is LABELLED.
                       x-parser-schema-id: <anonymous-schema-77>
-                    nodeType:
-                      type: string
-                      description: Type of the node where it happened.
-                      x-parser-schema-id: <anonymous-schema-78>
                   x-parser-schema-id: <anonymous-schema-70>
               x-parser-schema-id: <anonymous-schema-69>
           x-parser-schema-id: LoadDepartedEvent
@@ -4382,43 +4351,39 @@ operations:
                 data:
                   type: object
                   required:
-                    - loadId
-                    - destinationNodeId
                     - trackingNumbers
-                    - arrivedAt
                   properties:
                     loadId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-81>
+                      x-parser-schema-id: <anonymous-schema-80>
                     departureId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-82>
+                      x-parser-schema-id: <anonymous-schema-81>
                     destinationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-83>
+                      x-parser-schema-id: <anonymous-schema-82>
                     trackingNumbers:
                       type: array
                       items:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-85>
-                      x-parser-schema-id: <anonymous-schema-84>
+                        x-parser-schema-id: <anonymous-schema-84>
+                      x-parser-schema-id: <anonymous-schema-83>
                     arrivedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-86>
-                    departureKind:
-                      type: string
-                      enum:
-                        - PICKUP
-                        - LINEHAUL
-                        - AIR
-                      x-parser-schema-id: <anonymous-schema-87>
+                      x-parser-schema-id: <anonymous-schema-85>
                     nodeType:
                       type: string
-                      description: Type of the node where it happened.
-                      x-parser-schema-id: <anonymous-schema-88>
-                  x-parser-schema-id: <anonymous-schema-80>
-              x-parser-schema-id: <anonymous-schema-79>
+                      description: >-
+                        DELIVERY_STATION gives a STATION_ARRIVAL scan, any other
+                        value TRANSIT_ARRIVAL.
+                      x-parser-schema-id: <anonymous-schema-86>
+                    destinationNodeType:
+                      type: string
+                      description: Read only when nodeType is empty; same meaning.
+                      x-parser-schema-id: <anonymous-schema-87>
+                  x-parser-schema-id: <anonymous-schema-79>
+              x-parser-schema-id: <anonymous-schema-78>
           x-parser-schema-id: LoadArrivedEvent
         examples:
           - name: loadArrived
@@ -4534,24 +4499,22 @@ operations:
                     type: object
                     required:
                       - trackingNumber
-                      - stationNodeId
-                      - at
                     properties:
                       routeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-91>
+                        x-parser-schema-id: <anonymous-schema-90>
                       trackingNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-92>
+                        x-parser-schema-id: <anonymous-schema-91>
                       stationNodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-93>
+                        x-parser-schema-id: <anonymous-schema-92>
                       at:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-94>
-                    x-parser-schema-id: <anonymous-schema-90>
-                x-parser-schema-id: <anonymous-schema-89>
+                        x-parser-schema-id: <anonymous-schema-93>
+                    x-parser-schema-id: <anonymous-schema-89>
+                x-parser-schema-id: <anonymous-schema-88>
             x-parser-schema-id: PackageOutForDeliveryEvent
           examples:
             - name: packageOutForDelivery
@@ -4637,28 +4600,28 @@ operations:
                     type: object
                     required:
                       - trackingNumber
-                      - outcome
-                      - at
                     properties:
                       routeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-97>
+                        x-parser-schema-id: <anonymous-schema-96>
                       trackingNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-98>
+                        x-parser-schema-id: <anonymous-schema-97>
                       outcome:
                         type: string
-                        description: DELIVERED or FAILED.
-                        x-parser-schema-id: <anonymous-schema-99>
+                        description: >-
+                          DELIVERED gives a DELIVERED scan; any other value
+                          gives DELIVERY_FAILED.
+                        x-parser-schema-id: <anonymous-schema-98>
                       failureReason:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-100>
+                        x-parser-schema-id: <anonymous-schema-99>
                       at:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-101>
-                    x-parser-schema-id: <anonymous-schema-96>
-                x-parser-schema-id: <anonymous-schema-95>
+                        x-parser-schema-id: <anonymous-schema-100>
+                    x-parser-schema-id: <anonymous-schema-95>
+                x-parser-schema-id: <anonymous-schema-94>
             x-parser-schema-id: DeliveryAttemptedEvent
           examples:
             - name: deliveryAttempted
@@ -4747,12 +4710,14 @@ operations:
                     properties:
                       trackingNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-104>
-                      assignmentId:
+                        x-parser-schema-id: <anonymous-schema-103>
+                      at:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-105>
-                    x-parser-schema-id: <anonymous-schema-103>
-                x-parser-schema-id: <anonymous-schema-102>
+                        format: date-time
+                        description: Falls back to the CloudEvents time.
+                        x-parser-schema-id: <anonymous-schema-104>
+                    x-parser-schema-id: <anonymous-schema-102>
+                x-parser-schema-id: <anonymous-schema-101>
             x-parser-schema-id: PackageReturnInitiatedEvent
           examples:
             - name: packageReturnInitiated
@@ -4835,24 +4800,22 @@ operations:
                   type: object
                   required:
                     - trackingNumber
-                    - stationNodeId
-                    - at
                   properties:
                     routeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-91>
+                      x-parser-schema-id: <anonymous-schema-90>
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-92>
+                      x-parser-schema-id: <anonymous-schema-91>
                     stationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-93>
+                      x-parser-schema-id: <anonymous-schema-92>
                     at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-94>
-                  x-parser-schema-id: <anonymous-schema-90>
-              x-parser-schema-id: <anonymous-schema-89>
+                      x-parser-schema-id: <anonymous-schema-93>
+                  x-parser-schema-id: <anonymous-schema-89>
+              x-parser-schema-id: <anonymous-schema-88>
           x-parser-schema-id: PackageOutForDeliveryEvent
         examples:
           - name: packageOutForDelivery
@@ -4937,28 +4900,28 @@ operations:
                   type: object
                   required:
                     - trackingNumber
-                    - outcome
-                    - at
                   properties:
                     routeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-97>
+                      x-parser-schema-id: <anonymous-schema-96>
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-98>
+                      x-parser-schema-id: <anonymous-schema-97>
                     outcome:
                       type: string
-                      description: DELIVERED or FAILED.
-                      x-parser-schema-id: <anonymous-schema-99>
+                      description: >-
+                        DELIVERED gives a DELIVERED scan; any other value gives
+                        DELIVERY_FAILED.
+                      x-parser-schema-id: <anonymous-schema-98>
                     failureReason:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-100>
+                      x-parser-schema-id: <anonymous-schema-99>
                     at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-101>
-                  x-parser-schema-id: <anonymous-schema-96>
-              x-parser-schema-id: <anonymous-schema-95>
+                      x-parser-schema-id: <anonymous-schema-100>
+                  x-parser-schema-id: <anonymous-schema-95>
+              x-parser-schema-id: <anonymous-schema-94>
           x-parser-schema-id: DeliveryAttemptedEvent
         examples:
           - name: deliveryAttempted
@@ -5045,12 +5008,14 @@ operations:
                   properties:
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-104>
-                    assignmentId:
+                      x-parser-schema-id: <anonymous-schema-103>
+                    at:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-105>
-                  x-parser-schema-id: <anonymous-schema-103>
-              x-parser-schema-id: <anonymous-schema-102>
+                      format: date-time
+                      description: Falls back to the CloudEvents time.
+                      x-parser-schema-id: <anonymous-schema-104>
+                  x-parser-schema-id: <anonymous-schema-102>
+              x-parser-schema-id: <anonymous-schema-101>
           x-parser-schema-id: PackageReturnInitiatedEvent
         examples:
           - name: packageReturnInitiated
@@ -5162,30 +5127,30 @@ operations:
                     properties:
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-108>
+                        x-parser-schema-id: <anonymous-schema-107>
                       title:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-109>
+                        x-parser-schema-id: <anonymous-schema-108>
                       lengthMm:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-110>
+                        x-parser-schema-id: <anonymous-schema-109>
                       widthMm:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-111>
+                        x-parser-schema-id: <anonymous-schema-110>
                       heightMm:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-112>
+                        x-parser-schema-id: <anonymous-schema-111>
                       weightG:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-113>
+                        x-parser-schema-id: <anonymous-schema-112>
                       hazmat:
                         type: boolean
-                        x-parser-schema-id: <anonymous-schema-114>
+                        x-parser-schema-id: <anonymous-schema-113>
                       fragile:
                         type: boolean
-                        x-parser-schema-id: <anonymous-schema-115>
-                    x-parser-schema-id: <anonymous-schema-107>
-                x-parser-schema-id: <anonymous-schema-106>
+                        x-parser-schema-id: <anonymous-schema-114>
+                    x-parser-schema-id: <anonymous-schema-106>
+                x-parser-schema-id: <anonymous-schema-105>
             x-parser-schema-id: CatalogItemCreatedEvent
           examples:
             - name: catalogItemCreated
@@ -5279,30 +5244,30 @@ operations:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-108>
+                      x-parser-schema-id: <anonymous-schema-107>
                     title:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-109>
+                      x-parser-schema-id: <anonymous-schema-108>
                     lengthMm:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-110>
+                      x-parser-schema-id: <anonymous-schema-109>
                     widthMm:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-111>
+                      x-parser-schema-id: <anonymous-schema-110>
                     heightMm:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-112>
+                      x-parser-schema-id: <anonymous-schema-111>
                     weightG:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-113>
+                      x-parser-schema-id: <anonymous-schema-112>
                     hazmat:
                       type: boolean
-                      x-parser-schema-id: <anonymous-schema-114>
+                      x-parser-schema-id: <anonymous-schema-113>
                     fragile:
                       type: boolean
-                      x-parser-schema-id: <anonymous-schema-115>
-                  x-parser-schema-id: <anonymous-schema-107>
-              x-parser-schema-id: <anonymous-schema-106>
+                      x-parser-schema-id: <anonymous-schema-114>
+                  x-parser-schema-id: <anonymous-schema-106>
+              x-parser-schema-id: <anonymous-schema-105>
           x-parser-schema-id: CatalogItemCreatedEvent
         examples:
           - name: catalogItemCreated
@@ -6280,10 +6245,7 @@ components:
               data:
                 type: object
                 required:
-                  - poNumber
-                  - nodeId
                   - trackingNumbers
-                  - shippedAt
                 properties:
                   poNumber:
                     type: string
@@ -6343,8 +6305,9 @@ components:
         `com.retailnetwork.logistics.linehaul-transportation.load.LoadDeparted`.
         A load left a node. departureKind PICKUP at a vendor node is the
         handover (PICKUP_DEPARTURE); other kinds are DEPARTURE scans.
-        departureKind and nodeType are contracts-delta E3 additions; their
-        absence is tolerated (departureKind then defaults to LINEHAUL).
+        departureKind is a contracts-delta E3 addition; its absence is tolerated
+        (the scan is then a DEPARTURE, or the handover while the journey is
+        LABELLED). A missing timestamp falls back to the CloudEvents `time`.
       contentType: application/cloudevents+json
       tags:
         - name: shipping-and-tracking
@@ -6397,10 +6360,7 @@ components:
               data:
                 type: object
                 required:
-                  - loadId
-                  - originNodeId
                   - trackingNumbers
-                  - departedAt
                 properties:
                   loadId:
                     type: string
@@ -6423,15 +6383,11 @@ components:
                     x-parser-schema-id: <anonymous-schema-76>
                   departureKind:
                     type: string
-                    enum:
-                      - PICKUP
-                      - LINEHAUL
-                      - AIR
+                    description: >-
+                      PICKUP gives a PICKUP_DEPARTURE scan; any other value
+                      gives DEPARTURE. Absent: DEPARTURE, upgraded to a handover
+                      while the journey is LABELLED.
                     x-parser-schema-id: <anonymous-schema-77>
-                  nodeType:
-                    type: string
-                    description: Type of the node where it happened.
-                    x-parser-schema-id: <anonymous-schema-78>
                 x-parser-schema-id: <anonymous-schema-70>
             x-parser-schema-id: <anonymous-schema-69>
         x-parser-schema-id: LoadDepartedEvent
@@ -6521,43 +6477,39 @@ components:
               data:
                 type: object
                 required:
-                  - loadId
-                  - destinationNodeId
                   - trackingNumbers
-                  - arrivedAt
                 properties:
                   loadId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-81>
+                    x-parser-schema-id: <anonymous-schema-80>
                   departureId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-82>
+                    x-parser-schema-id: <anonymous-schema-81>
                   destinationNodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-83>
+                    x-parser-schema-id: <anonymous-schema-82>
                   trackingNumbers:
                     type: array
                     items:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-85>
-                    x-parser-schema-id: <anonymous-schema-84>
+                      x-parser-schema-id: <anonymous-schema-84>
+                    x-parser-schema-id: <anonymous-schema-83>
                   arrivedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-86>
-                  departureKind:
-                    type: string
-                    enum:
-                      - PICKUP
-                      - LINEHAUL
-                      - AIR
-                    x-parser-schema-id: <anonymous-schema-87>
+                    x-parser-schema-id: <anonymous-schema-85>
                   nodeType:
                     type: string
-                    description: Type of the node where it happened.
-                    x-parser-schema-id: <anonymous-schema-88>
-                x-parser-schema-id: <anonymous-schema-80>
-            x-parser-schema-id: <anonymous-schema-79>
+                    description: >-
+                      DELIVERY_STATION gives a STATION_ARRIVAL scan, any other
+                      value TRANSIT_ARRIVAL.
+                    x-parser-schema-id: <anonymous-schema-86>
+                  destinationNodeType:
+                    type: string
+                    description: Read only when nodeType is empty; same meaning.
+                    x-parser-schema-id: <anonymous-schema-87>
+                x-parser-schema-id: <anonymous-schema-79>
+            x-parser-schema-id: <anonymous-schema-78>
         x-parser-schema-id: LoadArrivedEvent
       examples:
         - name: loadArrived
@@ -6644,24 +6596,22 @@ components:
                 type: object
                 required:
                   - trackingNumber
-                  - stationNodeId
-                  - at
                 properties:
                   routeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-91>
+                    x-parser-schema-id: <anonymous-schema-90>
                   trackingNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-92>
+                    x-parser-schema-id: <anonymous-schema-91>
                   stationNodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-93>
+                    x-parser-schema-id: <anonymous-schema-92>
                   at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-94>
-                x-parser-schema-id: <anonymous-schema-90>
-            x-parser-schema-id: <anonymous-schema-89>
+                    x-parser-schema-id: <anonymous-schema-93>
+                x-parser-schema-id: <anonymous-schema-89>
+            x-parser-schema-id: <anonymous-schema-88>
         x-parser-schema-id: PackageOutForDeliveryEvent
       examples:
         - name: packageOutForDelivery
@@ -6747,28 +6697,28 @@ components:
                 type: object
                 required:
                   - trackingNumber
-                  - outcome
-                  - at
                 properties:
                   routeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-97>
+                    x-parser-schema-id: <anonymous-schema-96>
                   trackingNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-98>
+                    x-parser-schema-id: <anonymous-schema-97>
                   outcome:
                     type: string
-                    description: DELIVERED or FAILED.
-                    x-parser-schema-id: <anonymous-schema-99>
+                    description: >-
+                      DELIVERED gives a DELIVERED scan; any other value gives
+                      DELIVERY_FAILED.
+                    x-parser-schema-id: <anonymous-schema-98>
                   failureReason:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-100>
+                    x-parser-schema-id: <anonymous-schema-99>
                   at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-101>
-                x-parser-schema-id: <anonymous-schema-96>
-            x-parser-schema-id: <anonymous-schema-95>
+                    x-parser-schema-id: <anonymous-schema-100>
+                x-parser-schema-id: <anonymous-schema-95>
+            x-parser-schema-id: <anonymous-schema-94>
         x-parser-schema-id: DeliveryAttemptedEvent
       examples:
         - name: deliveryAttempted
@@ -6856,12 +6806,14 @@ components:
                 properties:
                   trackingNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-104>
-                  assignmentId:
+                    x-parser-schema-id: <anonymous-schema-103>
+                  at:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-105>
-                x-parser-schema-id: <anonymous-schema-103>
-            x-parser-schema-id: <anonymous-schema-102>
+                    format: date-time
+                    description: Falls back to the CloudEvents time.
+                    x-parser-schema-id: <anonymous-schema-104>
+                x-parser-schema-id: <anonymous-schema-102>
+            x-parser-schema-id: <anonymous-schema-101>
         x-parser-schema-id: PackageReturnInitiatedEvent
       examples:
         - name: packageReturnInitiated
@@ -6946,30 +6898,30 @@ components:
                 properties:
                   catalogItemId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-108>
+                    x-parser-schema-id: <anonymous-schema-107>
                   title:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-109>
+                    x-parser-schema-id: <anonymous-schema-108>
                   lengthMm:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-110>
+                    x-parser-schema-id: <anonymous-schema-109>
                   widthMm:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-111>
+                    x-parser-schema-id: <anonymous-schema-110>
                   heightMm:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-112>
+                    x-parser-schema-id: <anonymous-schema-111>
                   weightG:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-113>
+                    x-parser-schema-id: <anonymous-schema-112>
                   hazmat:
                     type: boolean
-                    x-parser-schema-id: <anonymous-schema-114>
+                    x-parser-schema-id: <anonymous-schema-113>
                   fragile:
                     type: boolean
-                    x-parser-schema-id: <anonymous-schema-115>
-                x-parser-schema-id: <anonymous-schema-107>
-            x-parser-schema-id: <anonymous-schema-106>
+                    x-parser-schema-id: <anonymous-schema-114>
+                x-parser-schema-id: <anonymous-schema-106>
+            x-parser-schema-id: <anonymous-schema-105>
         x-parser-schema-id: CatalogItemCreatedEvent
       examples:
         - name: catalogItemCreated
@@ -7736,10 +7688,7 @@ components:
             data:
               type: object
               required:
-                - poNumber
-                - nodeId
                 - trackingNumbers
-                - shippedAt
               properties:
                 poNumber:
                   type: string
@@ -7816,10 +7765,7 @@ components:
             data:
               type: object
               required:
-                - loadId
-                - originNodeId
                 - trackingNumbers
-                - departedAt
               properties:
                 loadId:
                   type: string
@@ -7842,15 +7788,11 @@ components:
                   x-parser-schema-id: <anonymous-schema-76>
                 departureKind:
                   type: string
-                  enum:
-                    - PICKUP
-                    - LINEHAUL
-                    - AIR
+                  description: >-
+                    PICKUP gives a PICKUP_DEPARTURE scan; any other value gives
+                    DEPARTURE. Absent: DEPARTURE, upgraded to a handover while
+                    the journey is LABELLED.
                   x-parser-schema-id: <anonymous-schema-77>
-                nodeType:
-                  type: string
-                  description: Type of the node where it happened.
-                  x-parser-schema-id: <anonymous-schema-78>
               x-parser-schema-id: <anonymous-schema-70>
           x-parser-schema-id: <anonymous-schema-69>
       x-parser-schema-id: LoadDepartedEvent
@@ -7903,43 +7845,39 @@ components:
             data:
               type: object
               required:
-                - loadId
-                - destinationNodeId
                 - trackingNumbers
-                - arrivedAt
               properties:
                 loadId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-81>
+                  x-parser-schema-id: <anonymous-schema-80>
                 departureId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-82>
+                  x-parser-schema-id: <anonymous-schema-81>
                 destinationNodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-83>
+                  x-parser-schema-id: <anonymous-schema-82>
                 trackingNumbers:
                   type: array
                   items:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-85>
-                  x-parser-schema-id: <anonymous-schema-84>
+                    x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-83>
                 arrivedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-86>
-                departureKind:
-                  type: string
-                  enum:
-                    - PICKUP
-                    - LINEHAUL
-                    - AIR
-                  x-parser-schema-id: <anonymous-schema-87>
+                  x-parser-schema-id: <anonymous-schema-85>
                 nodeType:
                   type: string
-                  description: Type of the node where it happened.
-                  x-parser-schema-id: <anonymous-schema-88>
-              x-parser-schema-id: <anonymous-schema-80>
-          x-parser-schema-id: <anonymous-schema-79>
+                  description: >-
+                    DELIVERY_STATION gives a STATION_ARRIVAL scan, any other
+                    value TRANSIT_ARRIVAL.
+                  x-parser-schema-id: <anonymous-schema-86>
+                destinationNodeType:
+                  type: string
+                  description: Read only when nodeType is empty; same meaning.
+                  x-parser-schema-id: <anonymous-schema-87>
+              x-parser-schema-id: <anonymous-schema-79>
+          x-parser-schema-id: <anonymous-schema-78>
       x-parser-schema-id: LoadArrivedEvent
     PackageOutForDeliveryEvent:
       allOf:
@@ -7991,24 +7929,22 @@ components:
               type: object
               required:
                 - trackingNumber
-                - stationNodeId
-                - at
               properties:
                 routeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-91>
+                  x-parser-schema-id: <anonymous-schema-90>
                 trackingNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-92>
+                  x-parser-schema-id: <anonymous-schema-91>
                 stationNodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-93>
+                  x-parser-schema-id: <anonymous-schema-92>
                 at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-94>
-              x-parser-schema-id: <anonymous-schema-90>
-          x-parser-schema-id: <anonymous-schema-89>
+                  x-parser-schema-id: <anonymous-schema-93>
+              x-parser-schema-id: <anonymous-schema-89>
+          x-parser-schema-id: <anonymous-schema-88>
       x-parser-schema-id: PackageOutForDeliveryEvent
     DeliveryAttemptedEvent:
       allOf:
@@ -8060,28 +7996,28 @@ components:
               type: object
               required:
                 - trackingNumber
-                - outcome
-                - at
               properties:
                 routeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-96>
                 trackingNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-98>
+                  x-parser-schema-id: <anonymous-schema-97>
                 outcome:
                   type: string
-                  description: DELIVERED or FAILED.
-                  x-parser-schema-id: <anonymous-schema-99>
+                  description: >-
+                    DELIVERED gives a DELIVERED scan; any other value gives
+                    DELIVERY_FAILED.
+                  x-parser-schema-id: <anonymous-schema-98>
                 failureReason:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-100>
+                  x-parser-schema-id: <anonymous-schema-99>
                 at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-101>
-              x-parser-schema-id: <anonymous-schema-96>
-          x-parser-schema-id: <anonymous-schema-95>
+                  x-parser-schema-id: <anonymous-schema-100>
+              x-parser-schema-id: <anonymous-schema-95>
+          x-parser-schema-id: <anonymous-schema-94>
       x-parser-schema-id: DeliveryAttemptedEvent
     PackageReturnInitiatedEvent:
       allOf:
@@ -8136,12 +8072,14 @@ components:
               properties:
                 trackingNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-104>
-                assignmentId:
+                  x-parser-schema-id: <anonymous-schema-103>
+                at:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-105>
-              x-parser-schema-id: <anonymous-schema-103>
-          x-parser-schema-id: <anonymous-schema-102>
+                  format: date-time
+                  description: Falls back to the CloudEvents time.
+                  x-parser-schema-id: <anonymous-schema-104>
+              x-parser-schema-id: <anonymous-schema-102>
+          x-parser-schema-id: <anonymous-schema-101>
       x-parser-schema-id: PackageReturnInitiatedEvent
     CatalogItemCreatedEvent:
       allOf:
@@ -8196,30 +8134,30 @@ components:
               properties:
                 catalogItemId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-108>
+                  x-parser-schema-id: <anonymous-schema-107>
                 title:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-109>
+                  x-parser-schema-id: <anonymous-schema-108>
                 lengthMm:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-110>
+                  x-parser-schema-id: <anonymous-schema-109>
                 widthMm:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-111>
+                  x-parser-schema-id: <anonymous-schema-110>
                 heightMm:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-112>
+                  x-parser-schema-id: <anonymous-schema-111>
                 weightG:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-113>
+                  x-parser-schema-id: <anonymous-schema-112>
                 hazmat:
                   type: boolean
-                  x-parser-schema-id: <anonymous-schema-114>
+                  x-parser-schema-id: <anonymous-schema-113>
                 fragile:
                   type: boolean
-                  x-parser-schema-id: <anonymous-schema-115>
-              x-parser-schema-id: <anonymous-schema-107>
-          x-parser-schema-id: <anonymous-schema-106>
+                  x-parser-schema-id: <anonymous-schema-114>
+              x-parser-schema-id: <anonymous-schema-106>
+          x-parser-schema-id: <anonymous-schema-105>
       x-parser-schema-id: CatalogItemCreatedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

@@ -22,7 +22,7 @@ paths:
         - Carts
       operationId: createCart
       summary: Create a cart
-      description: CreateCart. shopperId is optional (guest-first, D4); a guest cart can be merged into a shopper's cart later.
+      description: 'CreateCart. shopperId is optional (guest-first, D4; the body itself may be empty) but, when sent, must be a valid id (1 to 64 characters, letters or digits first, then letters, digits and . _ : -), else 422 validation-failed. A guest cart can be merged into a shopper''s cart later.'
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -34,6 +34,9 @@ paths:
               properties:
                 shopperId:
                   type: string
+                  minLength: 1
+                  maxLength: 64
+                  pattern: ^[A-Za-z0-9][A-Za-z0-9._:-]*$
       responses:
         '201':
           description: The created cart (OPEN).
@@ -50,6 +53,8 @@ paths:
           $ref: '#/components/responses/IdempotencyKeyReused'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
     get:
       tags:
         - Carts
@@ -60,11 +65,16 @@ paths:
         - name: shopperId
           in: query
           required: true
+          description: 'A valid id (1 to 64 characters, letters or digits first, then letters, digits and . _ : -). Missing, empty or invalid is 422 validation-failed.'
           schema:
             type: string
+            minLength: 1
+            maxLength: 64
+            pattern: ^[A-Za-z0-9][A-Za-z0-9._:-]*$
         - name: state
           in: query
           required: false
+          description: Filter by cart state; any other value is 422 validation-failed.
           schema:
             $ref: '#/components/schemas/CartState'
         - $ref: '#/components/parameters/Limit'
@@ -77,13 +87,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/CartPage'
         '400':
-          description: invalid-limit (limit is empty, repeated or not an integer from 1 to 500), invalid-cursor (cursor is repeated or does not decode), unknown-query-parameter (a query parameter this operation does not declare; the first offender is named) or malformed-request.
+          description: invalid-limit (limit is empty, repeated or not an integer from 1 to 500), invalid-cursor (cursor is repeated or does not decode), unknown-query-parameter (a query parameter this operation does not declare; the first offender is named) or malformed-request (a NUL character in the query string).
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /carts/{cartId}:
     get:
       tags:
@@ -102,6 +114,8 @@ paths:
                 $ref: '#/components/schemas/Cart'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /carts/{cartId}/lines:
     post:
       tags:
@@ -144,6 +158,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /carts/{cartId}/lines/{catalogItemId}:
     put:
       tags:
@@ -174,6 +190,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Cart'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -188,6 +206,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
     delete:
       tags:
         - Lines
@@ -212,6 +232,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /carts/{cartId}/destination:
     put:
       tags:
@@ -233,6 +255,8 @@ paths:
                 destinationPostalPrefix:
                   type: string
                   minLength: 1
+                  maxLength: 10
+                  pattern: ^[A-Za-z0-9]+$
       responses:
         '200':
           description: The updated cart.
@@ -240,6 +264,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Cart'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -250,6 +276,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /carts/{cartId}/delivery-quotes:
     post:
       tags:
@@ -286,6 +314,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           description: delivery-promise unreachable or timed out (delivery-promise-unavailable). Retry with the same Idempotency-Key.
           content:
@@ -298,7 +328,7 @@ paths:
         - Delivery
       operationId: selectCartDelivery
       summary: Select a delivery offer for a shipment group
-      description: SelectDelivery. Replaces the selection of one shipment group. The selection must name an offer of the current quote (ErrStaleDeliverySelection). Idempotent by method (no Idempotency-Key).
+      description: SelectDelivery. Replaces the selection of one shipment group. The selection must name an offer of the current quote (ErrStaleDeliverySelection; a groupNo the quote does not have is the same 409). Idempotent by method (no Idempotency-Key).
       parameters:
         - $ref: '#/components/parameters/CartId'
       requestBody:
@@ -313,7 +343,6 @@ paths:
               properties:
                 groupNo:
                   type: integer
-                  minimum: 1
                 offerId:
                   type: string
       responses:
@@ -323,6 +352,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Cart'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -333,6 +364,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /carts/{cartId}/merges:
     post:
       tags:
@@ -380,6 +413,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /carts/{cartId}/delivery-requote-acceptances:
     post:
       tags:
@@ -430,6 +465,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   parameters:
     IdempotencyKey:
@@ -472,14 +509,14 @@ components:
         type: string
   headers:
     IdempotencyReplayed:
-      description: '"true" when the answer is the stored response of an earlier request with the same Idempotency-Key; absent on the first execution.'
+      description: '"true" when the answer is the stored response of an earlier request with the same Idempotency-Key (a stored 4xx problem is replayed with it too; only answers below 500 are stored); absent on the first execution.'
       schema:
         type: string
         enum:
           - 'true'
   responses:
     NotFound:
-      description: not-found.
+      description: not-found (no such cart or line, or an identifier over 128 characters) or resource-not-found (a NUL character in the path).
       content:
         application/problem+json:
           schema:
@@ -490,8 +527,20 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+    MalformedRequest:
+      description: malformed-request (the body is empty, not JSON, carries an unknown field or trailing data, a wrong type, a NUL character or exceeds 64 KiB).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    InternalError:
+      description: internal-error (an unexpected failure; the detail never carries the internal message).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     IdempotencyKeyProblem:
-      description: idempotency-key-required (no Idempotency-Key header), idempotency-key-invalid (not 1 to 128 printable ASCII characters) or malformed-request.
+      description: idempotency-key-required (no Idempotency-Key header), idempotency-key-invalid (not 1 to 128 printable ASCII characters) or malformed-request (not JSON, an unknown field, a NUL character or a body over 64 KiB).
       content:
         application/problem+json:
           schema:
@@ -510,6 +559,8 @@ components:
         - type
         - title
         - status
+        - detail
+        - instance
       properties:
         type:
           type: string
@@ -560,6 +611,9 @@ components:
       properties:
         catalogItemId:
           type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._:-]*$
         quantity:
           type: integer
           minimum: 1
@@ -629,6 +683,7 @@ components:
       required:
         - groups
         - unavailableTiers
+        - unavailable
         - quotedAt
       properties:
         groups:
@@ -708,8 +763,13 @@ components:
       type: object
       required:
         - cartId
+        - shopperId
         - state
         - lines
+        - destinationPostalPrefix
+        - selections
+        - estimate
+        - checkoutReadiness
         - version
       properties:
         cartId:
@@ -738,6 +798,7 @@ components:
           $ref: '#/components/schemas/CheckoutReadiness'
         version:
           type: integer
+          format: int64
           minimum: 1
     CartPage:
       type: object

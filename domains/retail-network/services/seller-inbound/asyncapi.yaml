@@ -43,10 +43,18 @@ info:
     `CatalogItemPackagingDeclared`, `CatalogItemPackLevelRetired` (local
     CatalogPackagingView); vendor-connectivity `InboundReceiptSubmitted`. Each
     is deduplicated on the CloudEvents `id` in the `processed_events` inbox
-    table, dispatched on the full `type`, decoded tolerantly (unknown fields are
-    ignored) and dead-lettered to `<topic>.dlq` when it cannot be processed. The
-    consumed `data` below lists only the fields this context relies on. There
-    are no synchronous calls to any neighbour.
+    table and dispatched on the full `type`; a message that is not a valid
+    CloudEvents 1.0 envelope is skipped with a WARN and a type this context does
+    not act on is ignored (both are committed past). `data` is decoded
+    tolerantly (unknown fields are ignored). Offsets are committed only after
+    the handler succeeded; a transient failure retries the same message with
+    capped exponential backoff, and a payload that can never be applied (a value
+    the domain refuses, a forbidden transition, an unknown shipment) or an
+    exhausted retry budget is dead-lettered to `<topic>.dlq` with the headers
+    `x-dlq-source-topic`, `x-dlq-source-partition`, `x-dlq-source-offset`,
+    `x-dlq-error` and `x-dlq-failed-at`. The consumed `data` below lists only
+    the fields this context relies on. There are no synchronous calls to any
+    neighbour.
 
 
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
@@ -564,6 +572,10 @@ channels:
     messages:
       SellerOnboarded:
         name: SellerOnboarded
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A seller was onboarded
         summary: A seller was onboarded.
         description: >-
@@ -661,6 +673,10 @@ channels:
         x-parser-unique-object-id: SellerOnboarded
       SellerSuspended:
         name: SellerSuspended
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A seller was suspended
         summary: A seller was suspended.
         description: >-
@@ -759,6 +775,10 @@ channels:
         x-parser-unique-object-id: SellerSuspended
       SellerReinstated:
         name: SellerReinstated
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A suspended seller was reinstated
         summary: A suspended seller was reinstated.
         description: >-
@@ -851,6 +871,10 @@ channels:
         x-parser-unique-object-id: SellerReinstated
       InboundPlanConfirmed:
         name: InboundPlanConfirmed
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A seller confirmed an inbound plan
         summary: A seller confirmed an inbound plan.
         description: >-
@@ -990,6 +1014,10 @@ channels:
         x-parser-unique-object-id: InboundPlanConfirmed
       InboundDiscrepancyRecorded:
         name: InboundDiscrepancyRecorded
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: >-
           A difference between the manifest and the vendor's receipt was
           recorded
@@ -1079,12 +1107,21 @@ channels:
                       x-parser-schema-id: <anonymous-schema-78>
                     kind:
                       type: string
+                      description: >-
+                        The carton discrepancy kind string: MissingCarton,
+                        UnexpectedCarton, Damaged, Short or Over.
                       x-parser-schema-id: <anonymous-schema-79>
                     expected:
                       type: string
+                      description: >-
+                        Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                        otherwise.
                       x-parser-schema-id: <anonymous-schema-80>
                     actual:
                       type: string
+                      description: >-
+                        Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                        otherwise.
                       x-parser-schema-id: <anonymous-schema-81>
                     recordedAt:
                       type: string
@@ -1121,6 +1158,10 @@ channels:
         x-parser-unique-object-id: InboundDiscrepancyRecorded
       SellerComplianceViolationRecorded:
         name: SellerComplianceViolationRecorded
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A compliance violation of a seller was recorded
         summary: A compliance violation of a seller was recorded.
         description: >-
@@ -3106,6 +3147,10 @@ operations:
       messages:
         SellerOnboarded:
           name: SellerOnboarded
+          x-no-consumer-reason: >-
+            Analytics-only fact (the model marks it analytics only); published
+            to the analytics topic for reporting and no context in the network
+            consumes it.
           title: A seller was onboarded
           summary: A seller was onboarded.
           description: >-
@@ -3204,6 +3249,10 @@ operations:
           x-parser-unique-object-id: SellerOnboarded
         SellerSuspended:
           name: SellerSuspended
+          x-no-consumer-reason: >-
+            Analytics-only fact (the model marks it analytics only); published
+            to the analytics topic for reporting and no context in the network
+            consumes it.
           title: A seller was suspended
           summary: A seller was suspended.
           description: >-
@@ -3303,6 +3352,10 @@ operations:
           x-parser-unique-object-id: SellerSuspended
         SellerReinstated:
           name: SellerReinstated
+          x-no-consumer-reason: >-
+            Analytics-only fact (the model marks it analytics only); published
+            to the analytics topic for reporting and no context in the network
+            consumes it.
           title: A suspended seller was reinstated
           summary: A suspended seller was reinstated.
           description: >-
@@ -3396,6 +3449,10 @@ operations:
           x-parser-unique-object-id: SellerReinstated
         InboundPlanConfirmed:
           name: InboundPlanConfirmed
+          x-no-consumer-reason: >-
+            Analytics-only fact (the model marks it analytics only); published
+            to the analytics topic for reporting and no context in the network
+            consumes it.
           title: A seller confirmed an inbound plan
           summary: A seller confirmed an inbound plan.
           description: >-
@@ -3535,6 +3592,10 @@ operations:
           x-parser-unique-object-id: InboundPlanConfirmed
         InboundDiscrepancyRecorded:
           name: InboundDiscrepancyRecorded
+          x-no-consumer-reason: >-
+            Analytics-only fact (the model marks it analytics only); published
+            to the analytics topic for reporting and no context in the network
+            consumes it.
           title: >-
             A difference between the manifest and the vendor's receipt was
             recorded
@@ -3624,12 +3685,21 @@ operations:
                         x-parser-schema-id: <anonymous-schema-78>
                       kind:
                         type: string
+                        description: >-
+                          The carton discrepancy kind string: MissingCarton,
+                          UnexpectedCarton, Damaged, Short or Over.
                         x-parser-schema-id: <anonymous-schema-79>
                       expected:
                         type: string
+                        description: >-
+                          Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                          otherwise.
                         x-parser-schema-id: <anonymous-schema-80>
                       actual:
                         type: string
+                        description: >-
+                          Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                          otherwise.
                         x-parser-schema-id: <anonymous-schema-81>
                       recordedAt:
                         type: string
@@ -3666,6 +3736,10 @@ operations:
           x-parser-unique-object-id: InboundDiscrepancyRecorded
         SellerComplianceViolationRecorded:
           name: SellerComplianceViolationRecorded
+          x-no-consumer-reason: >-
+            Analytics-only fact (the model marks it analytics only); published
+            to the analytics topic for reporting and no context in the network
+            consumes it.
           title: A compliance violation of a seller was recorded
           summary: A compliance violation of a seller was recorded.
           description: >-
@@ -3773,6 +3847,10 @@ operations:
       x-parser-unique-object-id: sellerInboundAnalytics
     messages:
       - name: SellerOnboarded
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A seller was onboarded
         summary: A seller was onboarded.
         description: >-
@@ -3869,6 +3947,10 @@ operations:
                 onboardedAt: '2026-10-24T13:00:00Z'
         x-parser-unique-object-id: SellerOnboarded
       - name: SellerSuspended
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A seller was suspended
         summary: A seller was suspended.
         description: >-
@@ -3966,6 +4048,10 @@ operations:
                 reason: repeated label violations
         x-parser-unique-object-id: SellerSuspended
       - name: SellerReinstated
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A suspended seller was reinstated
         summary: A suspended seller was reinstated.
         description: >-
@@ -4057,6 +4143,10 @@ operations:
                 reinstatedAt: '2026-10-24T13:00:00Z'
         x-parser-unique-object-id: SellerReinstated
       - name: InboundPlanConfirmed
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A seller confirmed an inbound plan
         summary: A seller confirmed an inbound plan.
         description: >-
@@ -4195,6 +4285,10 @@ operations:
                 confirmedAt: '2026-10-24T13:00:00Z'
         x-parser-unique-object-id: InboundPlanConfirmed
       - name: InboundDiscrepancyRecorded
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: >-
           A difference between the manifest and the vendor's receipt was
           recorded
@@ -4284,12 +4378,21 @@ operations:
                       x-parser-schema-id: <anonymous-schema-78>
                     kind:
                       type: string
+                      description: >-
+                        The carton discrepancy kind string: MissingCarton,
+                        UnexpectedCarton, Damaged, Short or Over.
                       x-parser-schema-id: <anonymous-schema-79>
                     expected:
                       type: string
+                      description: >-
+                        Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                        otherwise.
                       x-parser-schema-id: <anonymous-schema-80>
                     actual:
                       type: string
+                      description: >-
+                        Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                        otherwise.
                       x-parser-schema-id: <anonymous-schema-81>
                     recordedAt:
                       type: string
@@ -4325,6 +4428,10 @@ operations:
                 recordedAt: '2026-10-24T13:00:00Z'
         x-parser-unique-object-id: InboundDiscrepancyRecorded
       - name: SellerComplianceViolationRecorded
+        x-no-consumer-reason: >-
+          Analytics-only fact (the model marks it analytics only); published to
+          the analytics topic for reporting and no context in the network
+          consumes it.
         title: A compliance violation of a seller was recorded
         summary: A compliance violation of a seller was recorded.
         description: >-
@@ -6244,6 +6351,10 @@ components:
   messages:
     SellerOnboarded:
       name: SellerOnboarded
+      x-no-consumer-reason: >-
+        Analytics-only fact (the model marks it analytics only); published to
+        the analytics topic for reporting and no context in the network consumes
+        it.
       title: A seller was onboarded
       summary: A seller was onboarded.
       description: >-
@@ -6341,6 +6452,10 @@ components:
       x-parser-unique-object-id: SellerOnboarded
     SellerSuspended:
       name: SellerSuspended
+      x-no-consumer-reason: >-
+        Analytics-only fact (the model marks it analytics only); published to
+        the analytics topic for reporting and no context in the network consumes
+        it.
       title: A seller was suspended
       summary: A seller was suspended.
       description: >-
@@ -6439,6 +6554,10 @@ components:
       x-parser-unique-object-id: SellerSuspended
     SellerReinstated:
       name: SellerReinstated
+      x-no-consumer-reason: >-
+        Analytics-only fact (the model marks it analytics only); published to
+        the analytics topic for reporting and no context in the network consumes
+        it.
       title: A suspended seller was reinstated
       summary: A suspended seller was reinstated.
       description: >-
@@ -6531,6 +6650,10 @@ components:
       x-parser-unique-object-id: SellerReinstated
     InboundPlanConfirmed:
       name: InboundPlanConfirmed
+      x-no-consumer-reason: >-
+        Analytics-only fact (the model marks it analytics only); published to
+        the analytics topic for reporting and no context in the network consumes
+        it.
       title: A seller confirmed an inbound plan
       summary: A seller confirmed an inbound plan.
       description: >-
@@ -7135,6 +7258,10 @@ components:
       x-parser-unique-object-id: InboundShipmentReceived
     InboundDiscrepancyRecorded:
       name: InboundDiscrepancyRecorded
+      x-no-consumer-reason: >-
+        Analytics-only fact (the model marks it analytics only); published to
+        the analytics topic for reporting and no context in the network consumes
+        it.
       title: A difference between the manifest and the vendor's receipt was recorded
       summary: A difference between the manifest and the vendor's receipt was recorded.
       description: >-
@@ -7220,12 +7347,21 @@ components:
                     x-parser-schema-id: <anonymous-schema-78>
                   kind:
                     type: string
+                    description: >-
+                      The carton discrepancy kind string: MissingCarton,
+                      UnexpectedCarton, Damaged, Short or Over.
                     x-parser-schema-id: <anonymous-schema-79>
                   expected:
                     type: string
+                    description: >-
+                      Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                      otherwise.
                     x-parser-schema-id: <anonymous-schema-80>
                   actual:
                     type: string
+                    description: >-
+                      Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                      otherwise.
                     x-parser-schema-id: <anonymous-schema-81>
                   recordedAt:
                     type: string
@@ -7262,6 +7398,10 @@ components:
       x-parser-unique-object-id: InboundDiscrepancyRecorded
     SellerComplianceViolationRecorded:
       name: SellerComplianceViolationRecorded
+      x-no-consumer-reason: >-
+        Analytics-only fact (the model marks it analytics only); published to
+        the analytics topic for reporting and no context in the network consumes
+        it.
       title: A compliance violation of a seller was recorded
       summary: A compliance violation of a seller was recorded.
       description: >-
@@ -9157,12 +9297,21 @@ components:
                   x-parser-schema-id: <anonymous-schema-78>
                 kind:
                   type: string
+                  description: >-
+                    The carton discrepancy kind string: MissingCarton,
+                    UnexpectedCarton, Damaged, Short or Over.
                   x-parser-schema-id: <anonymous-schema-79>
                 expected:
                   type: string
+                  description: >-
+                    Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                    otherwise.
                   x-parser-schema-id: <anonymous-schema-80>
                 actual:
                   type: string
+                  description: >-
+                    Short and Over only, `<gtin>:<qtyEaches>`; omitted
+                    otherwise.
                   x-parser-schema-id: <anonymous-schema-81>
                 recordedAt:
                   type: string

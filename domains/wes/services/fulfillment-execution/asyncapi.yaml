@@ -4370,8 +4370,13 @@ channels:
       This service's own integration topic (its `kafka.Topic` constant). Carries
       all three ProcessPath* event types plus CPTScheduleChanged (ADR 0010) as
       CloudEvents 1.0 (ADR 0016), dispatched by consumers on the full `type`.
-      Only published when EVENT_PUBLISHER=kafka; the default is a local log
-      publisher (no Kafka required for local dev).
+      Kafka message key = the CloudEvents `subject` (`path_id`, or `site_id` for
+      CPTScheduleChanged), hash-balanced. Every message carries the Kafka header
+      `content-type: application/cloudevents+json; charset=UTF-8` plus
+      `traceparent` / `tracestate` when raised inside a traced operation. Events
+      travel through the transactional outbox (Postgres is mandatory, ADR 0037);
+      there is no log or in-memory publisher in the shipped binary. The topic is
+      auto-created by the broker on first write.
     x-eventcatalog-channel-version: 1.0.0
     subscribe:
       operationId: receiveProcessPathEvents

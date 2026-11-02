@@ -65,11 +65,25 @@ info:
 
     `LocationGeometryUpdated` from facility-layout. Each feeds a durable local
 
-    copy (modes `FULFILLMENT_MODE` and `LAYOUT_MODE`, default `permissive`;
+    copy. Both consumers are always on (`FULFILLMENT_MODE` and `LAYOUT_MODE`
+    only
 
-    consumer groups from `FULFILLMENT_CONSUMER_GROUP` and
+    accept `kafka`, ADR 0006); the consumer groups are mandatory env
 
-    `LAYOUT_CONSUMER_GROUP`). The consumed messages below are the producers' own
+    `FULFILLMENT_CONSUMER_GROUP` and `LAYOUT_CONSUMER_GROUP`. A transient
+    handler
+
+    failure is retried up to five times, then the message is dead-lettered to
+
+    `<topic>.dlq` with `x-dlq-*` headers; a payload of a handled type that can
+
+    never be applied (a missing required field, malformed `data`) is
+
+    dead-lettered at once; a message that is not a valid CloudEvents 1.0 event
+    is
+
+    skipped with a WARN and committed past; an unknown type is ignored. The
+    consumed messages below are the producers' own
 
     contracts, decoded independently here and never imported.
 
@@ -1201,15 +1215,15 @@ channels:
                       x-parser-schema-id: <anonymous-schema-60>
                     data:
                       type: object
+                      description: >-
+                        This consumer rejects (dead-letters) a payload without
+                        task_id, task_type, site_id or from_location. cpt and
+                        available_at are never read.
                       required:
                         - task_id
                         - task_type
                         - site_id
                         - from_location
-                        - to_location
-                        - required_capabilities
-                        - priority_band
-                        - available_at
                       properties:
                         task_id:
                           type: string
@@ -1230,7 +1244,10 @@ channels:
                           x-parser-schema-id: <anonymous-schema-65>
                         to_location:
                           type: string
-                          description: Where the operator ends.
+                          description: >-
+                            Where the operator ends. Optional for this consumer:
+                            a task without it leaves the station no position
+                            when completed.
                           x-parser-schema-id: <anonymous-schema-66>
                         required_capabilities:
                           type: array
@@ -1241,7 +1258,9 @@ channels:
                         cpt:
                           type: string
                           format: date-time
-                          description: Omitted when the task has no CPT.
+                          description: >-
+                            Omitted when the task has no CPT. Not read by this
+                            service.
                           x-parser-schema-id: <anonymous-schema-69>
                         priority_band:
                           type: string
@@ -1252,6 +1271,7 @@ channels:
                         available_at:
                           type: string
                           format: date-time
+                          description: Not read by this service.
                           x-parser-schema-id: <anonymous-schema-71>
                       x-parser-schema-id: <anonymous-schema-61>
                   x-parser-schema-id: <anonymous-schema-58>
@@ -1377,11 +1397,13 @@ channels:
                       x-parser-schema-id: <anonymous-schema-74>
                     data:
                       type: object
+                      description: >-
+                        This consumer requires task_id and a valid station_id
+                        (else the message is dead-lettered); a missing
+                        claimed_at falls back to the CloudEvents time.
                       required:
                         - task_id
-                        - task_type
                         - station_id
-                        - claimed_at
                       properties:
                         task_id:
                           type: string
@@ -1434,13 +1456,10 @@ channels:
 
               Verified on fulfillment-execution's `origin/develop`: `task_id`,
 
-              `station_id` and `work_unit_id` are required. This context reads
-              `task_id`
+              `station_id` and `work_unit_id` are required by the producer. This
+              context
 
-              and `station_id` (the producer's contract carries `station_id` on
-              every
-
-              completion, which the plan's table omitted) and ignores every
+              reads `task_id` (required) and `station_id` and ignores every
               other field
 
               (`task_type`, `order_ref`, `line_no`, the RELOCATE `sku`,
@@ -1452,10 +1471,16 @@ channels:
               the completed task's `to_location` from the local pool copy, with
               its site;
 
-              a completion of a task absent from the copy is ignored (counted,
+              a completion of a task absent from the copy (or without a
+              `to_location`) is
+
+              recorded as completed and otherwise ignored (no position, no hint;
               never
 
-              dead-lettered).
+              dead-lettered). `station_id` is optional here: when blank, the
+              claimer
+
+              recorded in the pool copy is the completing station.
             contentType: application/cloudevents+json
             tags:
               - name: consumed
@@ -1527,14 +1552,15 @@ channels:
                         the producer's payload is ignored.
                       required:
                         - task_id
-                        - station_id
                       properties:
                         task_id:
                           type: string
                           x-parser-schema-id: <anonymous-schema-84>
                         station_id:
                           type: string
-                          description: The station that completed the task.
+                          description: >-
+                            The station that completed the task; optional here,
+                            the pool copy's claimer is used when blank.
                           x-parser-schema-id: <anonymous-schema-85>
                       x-parser-schema-id: <anonymous-schema-83>
                   x-parser-schema-id: <anonymous-schema-80>
@@ -1606,11 +1632,11 @@ channels:
               `urn:warehouse:facility-layout:events:ZoneRegistered:v1`. Subject
               and Kafka
 
-              key = `zoneId`. Only `zoneId` and `siteCode` are used: they give
-              the site of
+              key = `zoneId`. Only `zoneId`, `siteCode` (both required) and
+              `zoneCode` (stored) are used:
 
-              a location. `data` also carries `eventName`, `eventType` and
-              `occurredAt`,
+              they give the site of a location. `data` also carries `eventName`,
+              `eventType` and `occurredAt`,
 
               which are ignored.
             contentType: application/cloudevents+json
@@ -1687,6 +1713,10 @@ channels:
                         siteCode:
                           type: string
                           x-parser-schema-id: <anonymous-schema-91>
+                        zoneCode:
+                          type: string
+                          description: Stored with the zone; optional.
+                          x-parser-schema-id: <anonymous-schema-92>
                       x-parser-schema-id: <anonymous-schema-89>
                   x-parser-schema-id: <anonymous-schema-86>
               x-parser-schema-id: ZoneRegisteredEvent
@@ -1789,11 +1819,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered
-                      x-parser-schema-id: <anonymous-schema-93>
+                      x-parser-schema-id: <anonymous-schema-94>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:LocationSlotRegistered:v1
-                      x-parser-schema-id: <anonymous-schema-94>
+                      x-parser-schema-id: <anonymous-schema-95>
                     data:
                       type: object
                       required:
@@ -1802,12 +1832,12 @@ channels:
                       properties:
                         locationCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-96>
+                          x-parser-schema-id: <anonymous-schema-97>
                         zoneId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-97>
-                      x-parser-schema-id: <anonymous-schema-95>
-                  x-parser-schema-id: <anonymous-schema-92>
+                          x-parser-schema-id: <anonymous-schema-98>
+                      x-parser-schema-id: <anonymous-schema-96>
+                  x-parser-schema-id: <anonymous-schema-93>
               x-parser-schema-id: LocationSlotRegisteredEvent
             examples:
               - name: storageSlot
@@ -1909,11 +1939,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
-                      x-parser-schema-id: <anonymous-schema-99>
+                      x-parser-schema-id: <anonymous-schema-100>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
-                      x-parser-schema-id: <anonymous-schema-100>
+                      x-parser-schema-id: <anonymous-schema-101>
                     data:
                       type: object
                       required:
@@ -1921,9 +1951,9 @@ channels:
                       properties:
                         locationCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-102>
-                      x-parser-schema-id: <anonymous-schema-101>
-                  x-parser-schema-id: <anonymous-schema-98>
+                          x-parser-schema-id: <anonymous-schema-103>
+                      x-parser-schema-id: <anonymous-schema-102>
+                  x-parser-schema-id: <anonymous-schema-99>
               x-parser-schema-id: LocationSlotDecommissionedEvent
             examples:
               - name: decommissioned
@@ -2026,11 +2056,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wms.facility-layout.locationslot.LocationGeometryUpdated
-                      x-parser-schema-id: <anonymous-schema-104>
+                      x-parser-schema-id: <anonymous-schema-105>
                     dataschema:
                       const: >-
                         urn:warehouse:facility-layout:events:LocationGeometryUpdated:v1
-                      x-parser-schema-id: <anonymous-schema-105>
+                      x-parser-schema-id: <anonymous-schema-106>
                     data:
                       type: object
                       required:
@@ -2041,23 +2071,23 @@ channels:
                       properties:
                         locationCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-107>
+                          x-parser-schema-id: <anonymous-schema-108>
                         xM:
                           type: number
                           description: >-
                             Position in the site's local coordinate frame, in
                             metres.
-                          x-parser-schema-id: <anonymous-schema-108>
+                          x-parser-schema-id: <anonymous-schema-109>
                         yM:
                           type: number
-                          x-parser-schema-id: <anonymous-schema-109>
+                          x-parser-schema-id: <anonymous-schema-110>
                         zM:
                           type: number
                           description: Height above floor level
                           in metres. Never negative.: null
-                          x-parser-schema-id: <anonymous-schema-110>
-                      x-parser-schema-id: <anonymous-schema-106>
-                  x-parser-schema-id: <anonymous-schema-103>
+                          x-parser-schema-id: <anonymous-schema-111>
+                      x-parser-schema-id: <anonymous-schema-107>
+                  x-parser-schema-id: <anonymous-schema-104>
               x-parser-schema-id: LocationGeometryUpdatedEvent
             examples:
               - name: geometry
@@ -3028,15 +3058,15 @@ components:
                 x-parser-schema-id: <anonymous-schema-60>
               data:
                 type: object
+                description: >-
+                  This consumer rejects (dead-letters) a payload without
+                  task_id, task_type, site_id or from_location. cpt and
+                  available_at are never read.
                 required:
                   - task_id
                   - task_type
                   - site_id
                   - from_location
-                  - to_location
-                  - required_capabilities
-                  - priority_band
-                  - available_at
                 properties:
                   task_id:
                     type: string
@@ -3056,7 +3086,10 @@ components:
                     x-parser-schema-id: <anonymous-schema-65>
                   to_location:
                     type: string
-                    description: Where the operator ends.
+                    description: >-
+                      Where the operator ends. Optional for this consumer: a
+                      task without it leaves the station no position when
+                      completed.
                     x-parser-schema-id: <anonymous-schema-66>
                   required_capabilities:
                     type: array
@@ -3067,7 +3100,9 @@ components:
                   cpt:
                     type: string
                     format: date-time
-                    description: Omitted when the task has no CPT.
+                    description: >-
+                      Omitted when the task has no CPT. Not read by this
+                      service.
                     x-parser-schema-id: <anonymous-schema-69>
                   priority_band:
                     type: string
@@ -3078,6 +3113,7 @@ components:
                   available_at:
                     type: string
                     format: date-time
+                    description: Not read by this service.
                     x-parser-schema-id: <anonymous-schema-71>
                 x-parser-schema-id: <anonymous-schema-61>
             x-parser-schema-id: <anonymous-schema-58>
@@ -3196,11 +3232,13 @@ components:
                 x-parser-schema-id: <anonymous-schema-74>
               data:
                 type: object
+                description: >-
+                  This consumer requires task_id and a valid station_id (else
+                  the message is dead-lettered); a missing claimed_at falls back
+                  to the CloudEvents time.
                 required:
                   - task_id
-                  - task_type
                   - station_id
-                  - claimed_at
                 properties:
                   task_id:
                     type: string
@@ -3252,12 +3290,10 @@ components:
 
         Verified on fulfillment-execution's `origin/develop`: `task_id`,
 
-        `station_id` and `work_unit_id` are required. This context reads
-        `task_id`
+        `station_id` and `work_unit_id` are required by the producer. This
+        context
 
-        and `station_id` (the producer's contract carries `station_id` on every
-
-        completion, which the plan's table omitted) and ignores every other
+        reads `task_id` (required) and `station_id` and ignores every other
         field
 
         (`task_type`, `order_ref`, `line_no`, the RELOCATE `sku`, `from_bin`,
@@ -3268,9 +3304,14 @@ components:
         the completed task's `to_location` from the local pool copy, with its
         site;
 
-        a completion of a task absent from the copy is ignored (counted, never
+        a completion of a task absent from the copy (or without a `to_location`)
+        is
 
-        dead-lettered).
+        recorded as completed and otherwise ignored (no position, no hint; never
+
+        dead-lettered). `station_id` is optional here: when blank, the claimer
+
+        recorded in the pool copy is the completing station.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -3339,14 +3380,15 @@ components:
                   producer's payload is ignored.
                 required:
                   - task_id
-                  - station_id
                 properties:
                   task_id:
                     type: string
                     x-parser-schema-id: <anonymous-schema-84>
                   station_id:
                     type: string
-                    description: The station that completed the task.
+                    description: >-
+                      The station that completed the task; optional here, the
+                      pool copy's claimer is used when blank.
                     x-parser-schema-id: <anonymous-schema-85>
                 x-parser-schema-id: <anonymous-schema-83>
             x-parser-schema-id: <anonymous-schema-80>
@@ -3383,11 +3425,11 @@ components:
         `urn:warehouse:facility-layout:events:ZoneRegistered:v1`. Subject and
         Kafka
 
-        key = `zoneId`. Only `zoneId` and `siteCode` are used: they give the
-        site of
+        key = `zoneId`. Only `zoneId`, `siteCode` (both required) and `zoneCode`
+        (stored) are used:
 
-        a location. `data` also carries `eventName`, `eventType` and
-        `occurredAt`,
+        they give the site of a location. `data` also carries `eventName`,
+        `eventType` and `occurredAt`,
 
         which are ignored.
       contentType: application/cloudevents+json
@@ -3463,6 +3505,10 @@ components:
                   siteCode:
                     type: string
                     x-parser-schema-id: <anonymous-schema-91>
+                  zoneCode:
+                    type: string
+                    description: Stored with the zone; optional.
+                    x-parser-schema-id: <anonymous-schema-92>
                 x-parser-schema-id: <anonymous-schema-89>
             x-parser-schema-id: <anonymous-schema-86>
         x-parser-schema-id: ZoneRegisteredEvent
@@ -3565,10 +3611,10 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered
-                x-parser-schema-id: <anonymous-schema-93>
+                x-parser-schema-id: <anonymous-schema-94>
               dataschema:
                 const: urn:warehouse:facility-layout:events:LocationSlotRegistered:v1
-                x-parser-schema-id: <anonymous-schema-94>
+                x-parser-schema-id: <anonymous-schema-95>
               data:
                 type: object
                 required:
@@ -3577,12 +3623,12 @@ components:
                 properties:
                   locationCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-96>
+                    x-parser-schema-id: <anonymous-schema-97>
                   zoneId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-97>
-                x-parser-schema-id: <anonymous-schema-95>
-            x-parser-schema-id: <anonymous-schema-92>
+                    x-parser-schema-id: <anonymous-schema-98>
+                x-parser-schema-id: <anonymous-schema-96>
+            x-parser-schema-id: <anonymous-schema-93>
         x-parser-schema-id: LocationSlotRegisteredEvent
       examples:
         - name: storageSlot
@@ -3683,11 +3729,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
-                x-parser-schema-id: <anonymous-schema-99>
+                x-parser-schema-id: <anonymous-schema-100>
               dataschema:
                 const: >-
                   urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
-                x-parser-schema-id: <anonymous-schema-100>
+                x-parser-schema-id: <anonymous-schema-101>
               data:
                 type: object
                 required:
@@ -3695,9 +3741,9 @@ components:
                 properties:
                   locationCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-102>
-                x-parser-schema-id: <anonymous-schema-101>
-            x-parser-schema-id: <anonymous-schema-98>
+                    x-parser-schema-id: <anonymous-schema-103>
+                x-parser-schema-id: <anonymous-schema-102>
+            x-parser-schema-id: <anonymous-schema-99>
         x-parser-schema-id: LocationSlotDecommissionedEvent
       examples:
         - name: decommissioned
@@ -3798,11 +3844,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wms.facility-layout.locationslot.LocationGeometryUpdated
-                x-parser-schema-id: <anonymous-schema-104>
+                x-parser-schema-id: <anonymous-schema-105>
               dataschema:
                 const: >-
                   urn:warehouse:facility-layout:events:LocationGeometryUpdated:v1
-                x-parser-schema-id: <anonymous-schema-105>
+                x-parser-schema-id: <anonymous-schema-106>
               data:
                 type: object
                 required:
@@ -3813,21 +3859,21 @@ components:
                 properties:
                   locationCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-107>
+                    x-parser-schema-id: <anonymous-schema-108>
                   xM:
                     type: number
                     description: Position in the site's local coordinate frame, in metres.
-                    x-parser-schema-id: <anonymous-schema-108>
+                    x-parser-schema-id: <anonymous-schema-109>
                   yM:
                     type: number
-                    x-parser-schema-id: <anonymous-schema-109>
+                    x-parser-schema-id: <anonymous-schema-110>
                   zM:
                     type: number
                     description: Height above floor level
                     in metres. Never negative.: null
-                    x-parser-schema-id: <anonymous-schema-110>
-                x-parser-schema-id: <anonymous-schema-106>
-            x-parser-schema-id: <anonymous-schema-103>
+                    x-parser-schema-id: <anonymous-schema-111>
+                x-parser-schema-id: <anonymous-schema-107>
+            x-parser-schema-id: <anonymous-schema-104>
         x-parser-schema-id: LocationGeometryUpdatedEvent
       examples:
         - name: geometry
@@ -4693,15 +4739,15 @@ components:
               x-parser-schema-id: <anonymous-schema-60>
             data:
               type: object
+              description: >-
+                This consumer rejects (dead-letters) a payload without task_id,
+                task_type, site_id or from_location. cpt and available_at are
+                never read.
               required:
                 - task_id
                 - task_type
                 - site_id
                 - from_location
-                - to_location
-                - required_capabilities
-                - priority_band
-                - available_at
               properties:
                 task_id:
                   type: string
@@ -4721,7 +4767,9 @@ components:
                   x-parser-schema-id: <anonymous-schema-65>
                 to_location:
                   type: string
-                  description: Where the operator ends.
+                  description: >-
+                    Where the operator ends. Optional for this consumer: a task
+                    without it leaves the station no position when completed.
                   x-parser-schema-id: <anonymous-schema-66>
                 required_capabilities:
                   type: array
@@ -4732,7 +4780,7 @@ components:
                 cpt:
                   type: string
                   format: date-time
-                  description: Omitted when the task has no CPT.
+                  description: Omitted when the task has no CPT. Not read by this service.
                   x-parser-schema-id: <anonymous-schema-69>
                 priority_band:
                   type: string
@@ -4743,6 +4791,7 @@ components:
                 available_at:
                   type: string
                   format: date-time
+                  description: Not read by this service.
                   x-parser-schema-id: <anonymous-schema-71>
               x-parser-schema-id: <anonymous-schema-61>
           x-parser-schema-id: <anonymous-schema-58>
@@ -4807,11 +4856,13 @@ components:
               x-parser-schema-id: <anonymous-schema-74>
             data:
               type: object
+              description: >-
+                This consumer requires task_id and a valid station_id (else the
+                message is dead-lettered); a missing claimed_at falls back to
+                the CloudEvents time.
               required:
                 - task_id
-                - task_type
                 - station_id
-                - claimed_at
               properties:
                 task_id:
                   type: string
@@ -4894,14 +4945,15 @@ components:
                 producer's payload is ignored.
               required:
                 - task_id
-                - station_id
               properties:
                 task_id:
                   type: string
                   x-parser-schema-id: <anonymous-schema-84>
                 station_id:
                   type: string
-                  description: The station that completed the task.
+                  description: >-
+                    The station that completed the task; optional here, the pool
+                    copy's claimer is used when blank.
                   x-parser-schema-id: <anonymous-schema-85>
               x-parser-schema-id: <anonymous-schema-83>
           x-parser-schema-id: <anonymous-schema-80>
@@ -4976,6 +5028,10 @@ components:
                 siteCode:
                   type: string
                   x-parser-schema-id: <anonymous-schema-91>
+                zoneCode:
+                  type: string
+                  description: Stored with the zone; optional.
+                  x-parser-schema-id: <anonymous-schema-92>
               x-parser-schema-id: <anonymous-schema-89>
           x-parser-schema-id: <anonymous-schema-86>
       x-parser-schema-id: ZoneRegisteredEvent
@@ -5034,10 +5090,10 @@ components:
             type:
               const: >-
                 com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered
-              x-parser-schema-id: <anonymous-schema-93>
+              x-parser-schema-id: <anonymous-schema-94>
             dataschema:
               const: urn:warehouse:facility-layout:events:LocationSlotRegistered:v1
-              x-parser-schema-id: <anonymous-schema-94>
+              x-parser-schema-id: <anonymous-schema-95>
             data:
               type: object
               required:
@@ -5046,12 +5102,12 @@ components:
               properties:
                 locationCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-96>
+                  x-parser-schema-id: <anonymous-schema-97>
                 zoneId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-97>
-              x-parser-schema-id: <anonymous-schema-95>
-          x-parser-schema-id: <anonymous-schema-92>
+                  x-parser-schema-id: <anonymous-schema-98>
+              x-parser-schema-id: <anonymous-schema-96>
+          x-parser-schema-id: <anonymous-schema-93>
       x-parser-schema-id: LocationSlotRegisteredEvent
     LocationSlotDecommissionedEvent:
       allOf:
@@ -5108,11 +5164,11 @@ components:
             type:
               const: >-
                 com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
-              x-parser-schema-id: <anonymous-schema-99>
+              x-parser-schema-id: <anonymous-schema-100>
             dataschema:
               const: >-
                 urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
-              x-parser-schema-id: <anonymous-schema-100>
+              x-parser-schema-id: <anonymous-schema-101>
             data:
               type: object
               required:
@@ -5120,9 +5176,9 @@ components:
               properties:
                 locationCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-102>
-              x-parser-schema-id: <anonymous-schema-101>
-          x-parser-schema-id: <anonymous-schema-98>
+                  x-parser-schema-id: <anonymous-schema-103>
+              x-parser-schema-id: <anonymous-schema-102>
+          x-parser-schema-id: <anonymous-schema-99>
       x-parser-schema-id: LocationSlotDecommissionedEvent
     LocationGeometryUpdatedEvent:
       allOf:
@@ -5179,10 +5235,10 @@ components:
             type:
               const: >-
                 com.warehouse.wms.facility-layout.locationslot.LocationGeometryUpdated
-              x-parser-schema-id: <anonymous-schema-104>
+              x-parser-schema-id: <anonymous-schema-105>
             dataschema:
               const: urn:warehouse:facility-layout:events:LocationGeometryUpdated:v1
-              x-parser-schema-id: <anonymous-schema-105>
+              x-parser-schema-id: <anonymous-schema-106>
             data:
               type: object
               required:
@@ -5193,21 +5249,21 @@ components:
               properties:
                 locationCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-107>
+                  x-parser-schema-id: <anonymous-schema-108>
                 xM:
                   type: number
                   description: Position in the site's local coordinate frame, in metres.
-                  x-parser-schema-id: <anonymous-schema-108>
+                  x-parser-schema-id: <anonymous-schema-109>
                 yM:
                   type: number
-                  x-parser-schema-id: <anonymous-schema-109>
+                  x-parser-schema-id: <anonymous-schema-110>
                 zM:
                   type: number
                   description: Height above floor level
                   in metres. Never negative.: null
-                  x-parser-schema-id: <anonymous-schema-110>
-              x-parser-schema-id: <anonymous-schema-106>
-          x-parser-schema-id: <anonymous-schema-103>
+                  x-parser-schema-id: <anonymous-schema-111>
+              x-parser-schema-id: <anonymous-schema-107>
+          x-parser-schema-id: <anonymous-schema-104>
       x-parser-schema-id: LocationGeometryUpdatedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

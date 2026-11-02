@@ -51,12 +51,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '422':
           description: invalid-item-dimensions (ErrInvalidItemDimensions), invalid-gtin, or validation-failed (a malformed title).
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /catalog-items/{catalogItemId}/discontinuations:
     post:
       tags:
@@ -87,6 +91,10 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /catalog-items/{catalogItemId}/packaging/{level}:
     put:
       tags:
@@ -110,6 +118,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -118,12 +128,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '422':
           description: invalid-gtin, invalid-pack-level, invalid-pack-quantity, pack-level-order, invalid-pack-dimensions or validation-failed.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /catalog-items/{catalogItemId}/packaging/{level}/retirements:
     post:
       tags:
@@ -159,12 +173,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '422':
           description: invalid-pack-level.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /catalog:
     get:
       tags:
@@ -184,8 +202,8 @@ paths:
                 $ref: '#/components/schemas/CatalogPage'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '422':
-          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /catalog/{catalogItemId}:
     get:
       tags:
@@ -204,6 +222,8 @@ paths:
                 $ref: '#/components/schemas/CatalogItem'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /listings:
     post:
       tags:
@@ -239,8 +259,12 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '422':
           $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
     get:
       tags:
         - Listings
@@ -269,8 +293,8 @@ paths:
                 $ref: '#/components/schemas/ListingPage'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '422':
-          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /inventory-feeds:
     post:
       tags:
@@ -304,12 +328,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          description: 'The feed is FAILED, instance /inventory-feeds/{feedId}: listing-not-on-node (ErrListingNotOnNode) or negative-availability (ErrNegativeAvailability). Or validation-failed for a malformed or oversized request (nothing is recorded).'
+          description: 'The feed is FAILED, instance /inventory-feeds/{feedId}: listing-not-on-node (ErrListingNotOnNode) or negative-availability (ErrNegativeAvailability). Or validation-failed for a malformed or request that breaks a value rule, such as more than 10000 lines (nothing is recorded). A body over 64 KiB is 413.'
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /inventory-feeds/{feedId}:
     get:
       tags:
@@ -332,6 +360,8 @@ paths:
                 $ref: '#/components/schemas/InventoryFeed'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   parameters:
     IdempotencyKey:
@@ -382,13 +412,25 @@ components:
           - 'true'
   responses:
     BadRequest:
-      description: idempotency-key-required or idempotency-key-invalid (state-changing routes); invalid-limit, invalid-cursor or unknown-query-parameter (list reads); malformed-request-body or malformed-request-query.
+      description: idempotency-key-required or idempotency-key-invalid (state-changing routes); invalid-limit, invalid-cursor or unknown-query-parameter (list reads); malformed-request-body (bad JSON, an unknown field, a wrong type, an empty body, trailing data or a NUL character) or malformed-request-query (a NUL character).
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
     NotFound:
       description: 'not-found (ErrNotFound): an unknown catalogItemId or feedId.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    PayloadTooLarge:
+      description: 'request-body-too-large: the request body is over 64 KiB.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    InternalError:
+      description: 'internal-error: an unmapped failure; the detail never leaks the internal message.'
       content:
         application/problem+json:
           schema:
@@ -410,7 +452,7 @@ components:
       properties:
         type:
           type: string
-          description: 'Problem type slug: the shared not-found, illegal-transition, concurrent-update and validation-failed, or one of this context''s (invalid-item-dimensions, invalid-gtin, gtin-already-assigned, pack-quantity-immutable, pack-level-order, invalid-pack-quantity, invalid-pack-dimensions, invalid-pack-level, pack-level-not-found, negative-availability, stale-availability, node-not-sellable, duplicate-listing, listing-not-on-node, feed-already-applied).'
+          description: 'Problem type slug: the shared not-found, illegal-transition, concurrent-update and validation-failed, or one of this context''s (invalid-item-dimensions, invalid-gtin, gtin-already-assigned, pack-quantity-immutable, pack-level-order, invalid-pack-quantity, invalid-pack-dimensions, invalid-pack-level, pack-level-not-found, negative-availability, stale-availability, node-not-sellable, duplicate-listing, listing-not-on-node, feed-already-applied), or a transport one (see the BadRequest, PayloadTooLarge and InternalError responses; an unrouted method is 405 method-not-allowed).'
           example: duplicate-listing
         title:
           type: string
@@ -746,6 +788,7 @@ components:
         - appliedCount
         - staleCount
         - zeroedCount
+        - receivedAt
       properties:
         feedId:
           type: string

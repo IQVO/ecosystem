@@ -5,7 +5,7 @@ info:
   contact:
     name: last-mile-delivery maintainers
     url: https://github.com/IQVO/last-mile-delivery
-  description: 'REST contract of the last-mile-delivery bounded context of the retail network (logistics tier), derived from retail-network-docs model/model.yaml (contexts[last-mile-delivery].rest, .aggregates, .publishes, conventions.errors) and adjusted by the orchestrator''s contracts-delta and Gap Register resolutions (G5, G11, G16, G17, G34). The context runs the network''s delivery stations: it schedules delivery waves (induct cutoff, delivery window, stop capacity), inducts arrived packages into them, plans routes for delivery service partners (DSPs) and records delivery attempts. No endpoint carries an address or any other PII: packages are identified by tracking number and grouped into stops by the opaque `stopKey` that shipping-and-tracking derives at label time. No authentication, consistent with the rest of the network. Every state changing POST takes a required `Idempotency-Key` header (table idempotency_keys, 24 h): a missing key is 400 `idempotency-key-required`, a key that is not 1 to 128 printable ASCII characters is 400 `idempotency-key-invalid`, a key reused with another method, path or body is 409 `idempotency-key-reused`, and a repeated request replays the stored answer with the header `Idempotency-Replayed: true`. Every collection is paged with `limit` and `cursor` and answers `{items, nextCursor}`; an undeclared query parameter is 400 `unknown-query-parameter`. Errors are RFC 9457 `application/problem+json`; the `type` is a slug. The shared slugs are `not-found` (404), `illegal-transition` (409), `concurrent-update` (409) and `validation-failed` (422), plus one slug per model Err name (kebab-case without the `Err` prefix). The first eight operations of this file are the model''s REST list; `getWaveStops`, `cancelWave`, `getRoute` and `deactivatePartner` are the additions of Gap Register G11, G17 and G34 (ADR 0002).'
+  description: 'REST contract of the last-mile-delivery bounded context of the retail network (logistics tier), derived from retail-network-docs model/model.yaml (contexts[last-mile-delivery].rest, .aggregates, .publishes, conventions.errors) and adjusted by the orchestrator''s contracts-delta and Gap Register resolutions (G5, G11, G16, G17, G34). The context runs the network''s delivery stations: it schedules delivery waves (induct cutoff, delivery window, stop capacity), inducts arrived packages into them, plans routes for delivery service partners (DSPs) and records delivery attempts. No endpoint carries an address or any other PII: packages are identified by tracking number and grouped into stops by the opaque `stopKey` that shipping-and-tracking derives at label time. No authentication, consistent with the rest of the network. Every state changing POST takes a required `Idempotency-Key` header (table idempotency_keys, 24 h): a missing key is 400 `idempotency-key-required`, a key that is not 1 to 128 printable ASCII characters is 400 `idempotency-key-invalid`, a key reused with another method, path or body is 409 `idempotency-key-reused`, and a repeated request replays the stored answer with the header `Idempotency-Replayed: true`. Every collection is paged with `limit` and `cursor` and answers `{items, nextCursor}`; an undeclared query parameter is 400 `unknown-query-parameter`. Errors are RFC 9457 `application/problem+json`; the `type` is a slug. The shared slugs are `not-found` (404), `illegal-transition` (409), `concurrent-update` (409) and `validation-failed` (422), plus one slug per model Err name (kebab-case without the `Err` prefix). Request bodies are decoded strictly (unknown fields, an empty body, trailing data and a body over 64 KiB are 422 `validation-failed`); a NUL character (U+0000) in the query string or a body is 422 `validation-failed`, in the path it is 404 `resource-not-found`. A path no route serves is 404 `resource-not-found`, a method a path does not serve is 405 `method-not-allowed` (problem+json), and an unmapped failure is an opaque 500 `internal-error` (never stored for replay; every 4xx answer is). Every problem body carries `type`, `title`, `status`, `detail` and `instance`. The first eight operations of this file are the model''s REST list; `getWaveStops`, `cancelWave`, `getRoute` and `deactivatePartner` are the additions of Gap Register G11, G17 and G34 (ADR 0002).'
 servers:
   - url: http://localhost:8080
 tags:
@@ -47,6 +47,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
     get:
       tags:
         - Waves
@@ -80,6 +82,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /waves/{waveId}/stops:
     get:
       tags:
@@ -102,6 +106,10 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /waves/{waveId}/induction-closures:
     post:
       tags:
@@ -128,6 +136,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /waves/{waveId}/dispatches:
     post:
       tags:
@@ -154,6 +166,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /waves/{waveId}/cancellations:
     post:
       tags:
@@ -188,6 +204,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /routes:
     post:
       tags:
@@ -221,6 +239,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /routes/{routeId}:
     get:
       tags:
@@ -239,6 +259,10 @@ paths:
                 $ref: '#/components/schemas/Route'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /routes/{routeId}/starts:
     post:
       tags:
@@ -265,6 +289,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /routes/{routeId}/attempts:
     post:
       tags:
@@ -299,6 +327,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /partners:
     post:
       tags:
@@ -330,6 +360,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /partners/{dspId}/deactivations:
     post:
       tags:
@@ -412,25 +444,40 @@ components:
           - 'true'
   responses:
     BadRequest:
-      description: The request is malformed at the HTTP level. Problem types `idempotency-key-required` (no Idempotency-Key header), `idempotency-key-invalid` (not 1 to 128 printable ASCII characters), `invalid-limit`, `invalid-cursor`, `unknown-query-parameter`.
+      description: The request is malformed at the HTTP level. Problem types `idempotency-key-required` (no Idempotency-Key header), `idempotency-key-invalid` (not 1 to 128 printable ASCII characters), `invalid-limit`, `invalid-cursor`, `unknown-query-parameter`. `invalid-limit` is a limit outside 1 to 500, empty or repeated; `invalid-cursor` a cursor that is not a page token or is repeated.
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
     NotFound:
-      description: The wave, route, partner or (for an attempt) the package on the route does not exist. Problem types `not-found`, `package-not-on-route`.
+      description: The wave, route, partner or (for an attempt) the package on the route does not exist, or the path matches no route or holds a NUL character. Problem types `not-found`, `package-not-on-route`, `resource-not-found`.
+      headers:
+        Idempotency-Replayed:
+          $ref: '#/components/headers/IdempotencyReplayed'
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
     Conflict:
-      description: 'Conflict with the aggregate''s state or capacity. Problem types: `illegal-transition`, `concurrent-update`, `route-over-capacity`, `route-not-started`, `already-delivered`, `attempt-already-recorded`, `package-not-inducted`, `package-already-routed`, `stop-key-mismatch`, `partner-inactive`, `partner-station-mismatch`, `route-incomplete`. `idempotency-key-reused` (the Idempotency-Key was already used with a different method, path or body). ErrWaveFull (`wave-full`) and ErrInductionClosed (`induction-closed`) are raised only by policy-driven induction, which has no route.'
+      description: 'Conflict with the aggregate''s state or capacity. Problem types: `illegal-transition`, `concurrent-update`, `route-over-capacity`, `route-not-started`, `already-delivered`, `attempt-already-recorded`, `package-not-inducted`, `package-already-routed`, `stop-key-mismatch`, `partner-inactive`, `partner-station-mismatch`, `route-incomplete`. `idempotency-key-reused` (the Idempotency-Key was already used with a different method, path or body). ErrWaveFull (`wave-full`), ErrInductionClosed (`induction-closed`) and ErrAlreadyInducted (`already-inducted`) are raised only by policy-driven induction, which has no route.'
+      headers:
+        Idempotency-Replayed:
+          $ref: '#/components/headers/IdempotencyReplayed'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    InternalError:
+      description: 'Unexpected failure: problem type `internal-error`, detail "an unexpected error occurred". Never stored for idempotent replay.'
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
     Unprocessable:
-      description: 'Validation failed. Problem types: `validation-failed` (malformed body, parameter or value-object rule), `invalid-wave-times` (ErrInvalidWaveTimes), `invalid-van-capacity` (ErrInvalidVanCapacity), `unknown-station` (ErrUnknownStation).'
+      description: 'Validation failed. Problem types: `validation-failed` (body that is not valid JSON for the operation, with an unknown field, empty, with trailing data or over 64 KiB; a NUL character in the query or body; a missing or malformed query filter; a value-object rule), `invalid-wave-times` (ErrInvalidWaveTimes), `invalid-van-capacity` (ErrInvalidVanCapacity), `unknown-station` (ErrUnknownStation).'
+      headers:
+        Idempotency-Replayed:
+          $ref: '#/components/headers/IdempotencyReplayed'
       content:
         application/problem+json:
           schema:
@@ -467,6 +514,8 @@ components:
         - type
         - title
         - status
+        - detail
+        - instance
       properties:
         type:
           type: string
@@ -482,6 +531,7 @@ components:
           type: string
         instance:
           type: string
+          description: The escaped request path.
     WaveState:
       type: string
       enum:
@@ -492,6 +542,7 @@ components:
         - CANCELLED
     ScheduleWaveRequest:
       type: object
+      additionalProperties: false
       required:
         - stationNodeId
         - serviceDate
@@ -523,6 +574,7 @@ components:
           maximum: 2147483647
     CancelWaveRequest:
       type: object
+      additionalProperties: false
       required:
         - reason
       properties:
@@ -530,6 +582,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          description: Trimmed text without control characters.
     DeliveryWave:
       type: object
       required:
@@ -603,6 +656,7 @@ components:
         - FAILED
     StopInput:
       type: object
+      additionalProperties: false
       required:
         - stopNo
         - trackingNumbers
@@ -637,6 +691,7 @@ components:
           description: 'Derived from the per-package attempts (Gap Register G17): omitted until every package of the stop has an attempt, then DELIVERED when all were delivered, else FAILED.'
     PlanRouteRequest:
       type: object
+      additionalProperties: false
       required:
         - waveId
         - dspId
@@ -687,6 +742,7 @@ components:
             $ref: '#/components/schemas/Attempt'
     RecordAttemptRequest:
       type: object
+      additionalProperties: false
       required:
         - trackingNumber
         - outcome
@@ -700,7 +756,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
-          description: Required when outcome is FAILED and forbidden when DELIVERED; free text, the model defines no vocabulary.
+          description: Required when outcome is FAILED and forbidden when DELIVERED; free text (trimmed, no control characters), the model defines no vocabulary.
         at:
           type: string
           format: date-time
@@ -730,6 +786,7 @@ components:
         - INACTIVE
     ContractPartnerRequest:
       type: object
+      additionalProperties: false
       required:
         - stationNodeId
         - vanCapacity

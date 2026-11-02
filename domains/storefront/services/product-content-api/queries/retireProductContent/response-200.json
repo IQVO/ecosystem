@@ -5,6 +5,10 @@
       "required": [
         "catalogItemId",
         "state",
+        "description",
+        "bullets",
+        "attributes",
+        "media",
         "revision",
         "publishedRevision",
         "createdAt",
@@ -63,11 +67,12 @@
     },
     {
       "type": "object",
-      "description": "The editable content, replaced as a whole by create and revise.",
+      "description": "The editable content, replaced as a whole by create and revise (an absent field means empty). Texts are trimmed and free of control characters. Bounds: 10 bullets, 50 attributes, 12 media; a violation is 422 too-many-bullets, too-many-attributes or too-many-media.",
       "properties": {
         "description": {
           "type": "string",
-          "maxLength": 4000
+          "maxLength": 4000,
+          "description": "Trimmed text; empty or absent on a draft, required to publish."
         },
         "bullets": {
           "type": "array",
@@ -83,6 +88,7 @@
           "maxItems": 50,
           "items": {
             "type": "object",
+            "description": "Texts are trimmed (no leading or trailing whitespace) and free of control characters; a violation is 422 validation-failed.",
             "required": [
               "name",
               "value"
@@ -100,8 +106,10 @@
               },
               "unit": {
                 "type": "string",
+                "minLength": 1,
                 "maxLength": 20,
-                "nullable": true
+                "nullable": true,
+                "description": "Optional; null or absent means no unit. A response omits it when there is none."
               }
             }
           }
@@ -119,13 +127,22 @@
             ],
             "properties": {
               "mediaId": {
-                "type": "string"
+                "allOf": [
+                  {
+                    "type": "string",
+                    "description": "Opaque id, 1 to 64 characters from A-Z a-z 0-9 . _ : - starting with a letter or a digit.",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                  }
+                ],
+                "description": "Unique within the content."
               },
               "url": {
                 "type": "string",
                 "format": "uri",
                 "maxLength": 2048,
-                "description": "Absolute http(s) URL to a static asset; media upload is out of scope."
+                "description": "Absolute http(s) URL (host required, no surrounding whitespace) to a static asset; media upload is out of scope."
               },
               "altText": {
                 "type": "string",
@@ -143,10 +160,14 @@
           }
         },
         "primaryCategoryId": {
-          "type": "string"
+          "allOf": [
+            "[Circular]"
+          ],
+          "description": "A category of the live tree (422 unknown-category otherwise); required to publish."
         }
       }
     }
   ],
+  "description": "The response always carries description (empty when unset), bullets, attributes and media (empty arrays); primaryCategoryId is omitted when unset.",
   "isSchema": true
 }
