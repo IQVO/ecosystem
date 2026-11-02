@@ -20,7 +20,10 @@ RUN --mount=type=cache,target=/root/.npm \
 
 COPY . .
 # Astro in Docker needs more than the default heap (same fix as the scaffold).
-ENV NODE_OPTIONS=--max_old_space_size=2048
+# 2048 MB was enough for ~5k pages; at ~8.4k pages (35 contexts incl. the storefront
+# domain) the link-validation hook after the build runs out of heap and the image build
+# dies with exit 1 even though `astro build` itself completed.
+ENV NODE_OPTIONS=--max_old_space_size=6144
 # license.jwt enters ONLY as a BuildKit secret (required=false: an unlicensed
 # build still succeeds, it just carries the trial notice). EventCatalog reads
 # the EC_LICENSE path at build time; the file never lands in any image layer.
