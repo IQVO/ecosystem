@@ -1,0 +1,129 @@
+---
+id: customer-payments
+name: Customer Payments (events)
+version: 1.0.0
+summary: >-
+  Moves money with the shipment facts: authorize at checkout, capture each
+  shipment group's allocation when it ships, release on cancellation, refund on
+  lost or returned packages, re-authorize uncaptured allocations before the
+  provider's authorization validity expires.
+badges:
+  - content: customer-payments
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: PaymentAuthorized
+    version: 1.0.0
+    to:
+      - id: customerPaymentsEvents
+        version: 1.0.0
+  - id: PaymentCaptured
+    version: 1.0.0
+    to:
+      - id: customerPaymentsEvents
+        version: 1.0.0
+  - id: PaymentReleased
+    version: 1.0.0
+    to:
+      - id: customerPaymentsEvents
+        version: 1.0.0
+  - id: PaymentAuthorizationExpired
+    version: 1.0.0
+    to:
+      - id: customerPaymentsEvents
+        version: 1.0.0
+  - id: PaymentDeclined
+    version: 1.0.0
+    to:
+      - id: customerPaymentsEvents
+        version: 1.0.0
+  - id: PaymentReauthorized
+    version: 1.0.0
+    to:
+      - id: customerPaymentsEvents
+        version: 1.0.0
+  - id: RefundIssued
+    version: 1.0.0
+    to:
+      - id: customerPaymentsEvents
+        version: 1.0.0
+  - id: RefundFailed
+    version: 1.0.0
+    to:
+      - id: customerPaymentsEvents
+        version: 1.0.0
+receives:
+  - id: CheckoutCompleted
+    version: 1.0.0
+    from:
+      - id: checkoutEvents
+        version: 1.0.0
+  - id: FulfillmentShipped
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: FulfillmentCancelled
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: FulfillmentUnsourceable
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: PackageLost
+    version: 1.0.0
+    from:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: PackageReturned
+    version: 1.0.0
+    from:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Moves money with the shipment facts: authorize at checkout, capture each shipment group's allocation when it ships, release on cancellation, refund on lost or returned packages, re-authorize uncaptured allocations before the provider's authorization validity expires. Speaks to the payment provider through an Anti-Corruption Layer port (Authorize, Capture, Void, Refund, Reauthorize); the payment-provider-simulator is the stand-in adapter and swapping it for a real provider changes nothing else. Never sees a card number, only PSP tokens.
+
+| | |
+|---|---|
+| Bounded context | `customer-payments` |
+| Domain | Digital Storefront (`storefront`) |
+| DDD classification | Generic |
+| Tier | Digital Storefront, storefront tier |
+| Publishes (Kafka) | `retailnetwork.customer-payments.events` |
+| Consumes (Kafka) | `customerPaymentsEvents`<br/>`checkoutEvents`<br/>`orderSourcingEvents`<br/>`shippingAndTrackingEvents` |
+| CloudEvents type prefix | `com.retailnetwork.storefront.customer-payments.` |
+| Event source | `/retailnetwork/customer-payments` |
+| Repository | [IQVO/customer-payments](https://github.com/IQVO/customer-payments) |
+| REST API | [customer-payments-api](/docs/services/customer-payments-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **customer-payments** bounded context of the storefront domain: it authorizes a checkout session's payment at the provider, captures or releases each shipment group's allocation as fulfilment facts arrive, and refunds lost or returned packages. The service stores PSP tokens only, never a card number.
+
+**Published.** Eight events on `retailnetwork.customer-payments.events` through a **transactional outbox** (state and already-encoded events are written in ONE database transaction; an always-on relay drains them to Kafka, at-least-once, the CloudEvents `id` is stored with the outbox row). Every published event is analytics-only by design for its consumers (no sibling reacts to them).
+
+**Consumed.** CheckoutCompleted from checkout, FulfillmentShipped, FulfillmentCancelled and FulfillmentUnsourceable from order-sourcing, PackageLost and PackageReturned from shipping-and-tracking. Facts for an order that is not yet bound are parked and applied when CheckoutCompleted binds the order; facts still unknown after 24 hours are dead-lettered with an alert. Messages list only the fields this service relies on; unknown fields are ignored. Each consumer group name comes from a mandatory environment variable.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka header `content-type: application/cloudevents+json; charset=UTF-8`. `specversion`, `id`, `source` (`/retailnetwork/customer-payments`), `type`, `subject` (authorizationId, or refundId for refund events), `time`, `datacontenttype` (`application/json`) and `dataschema` (`urn:retailnetwork:customer-payments:events:<EventName>:v1`) are all required. Kafka key = the subject. Type = `com.retailnetwork.storefront.customer-payments.<entity>.<EventName>`. A breaking payload change is a new `.v2` type, never a mutation. Dispatch on the full `type`, ignore unknown types, dedupe on `id`.
+
+**Conventions.** `data` is camelCase; instants are RFC 3339 UTC; amounts are integer minor units; enums are UPPER_SNAKE; optional fields are omitted when absent (never null).
+
+## Architecture diagram
+<NodeGraph />

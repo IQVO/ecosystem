@@ -1,0 +1,72 @@
+---
+id: product-content-api
+version: 0.1.0
+name: Product Content API
+summary: >-
+  REST API of product-content. Enriches the network's catalogue item with
+  everything a product page needs and the item master does not have:
+  description, bullets, attributes, media and the category tree.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Product Content API
+badges:
+  - content: ProductContents
+    textColor: blue
+    backgroundColor: blue
+  - content: Categories
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: product-content-api-createProductContent
+    version: 0.1.0
+  - id: product-content-api-listProductContents
+    version: 0.1.0
+  - id: product-content-api-getProductContent
+    version: 0.1.0
+  - id: product-content-api-reviseProductContent
+    version: 0.1.0
+  - id: product-content-api-publishProductContent
+    version: 0.1.0
+  - id: product-content-api-retireProductContent
+    version: 0.1.0
+  - id: product-content-api-discardProductContentDraft
+    version: 0.1.0
+  - id: product-content-api-createCategory
+    version: 0.1.0
+  - id: product-content-api-listCategories
+    version: 0.1.0
+  - id: product-content-api-publishCategoryTree
+    version: 0.1.0
+  - id: product-content-api-moveCategory
+    version: 0.1.0
+  - id: product-content-api-renameCategory
+    version: 0.1.0
+---
+## Purpose
+Enriches the network's catalogue item with everything a product page needs and the item master does not have: description, bullets, attributes, media and the category tree. The title stays the item master's; media upload is out of scope (URLs to static assets only).
+
+| | |
+|---|---|
+| Bounded context | `product-content` |
+| Domain | Digital Storefront (`storefront`) |
+| DDD classification | Generic |
+| Tier | Digital Storefront, storefront tier |
+| Repository | [IQVO/product-content](https://github.com/IQVO/product-content) |
+| Events | [product-content](/docs/services/product-content) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+REST contract of the product-content bounded context of the digital storefront (model: warehouse-docs storefront/model/model.yaml, contexts[product-content], with the FINAL model-gap decisions applied). Product Content enriches the network's catalogue item with description, bullets (&lt;= 10), attributes (&lt;= 50), media (&lt;= 12, URLs to static assets only; upload is out of scope) and the category tree. The title stays the item master's. Content publishes only when complete: a description, exactly one PRIMARY medium and a category. Content lifecycle: DRAFT (revisable, discardable) -> PUBLISHED (revisable, publishable again with the new revision) -> RETIRED (terminal). The category tree is ONE live aggregate without a draft state: every category write applies to the live tree and publishes a new version (CategoryTreePublished). Categories are never deleted. Errors are RFC 9457 problem details (application/problem+json) whose type is /problems/&lt;slug>; shared types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422), plus one kebab-case slug per Err of the model. Every POST takes an Idempotency-Key header (24 hours); PUT and DELETE are idempotent by method. Routes follow the fleet REST API guideline: nouns, never verbs (a lifecycle transition is a transition resource such as /revisions or /publications). No authentication.  
+
+## Architecture diagram
+<NodeGraph />

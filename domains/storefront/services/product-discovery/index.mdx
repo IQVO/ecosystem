@@ -1,0 +1,113 @@
+---
+id: product-discovery
+name: Product Discovery (events)
+version: 1.0.0
+summary: >-
+  The read side of browsing and search: one ProductView per catalogue item
+  (title, flags, content, categoryId, list and effective price, inStock,
+  purchasable; the category path is joined from CategoryView at query time) and
+  one CategoryView (tree plus purchasable counts), fed by events from
+  offer-availability, product-content and pricing, searched with PostgreSQL
+  full-text search and pg_trgm (D9), behind a port so a dedicated engine is a
+  later adapter swap.
+badges:
+  - content: product-discovery
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+sends: []
+receives:
+  - id: CatalogItemCreated
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: CatalogItemDiscontinued
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: ListingCreated
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: ListingAvailabilityChanged
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: ListingSuppressed
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: ListingRestored
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: ProductContentPublished
+    version: 1.0.0
+    from:
+      - id: productContentEvents
+        version: 1.0.0
+  - id: ProductContentRetired
+    version: 1.0.0
+    from:
+      - id: productContentEvents
+        version: 1.0.0
+  - id: CategoryTreePublished
+    version: 1.0.0
+    from:
+      - id: productContentEvents
+        version: 1.0.0
+  - id: ItemPriceChanged
+    version: 1.0.0
+    from:
+      - id: pricingEvents
+        version: 1.0.0
+  - id: ItemPriceWithdrawn
+    version: 1.0.0
+    from:
+      - id: pricingEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+The read side of browsing and search: one ProductView per catalogue item (title, flags, content, categoryId, list and effective price, inStock, purchasable; the category path is joined from CategoryView at query time) and one CategoryView (tree plus purchasable counts), fed by events from offer-availability, product-content and pricing, searched with PostgreSQL full-text search and pg_trgm (D9), behind a port so a dedicated engine is a later adapter swap.
+
+| | |
+|---|---|
+| Bounded context | `product-discovery` |
+| Domain | Digital Storefront (`storefront`) |
+| DDD classification | Supporting |
+| Tier | Digital Storefront, storefront tier |
+| Publishes (Kafka) |  |
+| Consumes (Kafka) | `offerAvailabilityEvents`<br/>`productContentEvents`<br/>`pricingEvents` |
+| CloudEvents type prefix | `com.retailnetwork.storefront.product-discovery.` |
+| Event source | `/retailnetwork/product-discovery` |
+| Repository | [IQVO/product-discovery](https://github.com/IQVO/product-discovery) |
+| REST API | [product-discovery-api](/docs/services/product-discovery-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Consumed-event notes for the **product-discovery** bounded context (read side, no aggregate, ADR 0001, ADR 0003). The service **publishes nothing**: `publishes: []` in the model, so there is no outbox, no relay and no `retailnetwork.product-discovery.events` topic. This file records the shape of the eleven events it consumes; each producer's own AsyncAPI is authoritative, unknown fields are ignored (tolerant decoding), and only the fields this service reads are listed.
+
+**Consumed.** From offer-availability (`com.retailnetwork.commerce.offer-availability.<entity>.<Event>`): CatalogItemCreated, CatalogItemDiscontinued, ListingCreated, ListingAvailabilityChanged, ListingSuppressed, ListingRestored. From product-content (`com.retailnetwork.storefront.product-content.<entity>.<Event>`): ProductContentPublished, ProductContentRetired, CategoryTreePublished. From pricing (`com.retailnetwork.storefront.pricing.itemprice.<Event>`): ItemPriceChanged, ItemPriceWithdrawn. Three consumer groups, one per topic, each named by a mandatory environment variable.
+
+**Processing.** CloudEvents 1.0 structured mode. Idempotent on the CloudEvents `id` (inbox table written in the same transaction as the projection), dispatch on the full `type` string, unknown types ignored, undecodable or unfoldable messages dead-lettered. Per-key monotonic guards on top of the inbox: listing `asOf`, content `revision`, price `version`, category tree `version`. A fact for an item the item master has not announced yet creates an invisible stub row that CatalogItemCreated completes (ADR 0002).
+
+## Architecture diagram
+<NodeGraph />
