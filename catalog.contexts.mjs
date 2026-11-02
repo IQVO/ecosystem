@@ -31,6 +31,14 @@ export const SUBDOMAINS = {
     description:
       'The Retail Network is a separate organization from the warehouse-systems fleet. It owns the shopper-facing commerce tier (offer, promise, order, sourcing), the parcel logistics tier (topology, linehaul, last mile, tracking) and the partner tier (the Vendor API and node performance). Fulfillment nodes are operated by vendors; the warehouse-systems fleet is one of them (vendor V-WS). The boundary is hard: no retail-network context consumes a warehouse.* topic or calls a warehouse-systems service, and the fleet never consumes a retailnetwork.* topic — the only bridge is vendor-connectivity\'s Vendor API (Open Host Service + Published Language), called by the fleet\'s network-fulfillment context.',
   },
+  storefront: {
+    name: 'Digital Storefront',
+    typeOrg: 'retailnetwork',
+    typePattern: 'com.retailnetwork.storefront.<bounded-context>.<entity>.<EventName>',
+    summary: 'The digital storefront: a separate domain inside the retail-network organization that owns what a shopper sees, holds in a cart, pays and is charged.',
+    description:
+      'The Digital Storefront is a separate domain (own model, cadence and docs) inside the retail-network organization. It owns product content, pricing and delivery charges, product discovery, the shopping cart, the checkout purchase saga and customer payments. It may consume retailnetwork.* topics and call the network\'s Open Host Service routes; it never touches a warehouse.* topic, a warehouse-systems service or dataset, and the network never depends on the storefront. PII (ship-to address, names, e-mail) lives only in customer-ordering: the storefront stores shopperId and shipToAddressId references, and never sees a card number, only payment-provider tokens. The storefront-bff (the only storefront edge, REST only, no events) and the payment-provider-simulator (stand-in for the external payment provider) are experience and test-double components, not bounded contexts, and are not catalogued here.',
+  },
 };
 
 export const CONTEXTS = {
@@ -277,5 +285,54 @@ export const CONTEXTS = {
     purpose:
       "The seller-facing front door for stock coming into the network: sellers are onboarded and held to a compliance tier, inbound plans are confirmed, and shipments are labelled, shipped and received with discrepancies recorded. Quantities are always eaches; seller-lifecycle and plan facts go to the analytics stream only (G41-54).",
     topics: ["retailnetwork.seller-inbound.events", "retailnetwork.seller-inbound.analytics"],
+  },
+  // --- Digital Storefront (domain inside the retail-network organization; see SUBDOMAINS.storefront) ---
+  'product-content': {
+    subdomain: 'storefront',
+    classification: 'Generic',
+    tier: 'Digital Storefront, storefront tier',
+    purpose:
+      "Enriches the network's catalogue item with everything a product page needs and the item master does not have: description, bullets, attributes, media and the category tree. The title stays the item master's; media upload is out of scope (URLs to static assets only).",
+    topics: ["retailnetwork.product-content.events"],
+  },
+  'pricing': {
+    subdomain: 'storefront',
+    classification: 'Core',
+    tier: 'Digital Storefront, storefront tier',
+    purpose:
+      "Owns what a shopper pays: the list price and sale windows per catalogue item, the delivery charge per service tier, a synthetic tax table, and the binding, immutable, expiring PriceQuote a checkout session is confirmed against. One configured currency, integer minor units; promotions are a later phase (D10).",
+    topics: ["retailnetwork.pricing.events", "retailnetwork.pricing.analytics"],
+  },
+  'product-discovery': {
+    subdomain: 'storefront',
+    classification: 'Supporting',
+    tier: 'Digital Storefront, storefront tier',
+    purpose:
+      "The read side of browsing and search: one ProductView per catalogue item (title, flags, content, categoryId, list and effective price, inStock, purchasable; the category path is joined from CategoryView at query time) and one CategoryView (tree plus purchasable counts), fed by events from offer-availability, product-content and pricing, searched with PostgreSQL full-text search and pg_trgm (D9), behind a port so a dedicated engine is a later adapter swap.",
+    topics: [],
+  },
+  'shopping-cart': {
+    subdomain: 'storefront',
+    classification: 'Supporting',
+    tier: 'Digital Storefront, storefront tier',
+    purpose:
+      "Holds a shopper's intent: cart lines, the destination postal prefix, the delivery quote delivery-promise returned for the cart (per shipment group, with its offers and expiry), the shopper's tier selection per group, and a labelled, non-binding estimate (effective prices + selected tier charges + tax band) so the total cost is visible up front.",
+    topics: ["retailnetwork.shopping-cart.analytics"],
+  },
+  'checkout': {
+    subdomain: 'storefront',
+    classification: 'Supporting',
+    tier: 'Digital Storefront, storefront tier',
+    purpose:
+      "The purchase saga: one transaction across price, payment and the network's promise confirmation. Authorize before placing the order (compensatable: void), place the order (pivot), then retriable steps via events. PLACING is the semantic lock: while the place-order outcome is unknown there is no void and no new attempt. Holds shopperId and shipToAddressId references, never PII; the stored placement request is PII-free so it can be replayed byte for byte.",
+    topics: ["retailnetwork.checkout.events", "retailnetwork.checkout.analytics"],
+  },
+  'customer-payments': {
+    subdomain: 'storefront',
+    classification: 'Generic',
+    tier: 'Digital Storefront, storefront tier',
+    purpose:
+      "Moves money with the shipment facts: authorize at checkout, capture each shipment group's allocation when it ships, release on cancellation, refund on lost or returned packages, re-authorize uncaptured allocations before the provider's authorization validity expires. Speaks to the payment provider through an Anti-Corruption Layer port (Authorize, Capture, Void, Refund, Reauthorize); the payment-provider-simulator is the stand-in adapter and swapping it for a real provider changes nothing else. Never sees a card number, only PSP tokens.",
+    topics: ["retailnetwork.customer-payments.events"],
   },
 };

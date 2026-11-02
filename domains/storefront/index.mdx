@@ -1,0 +1,52 @@
+---
+id: storefront
+name: Digital Storefront
+version: 1.0.0
+owners:
+  - claudioed
+services:
+  - id: product-content
+    version: 1.0.0
+  - id: pricing
+    version: 1.0.0
+  - id: product-discovery
+    version: 1.0.0
+  - id: shopping-cart
+    version: 1.0.0
+  - id: checkout
+    version: 1.0.0
+  - id: customer-payments
+    version: 1.0.0
+  - id: product-content-api
+    version: 0.1.0
+  - id: pricing-api
+    version: 1.0.0
+  - id: product-discovery-api
+    version: 1.0.0
+  - id: shopping-cart-api
+    version: 0.1.0
+  - id: checkout-api
+    version: 0.1.0
+  - id: customer-payments-api
+    version: 0.1.0
+---
+## Overview
+The Digital Storefront is a separate domain (own model, cadence and docs) inside the retail-network organization. It owns product content, pricing and delivery charges, product discovery, the shopping cart, the checkout purchase saga and customer payments. It may consume retailnetwork.* topics and call the network's Open Host Service routes; it never touches a warehouse.* topic, a warehouse-systems service or dataset, and the network never depends on the storefront. PII (ship-to address, names, e-mail) lives only in customer-ordering: the storefront stores shopperId and shipToAddressId references, and never sees a card number, only payment-provider tokens. The storefront-bff (the only storefront edge, REST only, no events) and the payment-provider-simulator (stand-in for the external payment provider) are experience and test-double components, not bounded contexts, and are not catalogued here.
+
+CloudEvents types in this domain follow `com.retailnetwork.storefront.<bounded-context>.<entity>.<EventName>`.
+Each bounded context below is documented twice: as an **events** service (the Kafka contract, from its
+AsyncAPI file) and as a **REST API** service (`<context>-api`, from its OpenAPI files, including the
+separate `*-reports` analytics binary where one exists).
+
+## Bounded contexts
+| Context | Classification | Tier | Purpose |
+|---|---|---|---|
+| [product-content](/docs/services/product-content) | Generic | Digital Storefront, storefront tier | Enriches the network's catalogue item with everything a product page needs and the item master does not have: description, bullets, attributes, media and the category tree. The title stays the item master's; media upload is out of scope (URLs to static assets only). |
+| [pricing](/docs/services/pricing) | Core | Digital Storefront, storefront tier | Owns what a shopper pays: the list price and sale windows per catalogue item, the delivery charge per service tier, a synthetic tax table, and the binding, immutable, expiring PriceQuote a checkout session is confirmed against. One configured currency, integer minor units; promotions are a later phase (D10). |
+| [product-discovery](/docs/services/product-discovery) | Supporting | Digital Storefront, storefront tier | The read side of browsing and search: one ProductView per catalogue item (title, flags, content, categoryId, list and effective price, inStock, purchasable; the category path is joined from CategoryView at query time) and one CategoryView (tree plus purchasable counts), fed by events from offer-availability, product-content and pricing, searched with PostgreSQL full-text search and pg_trgm (D9), behind a port so a dedicated engine is a later adapter swap. |
+| [shopping-cart](/docs/services/shopping-cart) | Supporting | Digital Storefront, storefront tier | Holds a shopper's intent: cart lines, the destination postal prefix, the delivery quote delivery-promise returned for the cart (per shipment group, with its offers and expiry), the shopper's tier selection per group, and a labelled, non-binding estimate (effective prices + selected tier charges + tax band) so the total cost is visible up front. |
+| [checkout](/docs/services/checkout) | Supporting | Digital Storefront, storefront tier | The purchase saga: one transaction across price, payment and the network's promise confirmation. Authorize before placing the order (compensatable: void), place the order (pivot), then retriable steps via events. PLACING is the semantic lock: while the place-order outcome is unknown there is no void and no new attempt. Holds shopperId and shipToAddressId references, never PII; the stored placement request is PII-free so it can be replayed byte for byte. |
+| [customer-payments](/docs/services/customer-payments) | Generic | Digital Storefront, storefront tier | Moves money with the shipment facts: authorize at checkout, capture each shipment group's allocation when it ships, release on cancellation, refund on lost or returned packages, re-authorize uncaptured allocations before the provider's authorization validity expires. Speaks to the payment provider through an Anti-Corruption Layer port (Authorize, Capture, Void, Refund, Reauthorize); the payment-provider-simulator is the stand-in adapter and swapping it for a real provider changes nothing else. Never sees a card number, only PSP tokens. |
+
+## Architecture diagram
+<NodeGraph />

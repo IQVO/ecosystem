@@ -1,0 +1,107 @@
+---
+id: pricing
+name: Pricing (events)
+version: 1.0.0
+summary: >-
+  Owns what a shopper pays: the list price and sale windows per catalogue item,
+  the delivery charge per service tier, a synthetic tax table, and the binding,
+  immutable, expiring PriceQuote a checkout session is confirmed against.
+badges:
+  - content: pricing
+    textColor: blue
+    backgroundColor: blue
+  - content: itemprice
+    textColor: blue
+    backgroundColor: blue
+  - content: deliverychargeschedule
+    textColor: blue
+    backgroundColor: blue
+  - content: taxtable
+    textColor: blue
+    backgroundColor: blue
+  - content: pricequote
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: ItemPriceChanged
+    version: 1.0.0
+    to:
+      - id: pricingEvents
+        version: 1.0.0
+  - id: ItemPriceWithdrawn
+    version: 1.0.0
+    to:
+      - id: pricingEvents
+        version: 1.0.0
+  - id: DeliveryChargeScheduleChanged
+    version: 1.0.0
+    to:
+      - id: pricingEvents
+        version: 1.0.0
+  - id: TaxTableChanged
+    version: 1.0.0
+    to:
+      - id: pricingEvents
+        version: 1.0.0
+  - id: PriceQuoteIssued
+    version: 1.0.0
+    to:
+      - id: pricingAnalytics
+        version: 1.0.0
+receives:
+  - id: CatalogItemCreated
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: CatalogItemDiscontinued
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Owns what a shopper pays: the list price and sale windows per catalogue item, the delivery charge per service tier, a synthetic tax table, and the binding, immutable, expiring PriceQuote a checkout session is confirmed against. One configured currency, integer minor units; promotions are a later phase (D10).
+
+| | |
+|---|---|
+| Bounded context | `pricing` |
+| Domain | Digital Storefront (`storefront`) |
+| DDD classification | Core |
+| Tier | Digital Storefront, storefront tier |
+| Publishes (Kafka) | `retailnetwork.pricing.events`<br/>`retailnetwork.pricing.analytics` |
+| Consumes (Kafka) | `pricingEvents`<br/>`pricingAnalytics`<br/>`offerAvailabilityEvents` |
+| CloudEvents type prefix | `com.retailnetwork.storefront.pricing.` |
+| Event source | `/retailnetwork/pricing` |
+| Repository | [IQVO/pricing](https://github.com/IQVO/pricing) |
+| REST API | [pricing-api](/docs/services/pricing-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **pricing** bounded context of the storefront (Core subdomain): list prices and sale windows per catalogue item, the delivery charge per service tier, a synthetic tax table and the binding PriceQuote.
+
+**Published.** Five integration events through a **transactional outbox** (the aggregate row and its already-encoded events are written in ONE database transaction; an always-on relay drains them to Kafka, at-least-once). `ItemPriceChanged`, `ItemPriceWithdrawn`, `DeliveryChargeScheduleChanged` and `TaxTableChanged` go to `retailnetwork.pricing.events`; `PriceQuoteIssued` is analytics only and goes to `retailnetwork.pricing.analytics`. `ItemPriceChanged` is raised whenever the effective price moves: a list-price change, a sale window starting or ending (clock-driven policy PublishEffectivePriceOnWindowBoundary) or a CancelSale of a live sale (CancelSale has no event of its own). There is no PriceQuoteExpired event: quote expiry is checkout-internal TTL state.
+
+**Consumed.** `CatalogItemCreated` and `CatalogItemDiscontinued` from offer-availability feed the local CatalogItemView; a discontinued item also runs the WithdrawOnDiscontinue policy (its ACTIVE price is withdrawn and `ItemPriceWithdrawn` published). Only the fields the service relies on are listed; unknown fields are ignored. The consumer group name comes from the mandatory variable OFFER_AVAILABILITY_CONSUMER_GROUP.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka header `content-type: application/cloudevents+json; charset=UTF-8`. `specversion`, `id`, `source` (`/retailnetwork/pricing`), `type`, `subject`, `time`, `datacontenttype` (`application/json`) and `dataschema` (`urn:retailnetwork:pricing:events:<EventName>:v1`) are all required. Kafka key = the subject. Type = `com.retailnetwork.storefront.pricing.<entity>.<EventName>`. A breaking payload change is a new `.v2` type. Dispatch on the full `type`, ignore unknown types, dedupe on `id`.
+
+**Ordering.** Item events share the catalogItemId as key and carry a monotonically increasing `version`: a consumer applies a version only above the last one it applied. Schedule and tax-table events carry the published `version`.
+
+**Conventions.** `data` is camelCase; amounts are integer minor units of the single configured `currency`; instants are RFC 3339 UTC; enums are UPPER_SNAKE; optional fields are omitted when absent (never null).
+
+## Architecture diagram
+<NodeGraph />
