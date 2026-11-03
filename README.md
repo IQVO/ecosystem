@@ -58,3 +58,26 @@ spec text; classification/tier/purpose per context live in `catalog.contexts.mjs
 - `provisioning` has no `apis/` and is not in the catalog. MCP tools are not catalog messages; they are listed on the ops-agent page.
 - The build's link check flags `https://github.com/IQVO/...` links as broken; they are false positives.
 - EventCatalog 5.x is Business Source License 1.1 with a 60-day trial (see https://www.eventcatalog.dev/license-faq).
+
+## Disclaimer
+
+This project is a domain-driven design study. It is not associated with,
+endorsed by or affiliated with any company, and it uses no company's code,
+data, logos or trademarks. All names, figures and examples are illustrative
+or synthetic.
+
+## Documentation
+
+The event catalog this repo renders is published from CI and the fleet-level
+wiring pages live in warehouse-docs
+(<https://iqvo.github.io/warehouse-docs/> — ecosystem and strategic-design
+sections).
+
+## Helm chart
+
+The catalog ships as a chart (linted in CI's `helm` job, `docker-publish`
+builds the image); `make install` deploys it.
+
+## Local development / quality gate
+
+`make check` (fmt + lint + build); `make run` serves the catalog locally.

@@ -1,0 +1,63 @@
+---
+id: customer-payments-api
+version: 0.1.0
+name: Customer Payments API
+summary: >-
+  REST API of customer-payments. Moves money with the shipment facts: authorize
+  at checkout, capture each shipment group's allocation when it ships, release
+  on cancellation, refund on lost or returned packages, re-authorize uncaptured
+  allocations before the provider's authorization validity expires.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Customer Payments API
+badges:
+  - content: Authorizations
+    textColor: blue
+    backgroundColor: blue
+  - content: Refunds
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: customer-payments-api-authorizePayment
+    version: 0.1.0
+  - id: customer-payments-api-listPaymentAuthorizations
+    version: 0.1.0
+  - id: customer-payments-api-getPaymentAuthorization
+    version: 0.1.0
+  - id: customer-payments-api-voidPaymentAuthorization
+    version: 0.1.0
+  - id: customer-payments-api-requestRefund
+    version: 0.1.0
+  - id: customer-payments-api-listRefunds
+    version: 0.1.0
+  - id: customer-payments-api-getRefund
+    version: 0.1.0
+---
+## Purpose
+Moves money with the shipment facts: authorize at checkout, capture each shipment group's allocation when it ships, release on cancellation, refund on lost or returned packages, re-authorize uncaptured allocations before the provider's authorization validity expires. Speaks to the payment provider through an Anti-Corruption Layer port (Authorize, Capture, Void, Refund, Reauthorize); the payment-provider-simulator is the stand-in adapter and swapping it for a real provider changes nothing else. Never sees a card number, only PSP tokens.
+
+| | |
+|---|---|
+| Bounded context | `customer-payments` |
+| Domain | Digital Storefront (`storefront`) |
+| DDD classification | Generic |
+| Tier | Digital Storefront, storefront tier |
+| Repository | [IQVO/customer-payments](https://github.com/IQVO/customer-payments) |
+| Events | [customer-payments](/docs/services/customer-payments) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+Proposed REST contract of the customer-payments bounded context of the digital storefront, derived from storefront/model/model.yaml (contexts[customer-payments].rest). Nothing is built yet. Customer Payments moves money with the shipment facts: authorize at checkout, capture each shipment group's allocation when it ships (FulfillmentShipped), release on cancellation (FulfillmentCancelled), refund on lost or returned packages (PackageLost, PackageReturned), and re-authorize uncaptured allocations before the provider's authorization validity expires. The provider is reached through an ACL port (Authorize, Capture, Void, Refund, Reauthorize) with deterministic idempotency keys per (operation, authorizationId, groupNo); the storefront never sees a card number, only PSP tokens. This surface is called by checkout (authorize, void) and by storefront ops (refunds, reads); captures, releases and re-authorizations arrive as Kafka events or policies, never as REST writes. Errors are RFC 9457 problem details (application/problem+json) whose type is /problems/&lt;slug>; shared types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422), plus one kebab-case slug per Err of the model, and the idempotency problems idempotency-key-required and idempotency-key-invalid (400) and idempotency-key-reused (409). Every write takes an Idempotency-Key header: a retry with the same key and the same request replays the first answer (Idempotency-Replayed: true), the same key with another request is 409 idempotency-key-reused. The two collection reads are keyset-paged (\{items, nextCursor\}; invalid-limit, invalid-cursor and unknown-query-parameter are 400). No authentication.  
+
+## Architecture diagram
+<NodeGraph />

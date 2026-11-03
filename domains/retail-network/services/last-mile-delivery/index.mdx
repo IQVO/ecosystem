@@ -1,0 +1,154 @@
+---
+id: last-mile-delivery
+name: Last Mile Delivery (events)
+version: 1.0.0
+summary: >-
+  Runs each delivery station: publishes delivery waves (induct cutoff, delivery
+  window, stop capacity) that the promise relies on, plans routes for delivery
+  service partners, and records every delivery attempt.
+badges:
+  - content: last-mile-delivery
+    textColor: blue
+    backgroundColor: blue
+  - content: wave
+    textColor: blue
+    backgroundColor: blue
+  - content: route
+    textColor: blue
+    backgroundColor: blue
+  - content: packageattempthistory
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: DeliveryWaveScheduled
+    version: 1.0.0
+    to:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: DeliveryWaveCapacityChanged
+    version: 1.0.0
+    to:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: DeliveryWaveCancelled
+    version: 1.0.0
+    to:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: PackageOutForDelivery
+    version: 1.0.0
+    to:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: DeliveryAttempted
+    version: 1.0.0
+    to:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: PackageInductionDeferred
+    version: 1.0.0
+    to:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: PackageReturnInitiated
+    version: 1.0.0
+    to:
+      - id: lastMileEvents
+        version: 1.0.0
+  - id: RoutePlanned
+    version: 1.0.0
+    to:
+      - id: lastMileAnalytics
+        version: 1.0.0
+receives:
+  - id: LoadArrived
+    version: 1.0.0
+    from:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: NodeRegistered
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: ServiceAreaAssigned
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: LabelIssued
+    version: 1.0.0
+    from:
+      - id: shippingEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Runs each delivery station: publishes delivery waves (induct cutoff, delivery window, stop capacity) that the promise relies on, plans routes for delivery service partners, and records every delivery attempt.
+
+| | |
+|---|---|
+| Bounded context | `last-mile-delivery` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, logistics tier |
+| Publishes (Kafka) | `retailnetwork.last-mile-delivery.events`<br/>`retailnetwork.last-mile-delivery.analytics` |
+| Consumes (Kafka) | `lastMileEvents`<br/>`lastMileAnalytics`<br/>`linehaulEvents`<br/>`nodeTopologyEvents`<br/>`shippingEvents` |
+| CloudEvents type prefix | `com.retailnetwork.logistics.last-mile-delivery.` |
+| Event source | `/retailnetwork/last-mile-delivery` |
+| Repository | [IQVO/last-mile-delivery](https://github.com/IQVO/last-mile-delivery) |
+| REST API | [last-mile-delivery-api](/docs/services/last-mile-delivery-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **last-mile-delivery** bounded context of the retail
+network (logistics tier): the delivery stations' waves (induct cutoff,
+delivery window, stop capacity), the routes of delivery service partners
+and every delivery attempt (ADR 0001, ADR 0002).
+
+**Published.** Eight events. Seven go to the integration topic
+`retailnetwork.last-mile-delivery.events`; `RoutePlanned` is analytics only
+and goes ONLY to `retailnetwork.last-mile-delivery.analytics`. Every event
+leaves through a **transactional outbox**: the aggregates and their
+already-encoded events are written in ONE database transaction and an
+always-on relay drains them to Kafka (at-least-once; the CloudEvents `id` is
+stored with the outbox row, so a retry republishes the same `id`). The eight
+types are catalogued in ADR 0004.
+
+**Consumed.** Four events (ADR 0003): `LoadArrived` from
+linehaul-transportation, `NodeRegistered` and `ServiceAreaAssigned` from
+node-topology, `LabelIssued` from shipping-and-tracking. Each consumer
+dedupes on the CloudEvents `id` (inbox table `processed_events`), dispatches
+on the full `type`, ignores unknown types and unknown fields. The consumed
+messages below list only the fields this service relies on; the producers'
+own AsyncAPI files are the authority.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`.
+`specversion`, `id`, `source` (`/retailnetwork/last-mile-delivery`), `type`,
+`subject` (the aggregate root id), `time`, `datacontenttype`
+(`application/json`) and `dataschema`
+(`urn:retailnetwork:last-mile-delivery:<stream>:<EventName>:v1`, stream
+`events` or `analytics`) are all required. Kafka key = the subject, so one
+aggregate's events stay ordered on one partition. Type =
+`com.retailnetwork.logistics.last-mile-delivery.<entity>.<EventName>` with
+entity `wave`, `route` or `packageattempthistory`. A breaking payload change
+is a new `.v2` type, never a mutation.
+
+**Conventions.** `data` is camelCase; ids are strings; instants are RFC 3339
+UTC strings; the service date is `YYYY-MM-DD`; counts are integers;
+optional fields are omitted when absent (never null); evolution is additive
+only. No address and no other PII appears in any event.
+
+
+## Architecture diagram
+<NodeGraph />

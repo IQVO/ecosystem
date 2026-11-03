@@ -1,0 +1,198 @@
+---
+id: vendor-connectivity
+name: Vendor Connectivity (events)
+version: 1.0.0
+summary: The network's Open Host Service for vendors that operate fulfillment nodes.
+badges:
+  - content: vendor-connectivity
+    textColor: blue
+    backgroundColor: blue
+  - content: vendoraccount
+    textColor: blue
+    backgroundColor: blue
+  - content: purchaseorder
+    textColor: blue
+    backgroundColor: blue
+  - content: submission
+    textColor: blue
+    backgroundColor: blue
+  - content: inboundreceipt
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: VendorOnboarded
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: VendorSuspended
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: VendorReinstated
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PurchaseOrderIssued
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PurchaseOrderAccepted
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PurchaseOrderRejected
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PurchaseOrderExpired
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: VendorShipmentConfirmed
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: SubmissionProcessed
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: InboundReceiptSubmitted
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+  - id: PurchaseOrderCancelled
+    version: 1.0.0
+    to:
+      - id: vendorConnectivityAnalytics
+        version: 1.0.0
+receives:
+  - id: NodeRegistered
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeOperationalProfileDeclared
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeActivated
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeSuspended
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeRetired
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: ListingCreated
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: CatalogItemPackagingDeclared
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: CatalogItemPackLevelRetired
+    version: 1.0.0
+    from:
+      - id: offerAvailabilityEvents
+        version: 1.0.0
+  - id: InboundShipmentLabelled
+    version: 1.0.0
+    from:
+      - id: sellerInboundEvents
+  - id: InboundShipmentShipped
+    version: 1.0.0
+    from:
+      - id: sellerInboundEvents
+  - id: InboundShipmentReceived
+    version: 1.0.0
+    from:
+      - id: sellerInboundEvents
+  - id: FulfillmentReleasedToNode
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: FulfillmentCancelled
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+The network's Open Host Service for vendors that operate fulfillment nodes. Publishes the Vendor API and its Published Language: vendors register nodes, declare their operational profile, send inventory feeds, poll purchase orders, acknowledge them in full inside the acknowledgement window, request labels and confirm shipment. Every write is an asynchronous transaction a vendor reconciles.
+
+| | |
+|---|---|
+| Bounded context | `vendor-connectivity` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, partner tier |
+| Publishes (Kafka) | `retailnetwork.vendor-connectivity.events`<br/>`retailnetwork.vendor-connectivity.analytics` |
+| Consumes (Kafka) | `vendorConnectivityEvents`<br/>`vendorConnectivityAnalytics`<br/>`nodeTopologyEvents`<br/>`offerAvailabilityEvents`<br/>`sellerInboundEvents`<br/>`orderSourcingEvents` |
+| CloudEvents type prefix | `com.retailnetwork.partner.vendor-connectivity.` |
+| Event source | `/retailnetwork/vendor-connectivity` |
+| Repository | [IQVO/vendor-connectivity](https://github.com/IQVO/vendor-connectivity) |
+| REST API | [vendor-connectivity-api](/docs/services/vendor-connectivity-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **vendor-connectivity** bounded context of the retail network (partner tier):
+the Open Host Service for vendors that operate fulfillment nodes. The Vendor API itself is `apis/openapi.yaml`;
+vendors never see these events, the in-organization contexts do.
+
+**Published.** Eleven types. Ten go to `retailnetwork.vendor-connectivity.events` and `PurchaseOrderCancelled` goes ONLY to
+`retailnetwork.vendor-connectivity.analytics` (the model marks it analytics only). Every event leaves through a
+**transactional outbox**: the aggregate row, the submission row and the already-encoded events are written in ONE database
+transaction and an always-on relay drains them to Kafka (at-least-once; the CloudEvents `id` is stored with the outbox row, so a retry
+republishes the same `id`). The types are catalogued in ADR 0004.
+
+**Consumed.** Thirteen types from four producers (ADR 0003, ADR 0005): seller-inbound `InboundShipmentLabelled`, `InboundShipmentShipped`, `InboundShipmentReceived`; offer-availability `CatalogItemPackagingDeclared`, `CatalogItemPackLevelRetired`; node-topology `NodeRegistered`, `NodeOperationalProfileDeclared`,
+`NodeActivated`, `NodeSuspended`, `NodeRetired`; offer-availability `ListingCreated`; order-sourcing `FulfillmentReleasedToNode`,
+`FulfillmentCancelled`. Each is deduplicated on the CloudEvents `id` in the `processed_events` inbox table, dispatched on the full
+`type`, decoded tolerantly (unknown fields are ignored) and dead-lettered to `<topic>.dlq` when it cannot be processed.
+The consumed `data` below lists only the fields this context relies on.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka header `content-type: application/cloudevents+json; charset=UTF-8`.
+`specversion`, `id`, `source` (`/retailnetwork/vendor-connectivity`), `type`, `subject` (the aggregate root id: `vendorId`, `poNumber` or
+`transactionId`), `time`, `datacontenttype` (`application/json`) and `dataschema`
+(`urn:retailnetwork:vendor-connectivity:<stream>:<EventName>:v1`, stream `events` or `analytics`) are all required. Kafka key = the subject,
+so one purchase order's events stay ordered on one partition. Type = `com.retailnetwork.partner.vendor-connectivity.<entity>.<EventName>`
+with entity `vendoraccount`, `purchaseorder` or `submission`.
+
+**Conventions.** `data` is camelCase; timestamps are RFC 3339 UTC; optional fields are omitted when absent (never null); arrays are always
+present. No event carries a ship-to address, name or phone.
+
+
+## Architecture diagram
+<NodeGraph />

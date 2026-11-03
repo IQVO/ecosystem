@@ -1,0 +1,180 @@
+---
+id: linehaul-transportation
+name: Linehaul Transportation (events)
+version: 1.0.0
+summary: >-
+  Runs the middle mile: turns lanes into scheduled departures (including a
+  pickup departure at every vendor node cutoff), keeps each departure's
+  remaining capacity, builds loads of packages onto departures, and reports when
+  loads depart and arrive.
+badges:
+  - content: linehaul-transportation
+    textColor: blue
+    backgroundColor: blue
+  - content: departure
+    textColor: blue
+    backgroundColor: blue
+  - content: load
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: DepartureScheduled
+    version: 1.0.0
+    to:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: DepartureCapacityChanged
+    version: 1.0.0
+    to:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: DepartureCancelled
+    version: 1.0.0
+    to:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: LoadDeparted
+    version: 1.0.0
+    to:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: LoadArrived
+    version: 1.0.0
+    to:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: BookingMoved
+    version: 1.0.0
+    to:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: BookingFailed
+    version: 1.0.0
+    to:
+      - id: linehaulEvents
+        version: 1.0.0
+  - id: DepartureDeparted
+    version: 1.0.0
+    to:
+      - id: linehaulAnalytics
+        version: 1.0.0
+  - id: DepartureArrived
+    version: 1.0.0
+    to:
+      - id: linehaulAnalytics
+        version: 1.0.0
+  - id: LoadClosed
+    version: 1.0.0
+    to:
+      - id: linehaulAnalytics
+        version: 1.0.0
+receives:
+  - id: NodeRegistered
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeOperationalProfileDeclared
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeActivated
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeSuspended
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeRetired
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: LaneOpened
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: LaneClosed
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: FulfillmentReleasedToNode
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: FulfillmentReassigned
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: FulfillmentLocked
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: FulfillmentCancelled
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: LabelIssued
+    version: 1.0.0
+    from:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+  - id: LabelVoided
+    version: 1.0.0
+    from:
+      - id: shippingAndTrackingEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Runs the middle mile: turns lanes into scheduled departures (including a pickup departure at every vendor node cutoff), keeps each departure's remaining capacity, builds loads of packages onto departures, and reports when loads depart and arrive.
+
+| | |
+|---|---|
+| Bounded context | `linehaul-transportation` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, logistics tier |
+| Publishes (Kafka) | `retailnetwork.linehaul-transportation.events`<br/>`retailnetwork.linehaul-transportation.analytics` |
+| Consumes (Kafka) | `linehaulEvents`<br/>`linehaulAnalytics`<br/>`nodeTopologyEvents`<br/>`orderSourcingEvents`<br/>`shippingAndTrackingEvents` |
+| CloudEvents type prefix | `com.retailnetwork.logistics.linehaul-transportation.` |
+| Event source | `/retailnetwork/linehaul-transportation` |
+| Repository | [IQVO/linehaul-transportation](https://github.com/IQVO/linehaul-transportation) |
+| REST API | [linehaul-transportation-api](/docs/services/linehaul-transportation-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **linehaul-transportation** bounded context of the retail network (logistics tier): the middle mile. It turns lane schedules and the declared cutoffs of vendor nodes into scheduled departures, keeps each departure's remaining capacity, builds loads of packages onto departures and reports when loads depart and arrive (ADR 0001, ADR 0002).
+
+**Published.** Ten events through a **transactional outbox** (the aggregate rows and the already-encoded events are written in ONE database transaction; an always-on relay drains them to Kafka, at-least-once, the CloudEvents `id` is stored with the outbox row). Seven are integration events on `retailnetwork.linehaul-transportation.events`; DepartureDeparted, DepartureArrived and LoadClosed are analytics-only and go ONLY to `retailnetwork.linehaul-transportation.analytics`. BookingMoved and BookingFailed are the events of gap G14 (contracts-delta E13); `departureKind` and `nodeType` on LoadDeparted and LoadArrived are gap G3 (E3). The types are catalogued in ADR 0004.
+
+**Consumed.** Thirteen events from three topics, each under its own mandatory consumer group, idempotent on the CloudEvents `id` (inbox), dispatched on the full `type`, decoded tolerantly (ADR 0003).
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka header `content-type: application/cloudevents+json; charset=UTF-8`. `specversion`, `id`, `source` (`/retailnetwork/linehaul-transportation`), `type`, `subject` (the aggregate root id), `time`, `datacontenttype` (`application/json`) and `dataschema` (`urn:retailnetwork:linehaul-transportation:<events|analytics>:<EventName>:v1`) are all required. Kafka key = the subject, so one aggregate's events stay ordered on one partition. Type = `com.retailnetwork.logistics.linehaul-transportation.<entity>.<EventName>` with entity `departure` or `load`. A breaking payload change is a new `.v2` type, never a mutation.
+
+**Conventions.** `data` is camelCase; instants are RFC 3339 UTC; ids are strings; optional fields are omitted when absent (never null); arrays are always present.
+
+## Architecture diagram
+<NodeGraph />

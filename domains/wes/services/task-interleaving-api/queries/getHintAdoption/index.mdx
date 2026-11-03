@@ -1,0 +1,78 @@
+---
+id: task-interleaving-api-getHintAdoption
+version: 1.0.0
+name: getHintAdoption
+summary: 'How much of the issued advice operators take, per day'
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Reports'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: /reports/hint-adoption
+  statusCodes:
+    - '200'
+    - '400'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+Do operators act on interleaving hints? `days[]` has one row per UTC
+calendar day intersecting `[from, to)` (zeros included); a day's counts
+cover the part of the day inside the range. `hints_issued`,
+`hints_consumed` and `hints_expired` count the hints whose own milestone
+(the `InterleavingHintIssued`, `InterleavingHintConsumed` and
+`InterleavingHintExpired` event `time`) fell in the window.
+`adoption_rate` is consumed / (consumed + expired) of the hints that
+ended in the window, null while none did; a hint superseded by a newer
+one emits neither ending event and is in no denominator.
+`consumed_first_rank` counts the consumed hints whose candidate was
+rank 1 and `mean_detour_m` is the mean detour of the consumed
+candidates (null when none). `time_to_consume` is the issued-to-consumed
+time of the hints consumed in the window whose issue the projection
+also saw; `p50_seconds` / `p95_seconds` are linear-interpolated
+percentiles and are null when `count` is 0. `siteId` narrows every
+counter to one site (omitted = every site); `granularity` is `day` (the
+only bucket; the default). The data is as fresh as
+`GET /reports/freshness` says.
+
+
+
+
+
+## GET `(/reports/hint-adoption)`
+
+### Parameters
+- **from** (query): RFC 3339 instant, inclusive. Defaults to `to` minus 30 days.
+- **to** (query): RFC 3339 instant, exclusive. Defaults to now. At most 366 days after `from`.
+- **siteId** (query): Narrows every counter to one site. Omitted = every site.
+- **granularity** (query): The time-bucket resolution; only `day` exists (the default).
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

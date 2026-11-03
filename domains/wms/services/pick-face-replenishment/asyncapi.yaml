@@ -53,11 +53,20 @@ info:
 
     copy or closes a request (modes `INVENTORY_MODE`, `SLOTTING_MODE`,
 
-    `LAYOUT_MODE`, default `permissive`; consumer groups from
+    `LAYOUT_MODE`, `PACK_LEVEL_MODE`: default and only accepted value `kafka`,
+
+    `permissive` is rejected at boot; consumer groups are required, from
 
     `INVENTORY_CONSUMER_GROUP`, `SLOTTING_CONSUMER_GROUP`,
 
-    `LAYOUT_CONSUMER_GROUP`). The consumed messages below are the producers' own
+    `LAYOUT_CONSUMER_GROUP`, `PACK_LEVEL_CONSUMER_GROUP`). A message that fails
+
+    deterministically, or after the bounded retries, is published to
+
+    `<topic>.dlq` with `x-dlq-*` headers. `ProductPackLevelDeclared` and
+
+    `ProductPackLevelRetired` from product-master are consumed as well. The
+    consumed messages below are the producers' own
 
     contracts, decoded independently here and never imported.
 
@@ -102,6 +111,8 @@ tags:
     description: Events raised by the ReplenishmentRequest aggregate.
   - name: policy
     description: Events raised by the ReplenishmentPolicy aggregate.
+  - name: analytics
+    description: This service's own analytics stream and read side (ADR 0008).
   - name: consumed
     description: Events produced by sibling contexts that this service consumes (ADR 0003).
 channels:
@@ -284,7 +295,10 @@ channels:
                     policy_max: 60
                     requested_at: '2026-10-17T09:30:00Z'
             messageId: ReplenishmentRequested
-          - name: ReplenishmentCompleted
+          - x-no-consumer-reason: >-
+              ledger mirror of inventory-storage's StockRelocated; consumed on
+              demand
+            name: ReplenishmentCompleted
             title: Replenishment completed
             summary: The relocation of a request was recorded on the stock ledger.
             description: >
@@ -531,148 +545,814 @@ channels:
                     cancelled_at: '2026-10-17T09:50:00Z'
             messageId: ReplenishmentCancelled
   warehouse.pick-face-replenishment.analytics:
-    description: |
-      This service's analytics topic, read only by its own analytics side. It
-      carries the three request events again (same `type`, same `id` per
-      occurrence, dataschema `...:analytics:<EventName>:v1`) and the
+    description: >
+      This service's own analytics stream (ADR 0008), written by the SAME
+
+      transactional outbox as the integration topic: every request event
+
+      appears here too, under the SAME CloudEvents id and `type`, with only the
+
+      `dataschema` stream segment different
+
+      (urn:warehouse:pick-face-replenishment:analytics:&lt;EventName>:v1), plus
+      the
+
       analytics-only `ReplenishmentPolicyDeclared` (key and subject
-      `<site_id>/<sku>`), declared below.
+
+      `<site_id>/<sku>`). It is NOT an integration contract: the only consumer
+
+      is this service's cmd/pfr-projector (fixed group from
+
+      `ANALYTICS_CONSUMER_GROUP`), which folds the events into the analytical
+
+      database; its deterministic poison goes to
+
+      warehouse.pick-face-replenishment.analytics.dlq. Other contexts keep
+
+      reading warehouse.pick-face-replenishment.events.
     x-eventcatalog-channel-version: 1.0.0
     publish:
       operationId: receiveReplenishmentAnalytics
-      summary: Receive the analytics-only policy event.
-      description: >
+      summary: >-
+        Receive the analytics twin of every request event and the policy
+        declaration.
+      description: |
+        Request payloads are byte-for-byte the integration payloads (ADR 0008
+        section 2); only the dataschema names the analytics stream.
         `ReplenishmentPolicyDeclared` is raised each time a policy is declared
-        or
-
-        changed, with the new version. Removing a policy raises no event of its
-
-        own; its open requests are cancelled with reason `POLICY_REMOVED`.
+        or changed, with the new version. Removing a policy raises no event of
+        its own; its open requests are cancelled with reason `POLICY_REMOVED`.
       tags:
-        - name: policy
+        - name: analytics
       message:
-        name: ReplenishmentPolicyDeclared
-        title: Replenishment policy declared
-        summary: A min/max policy was declared or changed (analytics only).
-        description: >
-          `type` =
-          `com.warehouse.wms.pick-face-replenishment.policy.ReplenishmentPolicyDeclared`;
-
-          subject and key = `<site_id>/<sku>`. Analytics topic only.
-        contentType: application/cloudevents+json
-        tags:
-          - name: policy
-        payload:
-          allOf:
-            - type: object
-              required:
-                - specversion
-                - id
-                - source
-                - type
-                - subject
-                - time
-                - datacontenttype
-                - dataschema
-                - data
-              properties:
-                specversion:
-                  type: string
-                  const: '1.0'
-                  x-parser-schema-id: <anonymous-schema-1>
-                id:
-                  type: string
-                  format: uuid
-                  x-parser-schema-id: <anonymous-schema-2>
-                source:
-                  type: string
-                  x-parser-schema-id: <anonymous-schema-3>
-                type:
-                  type: string
-                  x-parser-schema-id: <anonymous-schema-4>
-                subject:
-                  type: string
-                  description: >-
-                    The aggregate instance id (the request id for request
-                    events).
-                  x-parser-schema-id: <anonymous-schema-5>
-                time:
-                  type: string
-                  format: date-time
-                  x-parser-schema-id: <anonymous-schema-6>
-                datacontenttype:
-                  type: string
-                  const: application/json
-                  x-parser-schema-id: <anonymous-schema-7>
-                dataschema:
-                  type: string
-                  x-parser-schema-id: <anonymous-schema-8>
-              x-parser-schema-id: CloudEventEnvelope
-            - type: object
-              properties:
-                data:
-                  type: object
+        oneOf:
+          - name: ReplenishmentRequested
+            title: Replenishment requested (analytics twin)
+            summary: The analytics-stream twin of ReplenishmentRequested (ADR 0008).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:pick-face-replenishment:analytics:ReplenishmentRequested:v1`.
+              Consumed only by cmd/pfr-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
                   required:
-                    - site_id
-                    - sku
-                    - min_qty
-                    - max_qty
-                    - multiple
-                    - version
-                    - declared_at
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
                   properties:
-                    site_id:
+                    specversion:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-39>
-                    sku:
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-40>
-                    min_qty:
-                      type: integer
-                      minimum: 0
-                      x-parser-schema-id: <anonymous-schema-41>
-                    max_qty:
-                      type: integer
-                      minimum: 1
-                      x-parser-schema-id: <anonymous-schema-42>
-                    multiple:
-                      type: integer
-                      minimum: 1
-                      x-parser-schema-id: <anonymous-schema-43>
-                    version:
-                      type: integer
-                      minimum: 1
-                      x-parser-schema-id: <anonymous-schema-44>
-                    declared_at:
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the request id for request
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-45>
-                  x-parser-schema-id: <anonymous-schema-38>
-              x-parser-schema-id: <anonymous-schema-37>
-          x-parser-schema-id: ReplenishmentPolicyDeclaredEvent
-        examples:
-          - name: declared
-            summary: SKU-1 at WH1 declared 10 to 60 in multiples of 6.
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - request_id
+                        - site_id
+                        - sku
+                        - forward_bin
+                        - source_bin
+                        - quantity
+                        - priority
+                        - policy_min
+                        - policy_max
+                        - requested_at
+                      properties:
+                        request_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-11>
+                        site_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-12>
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-13>
+                        forward_bin:
+                          type: string
+                          description: The pick face to fill.
+                          x-parser-schema-id: <anonymous-schema-14>
+                        source_bin:
+                          type: string
+                          description: The reserve bin the stock comes from.
+                          x-parser-schema-id: <anonymous-schema-15>
+                        quantity:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-16>
+                        priority:
+                          type: string
+                          enum:
+                            - NORMAL
+                            - URGENT
+                          x-parser-schema-id: <anonymous-schema-17>
+                        policy_min:
+                          type: integer
+                          minimum: 0
+                          x-parser-schema-id: <anonymous-schema-18>
+                        policy_max:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-19>
+                        requested_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-20>
+                      x-parser-schema-id: <anonymous-schema-10>
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: ReplenishmentRequestedEvent
+            examples:
+              - name: requested
+                summary: The analytics twin of the requested example above.
+                payload:
+                  specversion: '1.0'
+                  id: 6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f
+                  source: /warehouse/pick-face-replenishment
+                  type: >-
+                    com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested
+                  subject: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                  time: '2026-10-17T09:30:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:pick-face-replenishment:analytics:ReplenishmentRequested:v1
+                  data:
+                    request_id: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                    site_id: WH1
+                    sku: SKU-1
+                    forward_bin: WH1-FWD-A01-01-01-A
+                    source_bin: WH1-RSV-A07-03-02-B
+                    quantity: 24
+                    priority: NORMAL
+                    policy_min: 10
+                    policy_max: 60
+                    requested_at: '2026-10-17T09:30:00Z'
+            messageId: ReplenishmentRequestedAnalytics
+          - name: ReplenishmentCompleted
+            title: Replenishment completed (analytics twin)
+            summary: The analytics-stream twin of ReplenishmentCompleted (ADR 0008).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCompleted:v1`.
+              Consumed only by cmd/pfr-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
             payload:
-              specversion: '1.0'
-              id: 2b1a0f9e-8d7c-4b6a-a594-837261504f3e
-              source: /warehouse/pick-face-replenishment
-              type: >-
-                com.warehouse.wms.pick-face-replenishment.policy.ReplenishmentPolicyDeclared
-              subject: WH1/SKU-1
-              time: '2026-10-17T09:00:00Z'
-              datacontenttype: application/json
-              dataschema: >-
-                urn:warehouse:pick-face-replenishment:analytics:ReplenishmentPolicyDeclared:v1
-              data:
-                site_id: WH1
-                sku: SKU-1
-                min_qty: 10
-                max_qty: 60
-                multiple: 6
-                version: 1
-                declared_at: '2026-10-17T09:00:00Z'
-        messageId: ReplenishmentPolicyDeclared
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the request id for request
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - request_id
+                        - site_id
+                        - sku
+                        - forward_bin
+                        - source_bin
+                        - quantity
+                        - completed_at
+                      properties:
+                        request_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-23>
+                        site_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-24>
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-25>
+                        forward_bin:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-26>
+                        source_bin:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-27>
+                        quantity:
+                          type: integer
+                          minimum: 1
+                          description: What StockRelocated moved.
+                          x-parser-schema-id: <anonymous-schema-28>
+                        completed_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-29>
+                      x-parser-schema-id: <anonymous-schema-22>
+                  x-parser-schema-id: <anonymous-schema-21>
+              x-parser-schema-id: ReplenishmentCompletedEvent
+            examples:
+              - name: completed
+                summary: The analytics twin of the completed example above.
+                payload:
+                  specversion: '1.0'
+                  id: 0b9a8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d
+                  source: /warehouse/pick-face-replenishment
+                  type: >-
+                    com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCompleted
+                  subject: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                  time: '2026-10-17T10:05:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCompleted:v1
+                  data:
+                    request_id: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                    site_id: WH1
+                    sku: SKU-1
+                    forward_bin: WH1-FWD-A01-01-01-A
+                    source_bin: WH1-RSV-A07-03-02-B
+                    quantity: 24
+                    completed_at: '2026-10-17T10:05:00Z'
+            messageId: ReplenishmentCompletedAnalytics
+          - name: ReplenishmentCancelled
+            title: Replenishment cancelled (analytics twin)
+            summary: The analytics-stream twin of ReplenishmentCancelled (ADR 0008).
+            description: >-
+              Same `type`, `id`, `subject`, key and payload as the integration
+              message; `dataschema` =
+              `urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCancelled:v1`.
+              Consumed only by cmd/pfr-projector.
+            contentType: application/cloudevents+json
+            tags:
+              - name: analytics
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the request id for request
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - request_id
+                        - site_id
+                        - sku
+                        - reason
+                        - cancelled_at
+                      properties:
+                        request_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-32>
+                        site_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-33>
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-34>
+                        reason:
+                          type: string
+                          enum:
+                            - OPERATOR
+                            - ASSIGNMENT_CHANGED
+                            - POLICY_REMOVED
+                          x-parser-schema-id: <anonymous-schema-35>
+                        cancelled_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-36>
+                      x-parser-schema-id: <anonymous-schema-31>
+                  x-parser-schema-id: <anonymous-schema-30>
+              x-parser-schema-id: ReplenishmentCancelledEvent
+            examples:
+              - name: cancelled
+                summary: The analytics twin of the cancelled example above.
+                payload:
+                  specversion: '1.0'
+                  id: 4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a
+                  source: /warehouse/pick-face-replenishment
+                  type: >-
+                    com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled
+                  subject: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                  time: '2026-10-17T09:50:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCancelled:v1
+                  data:
+                    request_id: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                    site_id: WH1
+                    sku: SKU-1
+                    reason: ASSIGNMENT_CHANGED
+                    cancelled_at: '2026-10-17T09:50:00Z'
+            messageId: ReplenishmentCancelledAnalytics
+          - name: ReplenishmentPolicyDeclared
+            title: Replenishment policy declared
+            summary: A min/max policy was declared or changed (analytics only).
+            description: >
+              `type` =
+              `com.warehouse.wms.pick-face-replenishment.policy.ReplenishmentPolicyDeclared`;
+
+              subject and key = `<site_id>/<sku>`. Analytics topic only.
+            contentType: application/cloudevents+json
+            tags:
+              - name: policy
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the request id for request
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - site_id
+                        - sku
+                        - min_qty
+                        - max_qty
+                        - multiple
+                        - version
+                        - declared_at
+                      properties:
+                        site_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-39>
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-40>
+                        min_qty:
+                          type: integer
+                          minimum: 0
+                          x-parser-schema-id: <anonymous-schema-41>
+                        max_qty:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-42>
+                        multiple:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-43>
+                        multiple_source:
+                          type: string
+                          enum:
+                            - DECLARED
+                            - PACK_DERIVED
+                          description: Optional; absent on facts that do not say.
+                          x-parser-schema-id: <anonymous-schema-44>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-45>
+                        declared_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-46>
+                      x-parser-schema-id: <anonymous-schema-38>
+                  x-parser-schema-id: <anonymous-schema-37>
+              x-parser-schema-id: ReplenishmentPolicyDeclaredEvent
+            examples:
+              - name: declared
+                summary: SKU-1 at WH1 declared 10 to 60 in multiples of 6.
+                payload:
+                  specversion: '1.0'
+                  id: 2b1a0f9e-8d7c-4b6a-a594-837261504f3e
+                  source: /warehouse/pick-face-replenishment
+                  type: >-
+                    com.warehouse.wms.pick-face-replenishment.policy.ReplenishmentPolicyDeclared
+                  subject: WH1/SKU-1
+                  time: '2026-10-17T09:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:pick-face-replenishment:analytics:ReplenishmentPolicyDeclared:v1
+                  data:
+                    site_id: WH1
+                    sku: SKU-1
+                    min_qty: 10
+                    max_qty: 60
+                    multiple: 6
+                    version: 1
+                    declared_at: '2026-10-17T09:00:00Z'
+            messageId: ReplenishmentPolicyDeclared
+  warehouse.product-master.events:
+    description: |
+      This service's integration topic. Written by the outbox relay; key = SKU;
+      every message carries the CloudEvents content-type header (plus the
+      optional W3C `traceparent` of the writing request). Dispatch on the
+      full `type`, ignore unknown types, dedupe on `id`, apply by `version`.
+    x-eventcatalog-channel-version: 1.1.0
+    subscribe:
+      operationId: applyProductMasterPackLevel
+      summary: Apply product-master pack-level facts to the local packaging copy.
+      description: |
+        Upserts the packaging view in one transaction with the CloudEvents `id`
+        claim; unknown types on the topic are skipped.
+      message:
+        oneOf:
+          - name: ProductPackLevelDeclared
+            title: product-master ProductPackLevelDeclared (consumed)
+            summary: >-
+              A pack level (EACH, INNER, CASE or PALLET) of a SKU was declared,
+              or one of its mutable attributes changed.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductPackLevelDeclared`,
+
+              source `/warehouse/product-master`, dataschema
+
+              `urn:warehouse:product-master:events:ProductPackLevelDeclared:v1`;
+              subject and
+
+              key = the SKU. Produced by product-master; consumed into the local
+
+              packaging view (pack level -> eaches factor for case-level scans).
+
+              NOTE: the consumer decodes camelCase keys (`unitsPerPack`,
+              `effectiveFrom`),
+
+              while product-master's encoder writes snake_case
+              (`units_per_pack`,
+
+              `effective_from`); see the PR notes.
+            contentType: application/cloudevents+json
+            tags:
+              - name: consumed
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the request id for request
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - level
+                        - gtin
+                        - unitsPerPack
+                        - effectiveFrom
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-49>
+                        level:
+                          type: string
+                          enum:
+                            - EACH
+                            - INNER
+                            - CASE
+                            - PALLET
+                          x-parser-schema-id: <anonymous-schema-50>
+                        gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          x-parser-schema-id: <anonymous-schema-51>
+                        child_gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          x-parser-schema-id: <anonymous-schema-52>
+                        qty_of_child:
+                          type: integer
+                          minimum: 2
+                          maximum: 1000000
+                          description: Absent for EACH.
+                          x-parser-schema-id: <anonymous-schema-53>
+                        unitsPerPack:
+                          type: integer
+                          minimum: 1
+                          maximum: 1000000
+                          description: >-
+                            Direct factor to eaches; 1 for EACH. The consumer
+                            decodes this camelCase key (see the product-master
+                            note in the message).
+                          x-parser-schema-id: <anonymous-schema-54>
+                        is_orderable:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-55>
+                        is_despatch_unit:
+                          type: boolean
+                          x-parser-schema-id: <anonymous-schema-56>
+                        effectiveFrom:
+                          type: string
+                          format: date-time
+                          description: camelCase key as decoded by the consumer.
+                          x-parser-schema-id: <anonymous-schema-57>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-58>
+                      x-parser-schema-id: <anonymous-schema-48>
+                  x-parser-schema-id: <anonymous-schema-47>
+              x-parser-schema-id: ProductPackLevelDeclaredEvent
+            messageId: ProductPackLevelDeclared
+          - name: ProductPackLevelRetired
+            title: product-master ProductPackLevelRetired (consumed)
+            summary: A pack level of a SKU was retired.
+            description: >
+              `type` =
+              `com.warehouse.wms.product-master.product.ProductPackLevelRetired`,
+
+              source `/warehouse/product-master`, dataschema
+
+              `urn:warehouse:product-master:events:ProductPackLevelRetired:v1`;
+              subject and
+
+              key = the SKU. Produced by product-master; consumed into the local
+
+              packaging view (retired levels are no longer valid scan targets).
+            contentType: application/cloudevents+json
+            tags:
+              - name: consumed
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      description: >-
+                        The aggregate instance id (the request id for request
+                        events).
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required:
+                        - sku
+                        - level
+                        - gtin
+                        - effectiveTo
+                        - version
+                      properties:
+                        sku:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-61>
+                        level:
+                          type: string
+                          enum:
+                            - EACH
+                            - INNER
+                            - CASE
+                            - PALLET
+                          x-parser-schema-id: <anonymous-schema-62>
+                        gtin:
+                          type: string
+                          pattern: ^[0-9]{14}$
+                          x-parser-schema-id: <anonymous-schema-63>
+                        effectiveTo:
+                          type: string
+                          format: date-time
+                          description: camelCase key as decoded by the consumer.
+                          x-parser-schema-id: <anonymous-schema-64>
+                        reason:
+                          type: string
+                          minLength: 1
+                          maxLength: 200
+                          description: >-
+                            Sent by the producer; this consumer does not read
+                            it.
+                          x-parser-schema-id: <anonymous-schema-65>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-66>
+                      x-parser-schema-id: <anonymous-schema-60>
+                  x-parser-schema-id: <anonymous-schema-59>
+              x-parser-schema-id: ProductPackLevelRetiredEvent
+            messageId: ProductPackLevelRetired
   warehouse.inventory.events:
     description: >
       The outbound integration topic for this bounded context (the `Topic`
@@ -680,12 +1360,16 @@ channels:
       `StockReserved` and `ReservationRevoked` (keyed by reservation id), the
       transfer replies and receipt/stow events (keyed by transfer line id),
       `StockRelocated` (keyed by relocation id, ADR 0039),
-      `BinStockLevelChanged` (keyed by `<bin>:<sku>`, ADR 0040), and the legacy
-      `ProductClassified` (keyed by SKU), which since ADR 0034 only the one-shot
-      `republish-product-classifications` backfill emits (product-master's
-      legacy importer consumes it). The primary downstream consumer is
-      wes-work-planning, which dispatches on their full `type` strings and
-      projects them into its `UsableInventoryObserved` read model, keyed by SKU.
+      `BinStockLevelChanged` (keyed by `<bin>:<sku>`, ADR 0040) and the promoted
+      exception facts `DiscrepancyDetected`, `ItemUnlocated` and `ItemStowed`
+      (ADR 0043 — byte-identical copies of the analytics feed, consumed by
+      exception-management and returns-processing) and the container events
+      `ContainerRegistered`, `ContainerStowed`, `CaseBroken` and
+      `ContainerEmptied` (keyed by LPN, ADR 0045/0046). The legacy
+      `ProductClassified` was retired at product-master ADR 0003 stage E
+      (2026-10-17). The primary downstream consumer is wes-work-planning, which
+      dispatches on their full `type` strings and projects them into its
+      `UsableInventoryObserved` read model, keyed by SKU.
     x-eventcatalog-channel-version: 1.0.0
     subscribe:
       operationId: consumeInventoryStorageEvents
@@ -738,7 +1422,10 @@ channels:
               bound by active reservations. Keep the highest `version` per bin
               and SKU
 
-              and ignore lower ones. Ignore unknown `reason` values.
+              and ignore lower ones. The consumer reads only `site_code`, `bin`,
+              `sku`,
+
+              `on_hand`, `reserved` and `version`; `reason` is not read.
             contentType: application/cloudevents+json
             tags:
               - name: consumed
@@ -799,46 +1486,47 @@ channels:
                         - on_hand
                         - reserved
                         - version
-                        - reason
-                        - occurred_at
                       properties:
                         site_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-48>
+                          x-parser-schema-id: <anonymous-schema-69>
                         bin:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-49>
+                          x-parser-schema-id: <anonymous-schema-70>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-50>
+                          x-parser-schema-id: <anonymous-schema-71>
                         on_hand:
                           type: integer
                           minimum: 0
                           description: Absolute units in the bin after the change.
-                          x-parser-schema-id: <anonymous-schema-51>
+                          x-parser-schema-id: <anonymous-schema-72>
                         reserved:
                           type: integer
                           minimum: 0
                           description: Units of this bin bound by active reservations.
-                          x-parser-schema-id: <anonymous-schema-52>
+                          x-parser-schema-id: <anonymous-schema-73>
                         version:
                           type: integer
                           minimum: 1
                           description: Per-(bin
                           sku) monotonically increasing; keep the highest.: null
-                          x-parser-schema-id: <anonymous-schema-53>
+                          x-parser-schema-id: <anonymous-schema-74>
                         reason:
                           type: string
                           description: >-
-                            STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE,
-                            REVOKE or UNLOCATED; unknown values are ignored.
-                          x-parser-schema-id: <anonymous-schema-54>
+                            Sent by the producer; this consumer does not read
+                            it.
+                          x-parser-schema-id: <anonymous-schema-75>
                         occurred_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-55>
-                      x-parser-schema-id: <anonymous-schema-47>
-                  x-parser-schema-id: <anonymous-schema-46>
+                          description: >-
+                            Sent by the producer; this consumer does not read
+                            it.
+                          x-parser-schema-id: <anonymous-schema-76>
+                      x-parser-schema-id: <anonymous-schema-68>
+                  x-parser-schema-id: <anonymous-schema-67>
               x-parser-schema-id: BinStockLevelChangedEvent
             examples:
               - name: afterPick
@@ -950,46 +1638,48 @@ channels:
                         - quantity
                         - reason
                         - source_ref
-                        - occurred_at
                       properties:
                         relocation_id:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-58>
+                          x-parser-schema-id: <anonymous-schema-79>
                         site_code:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-59>
+                          x-parser-schema-id: <anonymous-schema-80>
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-60>
+                          x-parser-schema-id: <anonymous-schema-81>
                         from_bin:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-61>
+                          x-parser-schema-id: <anonymous-schema-82>
                         to_bin:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-62>
+                          x-parser-schema-id: <anonymous-schema-83>
                         quantity:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-63>
+                          x-parser-schema-id: <anonymous-schema-84>
                         reason:
                           type: string
                           description: >-
                             Act only on REPLENISHMENT; SLOTTING, CONSOLIDATION,
                             MANUAL and any other value are ignored.
-                          x-parser-schema-id: <anonymous-schema-64>
+                          x-parser-schema-id: <anonymous-schema-85>
                         source_ref:
                           type: string
                           maxLength: 200
                           description: >-
                             The request id on a replenishment; "" or another
                             reference otherwise.
-                          x-parser-schema-id: <anonymous-schema-65>
+                          x-parser-schema-id: <anonymous-schema-86>
                         occurred_at:
                           type: string
                           format: date-time
-                          x-parser-schema-id: <anonymous-schema-66>
-                      x-parser-schema-id: <anonymous-schema-57>
-                  x-parser-schema-id: <anonymous-schema-56>
+                          description: >-
+                            Sent by the producer; this consumer does not read
+                            it.
+                          x-parser-schema-id: <anonymous-schema-87>
+                      x-parser-schema-id: <anonymous-schema-78>
+                  x-parser-schema-id: <anonymous-schema-77>
               x-parser-schema-id: StockRelocatedEvent
             examples:
               - name: replenishmentFromATask
@@ -1114,22 +1804,21 @@ channels:
                     - site_id
                     - approved_at
                     - assignments
-                    - moves
                   properties:
                     plan_id:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-69>
+                      x-parser-schema-id: <anonymous-schema-90>
                     site_id:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-70>
+                      x-parser-schema-id: <anonymous-schema-91>
                     approved_at:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-92>
                     supersedes_plan_id:
                       type: string
-                      description: Omitted when the site had no Approved plan.
-                      x-parser-schema-id: <anonymous-schema-72>
+                      description: Sent by the producer; this consumer does not read it.
+                      x-parser-schema-id: <anonymous-schema-93>
                     assignments:
                       type: array
                       description: The FULL assignment map of the plan.
@@ -1141,17 +1830,18 @@ channels:
                         properties:
                           sku:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-74>
+                            x-parser-schema-id: <anonymous-schema-95>
                           slot:
                             type: string
                             description: >-
                               The facility-layout location code of the forward
                               slot.
-                            x-parser-schema-id: <anonymous-schema-75>
+                            x-parser-schema-id: <anonymous-schema-96>
                         x-parser-schema-id: SlotAssignment
-                      x-parser-schema-id: <anonymous-schema-73>
+                      x-parser-schema-id: <anonymous-schema-94>
                     moves:
                       type: array
+                      description: Sent by the producer; this consumer does not read it.
                       items:
                         type: object
                         required:
@@ -1160,26 +1850,26 @@ channels:
                         properties:
                           sku:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-77>
+                            x-parser-schema-id: <anonymous-schema-98>
                           from_slot:
                             type: string
                             description: Omitted for an Assign.
-                            x-parser-schema-id: <anonymous-schema-78>
+                            x-parser-schema-id: <anonymous-schema-99>
                           to_slot:
                             type: string
                             description: Omitted for a Vacate.
-                            x-parser-schema-id: <anonymous-schema-79>
+                            x-parser-schema-id: <anonymous-schema-100>
                           kind:
                             type: string
                             enum:
                               - Assign
                               - Relocate
                               - Vacate
-                            x-parser-schema-id: <anonymous-schema-80>
+                            x-parser-schema-id: <anonymous-schema-101>
                         x-parser-schema-id: SlotMove
-                      x-parser-schema-id: <anonymous-schema-76>
-                  x-parser-schema-id: <anonymous-schema-68>
-              x-parser-schema-id: <anonymous-schema-67>
+                      x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-89>
+              x-parser-schema-id: <anonymous-schema-88>
           x-parser-schema-id: SlotPlanApprovedEvent
         examples:
           - name: approved
@@ -1306,35 +1996,32 @@ channels:
                       required:
                         - zoneId
                         - siteCode
-                        - areaCode
                         - zoneCode
-                        - temperatureClass
-                        - hazmat
                       properties:
                         zoneId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-83>
+                          x-parser-schema-id: <anonymous-schema-104>
                         siteCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-84>
+                          x-parser-schema-id: <anonymous-schema-105>
                         areaCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-85>
+                          x-parser-schema-id: <anonymous-schema-106>
                         zoneCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-86>
+                          x-parser-schema-id: <anonymous-schema-107>
                         temperatureClass:
                           type: string
                           enum:
                             - Ambient
                             - Chilled
                             - Frozen
-                          x-parser-schema-id: <anonymous-schema-87>
+                          x-parser-schema-id: <anonymous-schema-108>
                         hazmat:
                           type: boolean
-                          x-parser-schema-id: <anonymous-schema-88>
-                      x-parser-schema-id: <anonymous-schema-82>
-                  x-parser-schema-id: <anonymous-schema-81>
+                          x-parser-schema-id: <anonymous-schema-109>
+                      x-parser-schema-id: <anonymous-schema-103>
+                  x-parser-schema-id: <anonymous-schema-102>
               x-parser-schema-id: ZoneRegisteredEvent
             examples:
               - name: reserveZone
@@ -1431,45 +2118,41 @@ channels:
                       type: object
                       required:
                         - locationCode
-                        - aisleId
                         - zoneId
-                        - locationType
-                        - maxWeightKg
-                        - maxVolumeM3
                       properties:
                         locationCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-91>
+                          x-parser-schema-id: <anonymous-schema-112>
                         aisleId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-92>
+                          x-parser-schema-id: <anonymous-schema-113>
                         zoneId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-93>
+                          x-parser-schema-id: <anonymous-schema-114>
                         locationType:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-94>
+                          x-parser-schema-id: <anonymous-schema-115>
                         role:
                           type: string
                           description: Absent means Storage.
-                          x-parser-schema-id: <anonymous-schema-95>
+                          x-parser-schema-id: <anonymous-schema-116>
                         dockFlow:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-96>
+                          x-parser-schema-id: <anonymous-schema-117>
                         activities:
                           type: array
                           items:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-98>
-                          x-parser-schema-id: <anonymous-schema-97>
+                            x-parser-schema-id: <anonymous-schema-119>
+                          x-parser-schema-id: <anonymous-schema-118>
                         maxWeightKg:
                           type: number
-                          x-parser-schema-id: <anonymous-schema-99>
+                          x-parser-schema-id: <anonymous-schema-120>
                         maxVolumeM3:
                           type: number
-                          x-parser-schema-id: <anonymous-schema-100>
-                      x-parser-schema-id: <anonymous-schema-90>
-                  x-parser-schema-id: <anonymous-schema-89>
+                          x-parser-schema-id: <anonymous-schema-121>
+                      x-parser-schema-id: <anonymous-schema-111>
+                  x-parser-schema-id: <anonymous-schema-110>
               x-parser-schema-id: LocationSlotRegisteredEvent
             examples:
               - name: reserveSlot
@@ -1570,9 +2253,9 @@ channels:
                       properties:
                         locationCode:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-103>
-                      x-parser-schema-id: <anonymous-schema-102>
-                  x-parser-schema-id: <anonymous-schema-101>
+                          x-parser-schema-id: <anonymous-schema-124>
+                      x-parser-schema-id: <anonymous-schema-123>
+                  x-parser-schema-id: <anonymous-schema-122>
               x-parser-schema-id: LocationSlotDecommissionedEvent
             examples:
               - name: decommissioned
@@ -1748,6 +2431,7 @@ components:
               requested_at: '2026-10-17T09:30:00Z'
       messageId: ReplenishmentRequested
     ReplenishmentCompleted:
+      x-no-consumer-reason: ledger mirror of inventory-storage's StockRelocated; consumed on demand
       name: ReplenishmentCompleted
       title: Replenishment completed
       summary: The relocation of a request was recorded on the stock ledger.
@@ -2075,14 +2759,21 @@ components:
                     type: integer
                     minimum: 1
                     x-parser-schema-id: <anonymous-schema-43>
+                  multiple_source:
+                    type: string
+                    enum:
+                      - DECLARED
+                      - PACK_DERIVED
+                    description: Optional; absent on facts that do not say.
+                    x-parser-schema-id: <anonymous-schema-44>
                   version:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-44>
+                    x-parser-schema-id: <anonymous-schema-45>
                   declared_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-45>
+                    x-parser-schema-id: <anonymous-schema-46>
                 x-parser-schema-id: <anonymous-schema-38>
             x-parser-schema-id: <anonymous-schema-37>
         x-parser-schema-id: ReplenishmentPolicyDeclaredEvent
@@ -2109,6 +2800,376 @@ components:
               version: 1
               declared_at: '2026-10-17T09:00:00Z'
       messageId: ReplenishmentPolicyDeclared
+    ReplenishmentRequestedAnalytics:
+      name: ReplenishmentRequested
+      title: Replenishment requested (analytics twin)
+      summary: The analytics-stream twin of ReplenishmentRequested (ADR 0008).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:pick-face-replenishment:analytics:ReplenishmentRequested:v1`.
+        Consumed only by cmd/pfr-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the request id for request events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - request_id
+                  - site_id
+                  - sku
+                  - forward_bin
+                  - source_bin
+                  - quantity
+                  - priority
+                  - policy_min
+                  - policy_max
+                  - requested_at
+                properties:
+                  request_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-11>
+                  site_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-12>
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-13>
+                  forward_bin:
+                    type: string
+                    description: The pick face to fill.
+                    x-parser-schema-id: <anonymous-schema-14>
+                  source_bin:
+                    type: string
+                    description: The reserve bin the stock comes from.
+                    x-parser-schema-id: <anonymous-schema-15>
+                  quantity:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-16>
+                  priority:
+                    type: string
+                    enum:
+                      - NORMAL
+                      - URGENT
+                    x-parser-schema-id: <anonymous-schema-17>
+                  policy_min:
+                    type: integer
+                    minimum: 0
+                    x-parser-schema-id: <anonymous-schema-18>
+                  policy_max:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-19>
+                  requested_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-20>
+                x-parser-schema-id: <anonymous-schema-10>
+            x-parser-schema-id: <anonymous-schema-9>
+        x-parser-schema-id: ReplenishmentRequestedEvent
+      examples:
+        - name: requested
+          summary: The analytics twin of the requested example above.
+          payload:
+            specversion: '1.0'
+            id: 6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f
+            source: /warehouse/pick-face-replenishment
+            type: >-
+              com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested
+            subject: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: '2026-10-17T09:30:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:warehouse:pick-face-replenishment:analytics:ReplenishmentRequested:v1
+            data:
+              request_id: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: WH1
+              sku: SKU-1
+              forward_bin: WH1-FWD-A01-01-01-A
+              source_bin: WH1-RSV-A07-03-02-B
+              quantity: 24
+              priority: NORMAL
+              policy_min: 10
+              policy_max: 60
+              requested_at: '2026-10-17T09:30:00Z'
+      messageId: ReplenishmentRequestedAnalytics
+    ReplenishmentCompletedAnalytics:
+      name: ReplenishmentCompleted
+      title: Replenishment completed (analytics twin)
+      summary: The analytics-stream twin of ReplenishmentCompleted (ADR 0008).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCompleted:v1`.
+        Consumed only by cmd/pfr-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the request id for request events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - request_id
+                  - site_id
+                  - sku
+                  - forward_bin
+                  - source_bin
+                  - quantity
+                  - completed_at
+                properties:
+                  request_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-23>
+                  site_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-24>
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-25>
+                  forward_bin:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-26>
+                  source_bin:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-27>
+                  quantity:
+                    type: integer
+                    minimum: 1
+                    description: What StockRelocated moved.
+                    x-parser-schema-id: <anonymous-schema-28>
+                  completed_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-29>
+                x-parser-schema-id: <anonymous-schema-22>
+            x-parser-schema-id: <anonymous-schema-21>
+        x-parser-schema-id: ReplenishmentCompletedEvent
+      examples:
+        - name: completed
+          summary: The analytics twin of the completed example above.
+          payload:
+            specversion: '1.0'
+            id: 0b9a8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d
+            source: /warehouse/pick-face-replenishment
+            type: >-
+              com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCompleted
+            subject: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: '2026-10-17T10:05:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCompleted:v1
+            data:
+              request_id: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: WH1
+              sku: SKU-1
+              forward_bin: WH1-FWD-A01-01-01-A
+              source_bin: WH1-RSV-A07-03-02-B
+              quantity: 24
+              completed_at: '2026-10-17T10:05:00Z'
+      messageId: ReplenishmentCompletedAnalytics
+    ReplenishmentCancelledAnalytics:
+      name: ReplenishmentCancelled
+      title: Replenishment cancelled (analytics twin)
+      summary: The analytics-stream twin of ReplenishmentCancelled (ADR 0008).
+      description: >-
+        Same `type`, `id`, `subject`, key and payload as the integration
+        message; `dataschema` =
+        `urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCancelled:v1`.
+        Consumed only by cmd/pfr-projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the request id for request events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - request_id
+                  - site_id
+                  - sku
+                  - reason
+                  - cancelled_at
+                properties:
+                  request_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-32>
+                  site_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-33>
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-34>
+                  reason:
+                    type: string
+                    enum:
+                      - OPERATOR
+                      - ASSIGNMENT_CHANGED
+                      - POLICY_REMOVED
+                    x-parser-schema-id: <anonymous-schema-35>
+                  cancelled_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-36>
+                x-parser-schema-id: <anonymous-schema-31>
+            x-parser-schema-id: <anonymous-schema-30>
+        x-parser-schema-id: ReplenishmentCancelledEvent
+      examples:
+        - name: cancelled
+          summary: The analytics twin of the cancelled example above.
+          payload:
+            specversion: '1.0'
+            id: 4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a
+            source: /warehouse/pick-face-replenishment
+            type: >-
+              com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled
+            subject: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: '2026-10-17T09:50:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCancelled:v1
+            data:
+              request_id: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: WH1
+              sku: SKU-1
+              reason: ASSIGNMENT_CHANGED
+              cancelled_at: '2026-10-17T09:50:00Z'
+      messageId: ReplenishmentCancelledAnalytics
     BinStockLevelChanged:
       name: BinStockLevelChanged
       title: BinStockLevelChanged (consumed, inventory-storage)
@@ -2133,7 +3194,10 @@ components:
 
         bound by active reservations. Keep the highest `version` per bin and SKU
 
-        and ignore lower ones. Ignore unknown `reason` values.
+        and ignore lower ones. The consumer reads only `site_code`, `bin`,
+        `sku`,
+
+        `on_hand`, `reserved` and `version`; `reason` is not read.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -2192,46 +3256,43 @@ components:
                   - on_hand
                   - reserved
                   - version
-                  - reason
-                  - occurred_at
                 properties:
                   site_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-48>
+                    x-parser-schema-id: <anonymous-schema-69>
                   bin:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: <anonymous-schema-70>
                   sku:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-50>
+                    x-parser-schema-id: <anonymous-schema-71>
                   on_hand:
                     type: integer
                     minimum: 0
                     description: Absolute units in the bin after the change.
-                    x-parser-schema-id: <anonymous-schema-51>
+                    x-parser-schema-id: <anonymous-schema-72>
                   reserved:
                     type: integer
                     minimum: 0
                     description: Units of this bin bound by active reservations.
-                    x-parser-schema-id: <anonymous-schema-52>
+                    x-parser-schema-id: <anonymous-schema-73>
                   version:
                     type: integer
                     minimum: 1
                     description: Per-(bin
                     sku) monotonically increasing; keep the highest.: null
-                    x-parser-schema-id: <anonymous-schema-53>
+                    x-parser-schema-id: <anonymous-schema-74>
                   reason:
                     type: string
-                    description: >-
-                      STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE,
-                      REVOKE or UNLOCATED; unknown values are ignored.
-                    x-parser-schema-id: <anonymous-schema-54>
+                    description: Sent by the producer; this consumer does not read it.
+                    x-parser-schema-id: <anonymous-schema-75>
                   occurred_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-55>
-                x-parser-schema-id: <anonymous-schema-47>
-            x-parser-schema-id: <anonymous-schema-46>
+                    description: Sent by the producer; this consumer does not read it.
+                    x-parser-schema-id: <anonymous-schema-76>
+                x-parser-schema-id: <anonymous-schema-68>
+            x-parser-schema-id: <anonymous-schema-67>
         x-parser-schema-id: BinStockLevelChangedEvent
       examples:
         - name: afterPick
@@ -2337,46 +3398,46 @@ components:
                   - quantity
                   - reason
                   - source_ref
-                  - occurred_at
                 properties:
                   relocation_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-58>
+                    x-parser-schema-id: <anonymous-schema-79>
                   site_code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-80>
                   sku:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-60>
+                    x-parser-schema-id: <anonymous-schema-81>
                   from_bin:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-61>
+                    x-parser-schema-id: <anonymous-schema-82>
                   to_bin:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-83>
                   quantity:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-63>
+                    x-parser-schema-id: <anonymous-schema-84>
                   reason:
                     type: string
                     description: >-
                       Act only on REPLENISHMENT; SLOTTING, CONSOLIDATION, MANUAL
                       and any other value are ignored.
-                    x-parser-schema-id: <anonymous-schema-64>
+                    x-parser-schema-id: <anonymous-schema-85>
                   source_ref:
                     type: string
                     maxLength: 200
                     description: >-
                       The request id on a replenishment; "" or another reference
                       otherwise.
-                    x-parser-schema-id: <anonymous-schema-65>
+                    x-parser-schema-id: <anonymous-schema-86>
                   occurred_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-66>
-                x-parser-schema-id: <anonymous-schema-57>
-            x-parser-schema-id: <anonymous-schema-56>
+                    description: Sent by the producer; this consumer does not read it.
+                    x-parser-schema-id: <anonymous-schema-87>
+                x-parser-schema-id: <anonymous-schema-78>
+            x-parser-schema-id: <anonymous-schema-77>
         x-parser-schema-id: StockRelocatedEvent
       examples:
         - name: replenishmentFromATask
@@ -2473,22 +3534,21 @@ components:
                   - site_id
                   - approved_at
                   - assignments
-                  - moves
                 properties:
                   plan_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-69>
+                    x-parser-schema-id: <anonymous-schema-90>
                   site_id:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-70>
+                    x-parser-schema-id: <anonymous-schema-91>
                   approved_at:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-71>
+                    x-parser-schema-id: <anonymous-schema-92>
                   supersedes_plan_id:
                     type: string
-                    description: Omitted when the site had no Approved plan.
-                    x-parser-schema-id: <anonymous-schema-72>
+                    description: Sent by the producer; this consumer does not read it.
+                    x-parser-schema-id: <anonymous-schema-93>
                   assignments:
                     type: array
                     description: The FULL assignment map of the plan.
@@ -2500,17 +3560,18 @@ components:
                       properties:
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-74>
+                          x-parser-schema-id: <anonymous-schema-95>
                         slot:
                           type: string
                           description: >-
                             The facility-layout location code of the forward
                             slot.
-                          x-parser-schema-id: <anonymous-schema-75>
+                          x-parser-schema-id: <anonymous-schema-96>
                       x-parser-schema-id: SlotAssignment
-                    x-parser-schema-id: <anonymous-schema-73>
+                    x-parser-schema-id: <anonymous-schema-94>
                   moves:
                     type: array
+                    description: Sent by the producer; this consumer does not read it.
                     items:
                       type: object
                       required:
@@ -2519,26 +3580,26 @@ components:
                       properties:
                         sku:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-77>
+                          x-parser-schema-id: <anonymous-schema-98>
                         from_slot:
                           type: string
                           description: Omitted for an Assign.
-                          x-parser-schema-id: <anonymous-schema-78>
+                          x-parser-schema-id: <anonymous-schema-99>
                         to_slot:
                           type: string
                           description: Omitted for a Vacate.
-                          x-parser-schema-id: <anonymous-schema-79>
+                          x-parser-schema-id: <anonymous-schema-100>
                         kind:
                           type: string
                           enum:
                             - Assign
                             - Relocate
                             - Vacate
-                          x-parser-schema-id: <anonymous-schema-80>
+                          x-parser-schema-id: <anonymous-schema-101>
                       x-parser-schema-id: SlotMove
-                    x-parser-schema-id: <anonymous-schema-76>
-                x-parser-schema-id: <anonymous-schema-68>
-            x-parser-schema-id: <anonymous-schema-67>
+                    x-parser-schema-id: <anonymous-schema-97>
+                x-parser-schema-id: <anonymous-schema-89>
+            x-parser-schema-id: <anonymous-schema-88>
         x-parser-schema-id: SlotPlanApprovedEvent
       examples:
         - name: approved
@@ -2638,35 +3699,32 @@ components:
                 required:
                   - zoneId
                   - siteCode
-                  - areaCode
                   - zoneCode
-                  - temperatureClass
-                  - hazmat
                 properties:
                   zoneId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-83>
+                    x-parser-schema-id: <anonymous-schema-104>
                   siteCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-84>
+                    x-parser-schema-id: <anonymous-schema-105>
                   areaCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-85>
+                    x-parser-schema-id: <anonymous-schema-106>
                   zoneCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-86>
+                    x-parser-schema-id: <anonymous-schema-107>
                   temperatureClass:
                     type: string
                     enum:
                       - Ambient
                       - Chilled
                       - Frozen
-                    x-parser-schema-id: <anonymous-schema-87>
+                    x-parser-schema-id: <anonymous-schema-108>
                   hazmat:
                     type: boolean
-                    x-parser-schema-id: <anonymous-schema-88>
-                x-parser-schema-id: <anonymous-schema-82>
-            x-parser-schema-id: <anonymous-schema-81>
+                    x-parser-schema-id: <anonymous-schema-109>
+                x-parser-schema-id: <anonymous-schema-103>
+            x-parser-schema-id: <anonymous-schema-102>
         x-parser-schema-id: ZoneRegisteredEvent
       examples:
         - name: reserveZone
@@ -2760,45 +3818,41 @@ components:
                 type: object
                 required:
                   - locationCode
-                  - aisleId
                   - zoneId
-                  - locationType
-                  - maxWeightKg
-                  - maxVolumeM3
                 properties:
                   locationCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-91>
+                    x-parser-schema-id: <anonymous-schema-112>
                   aisleId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-92>
+                    x-parser-schema-id: <anonymous-schema-113>
                   zoneId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-93>
+                    x-parser-schema-id: <anonymous-schema-114>
                   locationType:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-94>
+                    x-parser-schema-id: <anonymous-schema-115>
                   role:
                     type: string
                     description: Absent means Storage.
-                    x-parser-schema-id: <anonymous-schema-95>
+                    x-parser-schema-id: <anonymous-schema-116>
                   dockFlow:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-96>
+                    x-parser-schema-id: <anonymous-schema-117>
                   activities:
                     type: array
                     items:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-98>
-                    x-parser-schema-id: <anonymous-schema-97>
+                      x-parser-schema-id: <anonymous-schema-119>
+                    x-parser-schema-id: <anonymous-schema-118>
                   maxWeightKg:
                     type: number
-                    x-parser-schema-id: <anonymous-schema-99>
+                    x-parser-schema-id: <anonymous-schema-120>
                   maxVolumeM3:
                     type: number
-                    x-parser-schema-id: <anonymous-schema-100>
-                x-parser-schema-id: <anonymous-schema-90>
-            x-parser-schema-id: <anonymous-schema-89>
+                    x-parser-schema-id: <anonymous-schema-121>
+                x-parser-schema-id: <anonymous-schema-111>
+            x-parser-schema-id: <anonymous-schema-110>
         x-parser-schema-id: LocationSlotRegisteredEvent
       examples:
         - name: reserveSlot
@@ -2896,9 +3950,9 @@ components:
                 properties:
                   locationCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-103>
-                x-parser-schema-id: <anonymous-schema-102>
-            x-parser-schema-id: <anonymous-schema-101>
+                    x-parser-schema-id: <anonymous-schema-124>
+                x-parser-schema-id: <anonymous-schema-123>
+            x-parser-schema-id: <anonymous-schema-122>
         x-parser-schema-id: LocationSlotDecommissionedEvent
       examples:
         - name: decommissioned
@@ -2920,7 +3974,448 @@ components:
               occurredAt: '2026-10-01T08:00:00Z'
               locationCode: WH1-RSV-A07-03-03-B
       messageId: LocationSlotDecommissioned
+    ProductPackLevelDeclared:
+      name: ProductPackLevelDeclared
+      title: product-master ProductPackLevelDeclared (consumed)
+      summary: >-
+        A pack level (EACH, INNER, CASE or PALLET) of a SKU was declared, or one
+        of its mutable attributes changed.
+      description: >
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductPackLevelDeclared`,
+
+        source `/warehouse/product-master`, dataschema
+
+        `urn:warehouse:product-master:events:ProductPackLevelDeclared:v1`;
+        subject and
+
+        key = the SKU. Produced by product-master; consumed into the local
+
+        packaging view (pack level -> eaches factor for case-level scans).
+
+        NOTE: the consumer decodes camelCase keys (`unitsPerPack`,
+        `effectiveFrom`),
+
+        while product-master's encoder writes snake_case (`units_per_pack`,
+
+        `effective_from`); see the PR notes.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the request id for request events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - level
+                  - gtin
+                  - unitsPerPack
+                  - effectiveFrom
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-49>
+                  level:
+                    type: string
+                    enum:
+                      - EACH
+                      - INNER
+                      - CASE
+                      - PALLET
+                    x-parser-schema-id: <anonymous-schema-50>
+                  gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    x-parser-schema-id: <anonymous-schema-51>
+                  child_gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    x-parser-schema-id: <anonymous-schema-52>
+                  qty_of_child:
+                    type: integer
+                    minimum: 2
+                    maximum: 1000000
+                    description: Absent for EACH.
+                    x-parser-schema-id: <anonymous-schema-53>
+                  unitsPerPack:
+                    type: integer
+                    minimum: 1
+                    maximum: 1000000
+                    description: >-
+                      Direct factor to eaches; 1 for EACH. The consumer decodes
+                      this camelCase key (see the product-master note in the
+                      message).
+                    x-parser-schema-id: <anonymous-schema-54>
+                  is_orderable:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-55>
+                  is_despatch_unit:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-56>
+                  effectiveFrom:
+                    type: string
+                    format: date-time
+                    description: camelCase key as decoded by the consumer.
+                    x-parser-schema-id: <anonymous-schema-57>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-58>
+                x-parser-schema-id: <anonymous-schema-48>
+            x-parser-schema-id: <anonymous-schema-47>
+        x-parser-schema-id: ProductPackLevelDeclaredEvent
+      messageId: ProductPackLevelDeclared
+    ProductPackLevelRetired:
+      name: ProductPackLevelRetired
+      title: product-master ProductPackLevelRetired (consumed)
+      summary: A pack level of a SKU was retired.
+      description: >
+        `type` =
+        `com.warehouse.wms.product-master.product.ProductPackLevelRetired`,
+
+        source `/warehouse/product-master`, dataschema
+
+        `urn:warehouse:product-master:events:ProductPackLevelRetired:v1`;
+        subject and
+
+        key = the SKU. Produced by product-master; consumed into the local
+
+        packaging view (retired levels are no longer valid scan targets).
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate instance id (the request id for request events).
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - sku
+                  - level
+                  - gtin
+                  - effectiveTo
+                  - version
+                properties:
+                  sku:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-61>
+                  level:
+                    type: string
+                    enum:
+                      - EACH
+                      - INNER
+                      - CASE
+                      - PALLET
+                    x-parser-schema-id: <anonymous-schema-62>
+                  gtin:
+                    type: string
+                    pattern: ^[0-9]{14}$
+                    x-parser-schema-id: <anonymous-schema-63>
+                  effectiveTo:
+                    type: string
+                    format: date-time
+                    description: camelCase key as decoded by the consumer.
+                    x-parser-schema-id: <anonymous-schema-64>
+                  reason:
+                    type: string
+                    minLength: 1
+                    maxLength: 200
+                    description: Sent by the producer; this consumer does not read it.
+                    x-parser-schema-id: <anonymous-schema-65>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-66>
+                x-parser-schema-id: <anonymous-schema-60>
+            x-parser-schema-id: <anonymous-schema-59>
+        x-parser-schema-id: ProductPackLevelRetiredEvent
+      messageId: ProductPackLevelRetired
   schemas:
+    ProductPackLevelDeclaredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The aggregate instance id (the request id for request events).
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - unitsPerPack
+                - effectiveFrom
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-49>
+                level:
+                  type: string
+                  enum:
+                    - EACH
+                    - INNER
+                    - CASE
+                    - PALLET
+                  x-parser-schema-id: <anonymous-schema-50>
+                gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  x-parser-schema-id: <anonymous-schema-51>
+                child_gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  x-parser-schema-id: <anonymous-schema-52>
+                qty_of_child:
+                  type: integer
+                  minimum: 2
+                  maximum: 1000000
+                  description: Absent for EACH.
+                  x-parser-schema-id: <anonymous-schema-53>
+                unitsPerPack:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000000
+                  description: >-
+                    Direct factor to eaches; 1 for EACH. The consumer decodes
+                    this camelCase key (see the product-master note in the
+                    message).
+                  x-parser-schema-id: <anonymous-schema-54>
+                is_orderable:
+                  type: boolean
+                  x-parser-schema-id: <anonymous-schema-55>
+                is_despatch_unit:
+                  type: boolean
+                  x-parser-schema-id: <anonymous-schema-56>
+                effectiveFrom:
+                  type: string
+                  format: date-time
+                  description: camelCase key as decoded by the consumer.
+                  x-parser-schema-id: <anonymous-schema-57>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-58>
+              x-parser-schema-id: <anonymous-schema-48>
+          x-parser-schema-id: <anonymous-schema-47>
+      x-parser-schema-id: ProductPackLevelDeclaredEvent
+    ProductPackLevelRetiredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The aggregate instance id (the request id for request events).
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - effectiveTo
+                - version
+              properties:
+                sku:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-61>
+                level:
+                  type: string
+                  enum:
+                    - EACH
+                    - INNER
+                    - CASE
+                    - PALLET
+                  x-parser-schema-id: <anonymous-schema-62>
+                gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  x-parser-schema-id: <anonymous-schema-63>
+                effectiveTo:
+                  type: string
+                  format: date-time
+                  description: camelCase key as decoded by the consumer.
+                  x-parser-schema-id: <anonymous-schema-64>
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Sent by the producer; this consumer does not read it.
+                  x-parser-schema-id: <anonymous-schema-65>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-66>
+              x-parser-schema-id: <anonymous-schema-60>
+          x-parser-schema-id: <anonymous-schema-59>
+      x-parser-schema-id: ProductPackLevelRetiredEvent
     CloudEventEnvelope:
       type: object
       required:
@@ -3303,14 +4798,21 @@ components:
                   type: integer
                   minimum: 1
                   x-parser-schema-id: <anonymous-schema-43>
+                multiple_source:
+                  type: string
+                  enum:
+                    - DECLARED
+                    - PACK_DERIVED
+                  description: Optional; absent on facts that do not say.
+                  x-parser-schema-id: <anonymous-schema-44>
                 version:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-44>
+                  x-parser-schema-id: <anonymous-schema-45>
                 declared_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-45>
+                  x-parser-schema-id: <anonymous-schema-46>
               x-parser-schema-id: <anonymous-schema-38>
           x-parser-schema-id: <anonymous-schema-37>
       x-parser-schema-id: ReplenishmentPolicyDeclaredEvent
@@ -3369,46 +4871,43 @@ components:
                 - on_hand
                 - reserved
                 - version
-                - reason
-                - occurred_at
               properties:
                 site_code:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-48>
+                  x-parser-schema-id: <anonymous-schema-69>
                 bin:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: <anonymous-schema-70>
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-50>
+                  x-parser-schema-id: <anonymous-schema-71>
                 on_hand:
                   type: integer
                   minimum: 0
                   description: Absolute units in the bin after the change.
-                  x-parser-schema-id: <anonymous-schema-51>
+                  x-parser-schema-id: <anonymous-schema-72>
                 reserved:
                   type: integer
                   minimum: 0
                   description: Units of this bin bound by active reservations.
-                  x-parser-schema-id: <anonymous-schema-52>
+                  x-parser-schema-id: <anonymous-schema-73>
                 version:
                   type: integer
                   minimum: 1
                   description: Per-(bin
                   sku) monotonically increasing; keep the highest.: null
-                  x-parser-schema-id: <anonymous-schema-53>
+                  x-parser-schema-id: <anonymous-schema-74>
                 reason:
                   type: string
-                  description: >-
-                    STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE, REVOKE
-                    or UNLOCATED; unknown values are ignored.
-                  x-parser-schema-id: <anonymous-schema-54>
+                  description: Sent by the producer; this consumer does not read it.
+                  x-parser-schema-id: <anonymous-schema-75>
                 occurred_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-55>
-              x-parser-schema-id: <anonymous-schema-47>
-          x-parser-schema-id: <anonymous-schema-46>
+                  description: Sent by the producer; this consumer does not read it.
+                  x-parser-schema-id: <anonymous-schema-76>
+              x-parser-schema-id: <anonymous-schema-68>
+          x-parser-schema-id: <anonymous-schema-67>
       x-parser-schema-id: BinStockLevelChangedEvent
     StockRelocatedEvent:
       allOf:
@@ -3467,46 +4966,46 @@ components:
                 - quantity
                 - reason
                 - source_ref
-                - occurred_at
               properties:
                 relocation_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-58>
+                  x-parser-schema-id: <anonymous-schema-79>
                 site_code:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-80>
                 sku:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-60>
+                  x-parser-schema-id: <anonymous-schema-81>
                 from_bin:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-61>
+                  x-parser-schema-id: <anonymous-schema-82>
                 to_bin:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-83>
                 quantity:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-63>
+                  x-parser-schema-id: <anonymous-schema-84>
                 reason:
                   type: string
                   description: >-
                     Act only on REPLENISHMENT; SLOTTING, CONSOLIDATION, MANUAL
                     and any other value are ignored.
-                  x-parser-schema-id: <anonymous-schema-64>
+                  x-parser-schema-id: <anonymous-schema-85>
                 source_ref:
                   type: string
                   maxLength: 200
                   description: >-
                     The request id on a replenishment; "" or another reference
                     otherwise.
-                  x-parser-schema-id: <anonymous-schema-65>
+                  x-parser-schema-id: <anonymous-schema-86>
                 occurred_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-66>
-              x-parser-schema-id: <anonymous-schema-57>
-          x-parser-schema-id: <anonymous-schema-56>
+                  description: Sent by the producer; this consumer does not read it.
+                  x-parser-schema-id: <anonymous-schema-87>
+              x-parser-schema-id: <anonymous-schema-78>
+          x-parser-schema-id: <anonymous-schema-77>
       x-parser-schema-id: StockRelocatedEvent
     SlotAssignment:
       type: object
@@ -3516,11 +5015,11 @@ components:
       properties:
         sku:
           type: string
-          x-parser-schema-id: <anonymous-schema-74>
+          x-parser-schema-id: <anonymous-schema-95>
         slot:
           type: string
           description: The facility-layout location code of the forward slot.
-          x-parser-schema-id: <anonymous-schema-75>
+          x-parser-schema-id: <anonymous-schema-96>
       x-parser-schema-id: SlotAssignment
     SlotMove:
       type: object
@@ -3530,22 +5029,22 @@ components:
       properties:
         sku:
           type: string
-          x-parser-schema-id: <anonymous-schema-77>
+          x-parser-schema-id: <anonymous-schema-98>
         from_slot:
           type: string
           description: Omitted for an Assign.
-          x-parser-schema-id: <anonymous-schema-78>
+          x-parser-schema-id: <anonymous-schema-99>
         to_slot:
           type: string
           description: Omitted for a Vacate.
-          x-parser-schema-id: <anonymous-schema-79>
+          x-parser-schema-id: <anonymous-schema-100>
         kind:
           type: string
           enum:
             - Assign
             - Relocate
             - Vacate
-          x-parser-schema-id: <anonymous-schema-80>
+          x-parser-schema-id: <anonymous-schema-101>
       x-parser-schema-id: SlotMove
     SlotPlanApprovedEvent:
       allOf:
@@ -3600,22 +5099,21 @@ components:
                 - site_id
                 - approved_at
                 - assignments
-                - moves
               properties:
                 plan_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-69>
+                  x-parser-schema-id: <anonymous-schema-90>
                 site_id:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-70>
+                  x-parser-schema-id: <anonymous-schema-91>
                 approved_at:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-71>
+                  x-parser-schema-id: <anonymous-schema-92>
                 supersedes_plan_id:
                   type: string
-                  description: Omitted when the site had no Approved plan.
-                  x-parser-schema-id: <anonymous-schema-72>
+                  description: Sent by the producer; this consumer does not read it.
+                  x-parser-schema-id: <anonymous-schema-93>
                 assignments:
                   type: array
                   description: The FULL assignment map of the plan.
@@ -3627,15 +5125,16 @@ components:
                     properties:
                       sku:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-74>
+                        x-parser-schema-id: <anonymous-schema-95>
                       slot:
                         type: string
                         description: The facility-layout location code of the forward slot.
-                        x-parser-schema-id: <anonymous-schema-75>
+                        x-parser-schema-id: <anonymous-schema-96>
                     x-parser-schema-id: SlotAssignment
-                  x-parser-schema-id: <anonymous-schema-73>
+                  x-parser-schema-id: <anonymous-schema-94>
                 moves:
                   type: array
+                  description: Sent by the producer; this consumer does not read it.
                   items:
                     type: object
                     required:
@@ -3644,26 +5143,26 @@ components:
                     properties:
                       sku:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-77>
+                        x-parser-schema-id: <anonymous-schema-98>
                       from_slot:
                         type: string
                         description: Omitted for an Assign.
-                        x-parser-schema-id: <anonymous-schema-78>
+                        x-parser-schema-id: <anonymous-schema-99>
                       to_slot:
                         type: string
                         description: Omitted for a Vacate.
-                        x-parser-schema-id: <anonymous-schema-79>
+                        x-parser-schema-id: <anonymous-schema-100>
                       kind:
                         type: string
                         enum:
                           - Assign
                           - Relocate
                           - Vacate
-                        x-parser-schema-id: <anonymous-schema-80>
+                        x-parser-schema-id: <anonymous-schema-101>
                     x-parser-schema-id: SlotMove
-                  x-parser-schema-id: <anonymous-schema-76>
-              x-parser-schema-id: <anonymous-schema-68>
-          x-parser-schema-id: <anonymous-schema-67>
+                  x-parser-schema-id: <anonymous-schema-97>
+              x-parser-schema-id: <anonymous-schema-89>
+          x-parser-schema-id: <anonymous-schema-88>
       x-parser-schema-id: SlotPlanApprovedEvent
     ZoneRegisteredEvent:
       allOf:
@@ -3716,35 +5215,32 @@ components:
               required:
                 - zoneId
                 - siteCode
-                - areaCode
                 - zoneCode
-                - temperatureClass
-                - hazmat
               properties:
                 zoneId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-83>
+                  x-parser-schema-id: <anonymous-schema-104>
                 siteCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-105>
                 areaCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-85>
+                  x-parser-schema-id: <anonymous-schema-106>
                 zoneCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-107>
                 temperatureClass:
                   type: string
                   enum:
                     - Ambient
                     - Chilled
                     - Frozen
-                  x-parser-schema-id: <anonymous-schema-87>
+                  x-parser-schema-id: <anonymous-schema-108>
                 hazmat:
                   type: boolean
-                  x-parser-schema-id: <anonymous-schema-88>
-              x-parser-schema-id: <anonymous-schema-82>
-          x-parser-schema-id: <anonymous-schema-81>
+                  x-parser-schema-id: <anonymous-schema-109>
+              x-parser-schema-id: <anonymous-schema-103>
+          x-parser-schema-id: <anonymous-schema-102>
       x-parser-schema-id: ZoneRegisteredEvent
     LocationSlotRegisteredEvent:
       allOf:
@@ -3796,45 +5292,41 @@ components:
               type: object
               required:
                 - locationCode
-                - aisleId
                 - zoneId
-                - locationType
-                - maxWeightKg
-                - maxVolumeM3
               properties:
                 locationCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-91>
+                  x-parser-schema-id: <anonymous-schema-112>
                 aisleId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-92>
+                  x-parser-schema-id: <anonymous-schema-113>
                 zoneId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-93>
+                  x-parser-schema-id: <anonymous-schema-114>
                 locationType:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-94>
+                  x-parser-schema-id: <anonymous-schema-115>
                 role:
                   type: string
                   description: Absent means Storage.
-                  x-parser-schema-id: <anonymous-schema-95>
+                  x-parser-schema-id: <anonymous-schema-116>
                 dockFlow:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-96>
+                  x-parser-schema-id: <anonymous-schema-117>
                 activities:
                   type: array
                   items:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-98>
-                  x-parser-schema-id: <anonymous-schema-97>
+                    x-parser-schema-id: <anonymous-schema-119>
+                  x-parser-schema-id: <anonymous-schema-118>
                 maxWeightKg:
                   type: number
-                  x-parser-schema-id: <anonymous-schema-99>
+                  x-parser-schema-id: <anonymous-schema-120>
                 maxVolumeM3:
                   type: number
-                  x-parser-schema-id: <anonymous-schema-100>
-              x-parser-schema-id: <anonymous-schema-90>
-          x-parser-schema-id: <anonymous-schema-89>
+                  x-parser-schema-id: <anonymous-schema-121>
+              x-parser-schema-id: <anonymous-schema-111>
+          x-parser-schema-id: <anonymous-schema-110>
       x-parser-schema-id: LocationSlotRegisteredEvent
     LocationSlotDecommissionedEvent:
       allOf:
@@ -3889,9 +5381,9 @@ components:
               properties:
                 locationCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-103>
-              x-parser-schema-id: <anonymous-schema-102>
-          x-parser-schema-id: <anonymous-schema-101>
+                  x-parser-schema-id: <anonymous-schema-124>
+              x-parser-schema-id: <anonymous-schema-123>
+          x-parser-schema-id: <anonymous-schema-122>
       x-parser-schema-id: LocationSlotDecommissionedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

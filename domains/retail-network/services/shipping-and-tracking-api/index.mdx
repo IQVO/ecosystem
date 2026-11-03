@@ -1,0 +1,57 @@
+---
+id: shipping-and-tracking-api
+version: 0.1.0
+name: Shipping And Tracking API
+summary: >-
+  REST API of shipping-and-tracking. Issues shipping labels (the only place
+  outside customer-ordering that ever sees a ship-to address) and owns each
+  package's journey: one customer-visible timeline consolidated from vendor
+  handover, load and delivery facts, ending in delivered, returned or lost.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Shipping & Tracking API
+badges:
+  - content: Labels
+    textColor: blue
+    backgroundColor: blue
+  - content: Journeys
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: shipping-and-tracking-api-issueLabel
+    version: 0.1.0
+  - id: shipping-and-tracking-api-voidLabel
+    version: 0.1.0
+  - id: shipping-and-tracking-api-getJourney
+    version: 0.1.0
+  - id: shipping-and-tracking-api-recordScan
+    version: 0.1.0
+---
+## Purpose
+Issues shipping labels (the only place outside customer-ordering that ever sees a ship-to address) and owns each package's journey: one customer-visible timeline consolidated from vendor handover, load and delivery facts, ending in delivered, returned or lost.
+
+| | |
+|---|---|
+| Bounded context | `shipping-and-tracking` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Generic |
+| Tier | Retail Network, logistics tier |
+| Repository | [IQVO/shipping-and-tracking](https://github.com/IQVO/shipping-and-tracking) |
+| Events | [shipping-and-tracking](/docs/services/shipping-and-tracking) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+REST contract of the shipping-and-tracking bounded context of the retail network, derived from retail-network-docs model/model.yaml (contexts[shipping-and-tracking].rest, .aggregates, .publishes, conventions.errors) and the orchestrator's contracts-delta (G2, G3, G11, G18). It issues shipping labels and owns each package's journey. No schema of this contract carries a ship-to address or any part of it: the address is read from customer-ordering at issue time (GetShipTo), kept only as an encrypted snapshot (purged 30 days after the journey closes) and never returned (ADR RN-0006, ADR 0002 A9). vendor-connectivity calls POST /labels in-organization; the other routes are read by shoppers, customer-ordering and operations tooling. No authentication, consistent with the fleet. Errors are RFC 9457 problem details. The shared problem types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422), plus one slug per model Err name.  
+
+## Architecture diagram
+<NodeGraph />

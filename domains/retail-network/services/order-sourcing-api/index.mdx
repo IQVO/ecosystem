@@ -1,0 +1,50 @@
+---
+id: order-sourcing-api
+version: 0.1.0
+name: Order Sourcing API
+summary: >-
+  REST API of order-sourcing. Decides, as late as the promise allows, which node
+  and path will actually fulfil each shipment group.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Order Sourcing API
+badges:
+  - content: Assignments
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: order-sourcing-api-listAssignments
+    version: 0.1.0
+  - id: order-sourcing-api-getAssignment
+    version: 0.1.0
+  - id: order-sourcing-api-reoptimiseAssignment
+    version: 0.1.0
+---
+## Purpose
+Decides, as late as the promise allows, which node and path will actually fulfil each shipment group. Keeps assignments in a virtual queue, re-optimises them against current capacity and cost until the release point, sends the group to the node, reassigns on rejection or expiry, and locks the assignment once the node commits.
+
+| | |
+|---|---|
+| Bounded context | `order-sourcing` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Core |
+| Tier | Retail Network, commerce tier |
+| Repository | [IQVO/order-sourcing](https://github.com/IQVO/order-sourcing) |
+| Events | [order-sourcing](/docs/services/order-sourcing) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+REST contract of the order-sourcing bounded context of the retail network, derived from retail-network-docs model/model.yaml (contexts[order-sourcing].rest) and adjusted by the cross-context decisions G5, G10, G12, G13, G14, G20 and G26. Order Sourcing decides which vendor node and path fulfil each shipment group: it keeps a FulfillmentAssignment per group in a virtual queue, re-optimises it until its release point, releases it to one node (a purchase order through vendor-connectivity), reassigns on rejection or expiry, and locks it when the node accepts. This surface is the network-ops planner's: list and inspect assignments, and ask for an immediate re-optimisation of a QUEUED one. Every other change arrives as a Kafka event (see apis/asyncapi.yaml). No PII is held or returned by this context. No authentication, consistent with the rest of the network. Errors are RFC 9457 problem details. The shared problem types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422); the model's Err names add assignment-locked, release-in-flight, node-excluded, stale-assignment-version (409) and candidate-breaks-promise (422).  
+
+## Architecture diagram
+<NodeGraph />

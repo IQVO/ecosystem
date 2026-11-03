@@ -1,0 +1,151 @@
+---
+id: product-master
+name: Product Master (events)
+version: 1.0.0
+summary: >-
+  SKU-level product master data: handling classification and physical profile
+  (declared versus measured dimensions and weight).
+badges:
+  - content: product-master
+    textColor: blue
+    backgroundColor: blue
+  - content: product
+    textColor: blue
+    backgroundColor: blue
+  - content: consumed
+    textColor: blue
+    backgroundColor: blue
+  - content: analytics
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: ProductRegistered
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.events
+        version: 1.0.0
+  - id: ProductDescriptionChanged
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.events
+        version: 1.0.0
+  - id: ProductClassified
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.events
+        version: 1.0.0
+  - id: ProductDimensionsDeclared
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.events
+        version: 1.0.0
+  - id: ProductMeasured
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.events
+        version: 1.0.0
+  - id: ProductRegisteredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.analytics
+        version: 1.0.0
+  - id: ProductDescriptionChangedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.analytics
+        version: 1.0.0
+  - id: ProductClassifiedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.analytics
+        version: 1.0.0
+  - id: ProductDimensionsDeclaredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.analytics
+        version: 1.0.0
+  - id: ProductMeasuredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.product-master.analytics
+        version: 1.0.0
+receives:
+  - id: LegacyProductClassified
+    version: 1.0.0
+    from:
+      - id: warehouse.inventory.events
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+SKU-level product master data: handling classification and physical profile (declared versus measured dimensions and weight). Publishes ProductClassified, which several contexts keep as a local copy.
+
+| | |
+|---|---|
+| Bounded context | `product-master` |
+| Domain | WMS (`wms`) |
+| DDD classification | Supporting |
+| Tier | WMS |
+| Publishes (Kafka) | `warehouse.product-master.events`<br/>`warehouse.product-master.analytics` |
+| Consumes (Kafka) | `warehouse.inventory.events` |
+| CloudEvents type prefix | `com.warehouse.wms.product-master.` |
+| Event source | `/warehouse/product-master` |
+| Repository | [IQVO/product-master](https://github.com/IQVO/product-master) |
+| REST API | [product-master-api](/docs/services/product-master-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **product-master** bounded context (WMS subdomain):
+SKU-level product master data, i.e. handling classification and the
+physical profile (ADR 0001, ADR 0002).
+
+**Published.** The `Product` aggregate raises five events, published to
+`warehouse.product-master.events` through a **transactional outbox**: the
+product row and its already-encoded events are written in ONE database
+transaction and a relay drains them to Kafka (at-least-once; the CloudEvents
+`id` is stored with the outbox row, so a retry republishes the same `id`).
+A change that alters nothing raises no event.
+
+**Local copies, not lookups.** Sibling contexts (inventory-storage,
+order-management, wes-work-planning, fulfillment-execution) keep a local
+copy keyed by SKU. Every payload carries the aggregate `version` after the
+change; apply a message only when its `version` is greater than the stored
+one. Payloads are full-state per concern (classification, physical profile),
+so a consumer overwrites, it never merges.
+
+**Analytics (ADR 0006).** The same five events are ALSO written, in the
+same transaction, to `warehouse.product-master.analytics` with the same
+`type` and the same `id` per occurrence, `dataschema`
+`urn:warehouse:product-master:analytics:<EventName>:v1` and payloads equal
+to the integration payloads. Only this service's `product-projector`
+consumes it; it is not an integration contract.
+
+**Consumed (migration only, ADR 0003).** inventory-storage's legacy
+`ProductClassified` on `warehouse.inventory.events`, read by the legacy
+importer when `LEGACY_IMPORT_CONSUMER_GROUP` is set.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`.
+Optional W3C trace-context headers (`traceparent`, and `tracestate` /
+`baggage` when present) carry the trace of the request that wrote the
+outbox row (ADR 0009); consumers may extract them, and must not require
+them.
+`specversion`, `id`, `source` (`/warehouse/product-master`), `type`,
+`subject` (the SKU), `time`, `datacontenttype` (`application/json`) and
+`dataschema` (`urn:warehouse:product-master:events:<EventName>:v1`) are all
+required. Kafka key = the SKU. Type =
+`com.warehouse.wms.product-master.product.<EventName>`. A breaking payload
+change is a new `.v2` type, never a mutation.
+
+
+## Architecture diagram
+<NodeGraph />

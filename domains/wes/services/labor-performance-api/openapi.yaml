@@ -46,7 +46,7 @@ paths:
         - health
       operationId: getReadyz
       summary: Readiness probe
-      description: 'Distinct from liveness (GET /healthz): readiness flips to not-ready as the FIRST step of a graceful shutdown drain (503 with a problem body), so a Kubernetes readinessProbe stops routing new traffic while in-flight requests finish. Liveness never flips.'
+      description: 'Distinct from liveness (GET /healthz). Ready means: the service is not draining AND Postgres answers a ping AND a Kafka broker answers a metadata request (reachability only; topics are never required). The dependency verdict is cached for a few seconds. Readiness flips to not-ready as the FIRST step of a graceful shutdown drain (503 with a status body), so a Kubernetes readinessProbe stops routing new traffic while in-flight requests finish. Liveness never flips.'
       responses:
         '200':
           description: The service is ready to receive traffic
@@ -59,8 +59,16 @@ paths:
                     type: string
                     example: ready
         '503':
-          description: The service is draining (shutdown in progress) and must not receive new traffic.
+          description: 'Not ready, in one of two shapes. While the service is draining (shutdown in progress) the body is `{"status":"not_ready"}` with `Content-Type: application/json`. When Postgres or Kafka is not reachable the body is an RFC 7807 problem (`application/problem+json`, type `dependency-unavailable`, the detail names the failing dependencies).'
           content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - not_ready
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
@@ -73,42 +81,70 @@ paths:
       description: |
         If a standard is already active for this TaskType, it is closed (its effective range ends now) and a new one starts — append-only history, never an in-place overwrite.
 
-        Idempotent retries: clients MUST always send a non-empty `Idempotency-Key` header (any unique value per logical request) when the Postgres backing is configured; a retried request with the same key and body replays the original response byte-for-byte instead of defining the standard a second time.
+        A standard may optionally be declared for one handling unit (`handlingUnit`: EACH, CASE or PALLET), so a case handle has its own expected time distinct from an each pick. At most one standard is open per (taskType, handlingUnit): defining a CASE standard never closes the task-type-only one, and revising it closes only the prior CASE standard. A CASE standard may also declare a heavy-case `teamLift` (ADR 0035).
+
+        Idempotent retries: clients MUST always send an `Idempotency-Key` header (1-128 printable ASCII characters, a client-generated UUID per logical submit); a retried request with the same key, method, path and body replays the original response byte-for-byte, with the response header `Idempotency-Replayed: true`, instead of defining the standard a second time. The same key with a different method, path or body is 409 `idempotency-key-reused`.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DefineStandardRequest'
+            examples:
+              taskTypeOnly:
+                summary: The task-type-only standard (unchanged behaviour)
+                value:
+                  taskType: PICK
+                  expectedSeconds: 45
+              casePick:
+                summary: A CASE pick standard, distinct from an each pick
+                value:
+                  taskType: PICK
+                  handlingUnit: CASE
+                  expectedSeconds: 30
+              heavyCaseTeamLift:
+                summary: A CASE standard with a declared heavy-case team lift
+                value:
+                  taskType: PICK
+                  handlingUnit: CASE
+                  expectedSeconds: 30
+                  teamLift:
+                    thresholdG: 18000
+                    expectedSeconds: 75
       responses:
         '201':
           description: Standard defined (or the revision recorded)
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Standard'
         '400':
           description: |
-            Unknown task type, malformed body, or a missing/empty Idempotency-Key header on a route protected by the idempotency middleware.
+            Unknown task type (including an absent or empty `taskType`), unknown handling unit (not EACH, CASE or PALLET), a body that is not valid JSON or contains a NUL character (malformed-request-body), a missing Idempotency-Key header (idempotency-key-required), or an Idempotency-Key that is not 1-128 printable ASCII characters (idempotency-key-invalid).
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         '409':
           description: |
-            The write lost a concurrency race: another writer modified the same labor standard after this request's snapshot (concurrent-modification), or another standard is already open for this task type (standard-conflict). Re-fetch and retry.
+            The Idempotency-Key was already used with a different method, path or body (idempotency-key-reused), the write lost a concurrency race: another writer modified the same labor standard after this request's snapshot (concurrent-modification), or another standard is already open for this task type and handling unit (standard-conflict). Re-fetch and retry; never retry an idempotency-key-reused with the same key.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         '422':
-          description: Expected seconds must be greater than zero, travelComponentSeconds is negative or exceeds expectedSeconds, or the Idempotency-Key header on this request was already used with a different request body (idempotency-key-reused).
+          description: Expected seconds must be greater than zero, travelComponentSeconds is negative or exceeds expectedSeconds, or a teamLift is declared on a standard whose handlingUnit is not CASE (team-lift-requires-case-unit) or with a non-positive thresholdG or expectedSeconds.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /standards/{taskType}:
     get:
       tags:
@@ -117,17 +153,38 @@ paths:
       summary: Get the currently-active labor standard for a TaskType
       description: |
         Returns the LaborStandard whose effective range currently covers "now" for this TaskType (EffectiveTo is null), or a 404 if none does.
+
+        Without `handlingUnit` the answer is the task-type-only standard, exactly as before. With `handlingUnit` the answer is the standard that APPLIES to that handle: the standard declared for exactly (taskType, handlingUnit) when one is active, otherwise the task-type-only standard (most specific wins, ADR 0035). The returned body's own `handlingUnit` says which of the two answered (absent = the task-type-only one).
       parameters:
         - $ref: '#/components/parameters/TaskTypePathParam'
+        - $ref: '#/components/parameters/HandlingUnitQueryParam'
       responses:
         '200':
-          description: The currently-active standard
+          description: The currently-active (resolved) standard
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Standard'
+              examples:
+                caseStandard:
+                  summary: ?handlingUnit=CASE with a CASE standard and a team lift
+                  value:
+                    taskType: PICK
+                    handlingUnit: CASE
+                    expectedSeconds: 30
+                    teamLift:
+                      thresholdG: 18000
+                      expectedSeconds: 75
+                      operators: 2
+                    effectiveFrom: '2026-10-24T08:00:00Z'
+                fallsBack:
+                  summary: ?handlingUnit=EACH with no EACH standard falls back
+                  value:
+                    taskType: PICK
+                    expectedSeconds: 45
+                    effectiveFrom: '2026-10-24T08:00:00Z'
         '400':
-          description: Unknown task type
+          description: Unknown task type or unknown handling unit
           content:
             application/problem+json:
               schema:
@@ -138,6 +195,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /associates/{associateId}/scorecard:
     get:
       tags:
@@ -165,6 +224,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /task-types/{taskType}/performance:
     get:
       tags:
@@ -188,6 +249,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /task-types/{taskType}/utilization:
     get:
       tags:
@@ -212,6 +275,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /associates/{associateId}/utilization:
     get:
       tags:
@@ -234,7 +299,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Utilization'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
+  responses:
+    InternalError:
+      description: Unexpected server error (problem type `internal-error`). Also the answer when an infrastructure failure aborts the request; a 5xx on POST /standards is never stored against its Idempotency-Key, so the same key can be retried.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
   parameters:
     TaskTypePathParam:
       name: taskType
@@ -242,23 +316,42 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/TaskType'
-    IdempotencyKeyHeader:
+    IdempotencyKey:
       name: Idempotency-Key
       in: header
-      required: false
+      required: true
       description: |
-        A caller-minted unique key per logical request (e.g. a UUID). Clients must always send a non-empty key on POST /standards: with the Postgres backing configured, a retry carrying the same key and an identical body replays the original stored response instead of re-executing the create; the same key with a different body is rejected with 422 idempotency-key-reused. Declared required: false because the in-memory configuration accepts the request without a key (no transactional backing to gate on) — never rely on that in a real deployment.
+        A client-generated unique key per logical submit (a UUID; 1-128 printable ASCII characters). Clients must always send it on POST /standards: a retry carrying the same key, method, path and an identical body replays the original stored response (with the response header `Idempotency-Replayed: true`) instead of re-executing the create; the same key with a different method, path or body is rejected with 409 idempotency-key-reused, a missing key is a 400 idempotency-key-required and a malformed one a 400 idempotency-key-invalid. Postgres is the only runtime, so the check is on in every deployment.
       schema:
         type: string
+        minLength: 1
+        maxLength: 128
+        pattern: ^[ -~]+$
+        example: 3f9c1e52-7d1a-4b0e-9a55-2c6f4e8a1b07
+    HandlingUnitQueryParam:
+      name: handlingUnit
+      in: query
+      required: false
+      description: |
+        EACH, CASE or PALLET. Resolves the standard that applies to this handling unit (the unit's own standard, else the task-type-only one). Absent or empty means the task-type-only standard.
+      schema:
+        $ref: '#/components/schemas/HandlingUnit'
     WindowQueryParam:
       name: window
       in: query
       required: false
       description: |
-        A Go duration string (e.g. "1h", "30m") for the trailing window to measure over. Defaults to 1 hour when omitted or malformed.
+        A Go duration string (e.g. "1h", "30m") for the trailing window to measure over. Defaults to 1 hour when omitted, malformed or not positive (never a 400).
       schema:
         type: string
         example: 1h
+  headers:
+    IdempotencyReplayed:
+      description: 'Set to `true` on a replay of a stored answer (a retry carrying the same Idempotency-Key, method, path and body), and only on a replay: the first execution of a key never carries it.'
+      schema:
+        type: string
+        enum:
+          - 'true'
   schemas:
     TaskType:
       type: string
@@ -267,6 +360,44 @@ components:
         - PACK
         - SLAM
       description: Mirrors fulfillment-execution's task.Type enum exactly.
+    HandlingUnit:
+      type: string
+      enum:
+        - EACH
+        - CASE
+        - PALLET
+      description: 'The packaging level a standard is declared for, and that a completed task handled (ADR 0035). INNER is deliberately absent: no flow implements it in v1.'
+    TeamLiftRequest:
+      type: object
+      required:
+        - thresholdG
+        - expectedSeconds
+      description: 'The declared heavy-case rule of a CASE standard: a case heavier than thresholdG grams needs two operators and is scored against expectedSeconds instead of the standard''s own. Declarative input; this service never looks a case weight up from a sibling context.'
+      properties:
+        thresholdG:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Weight in grams ABOVE which a case needs a team lift (a case weighing exactly thresholdG is still a one-operator lift).
+          example: 18000
+        expectedSeconds:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Engineered elapsed seconds of a team lift.
+          example: 75
+    TeamLift:
+      allOf:
+        - $ref: '#/components/schemas/TeamLiftRequest'
+        - type: object
+          required:
+            - operators
+          properties:
+            operators:
+              type: integer
+              enum:
+                - 2
+              description: Operators a team lift needs (constant).
     DefineStandardRequest:
       type: object
       required:
@@ -275,41 +406,59 @@ components:
       properties:
         taskType:
           $ref: '#/components/schemas/TaskType'
+        handlingUnit:
+          $ref: '#/components/schemas/HandlingUnit'
         expectedSeconds:
           type: integer
           format: int64
           minimum: 1
           example: 45
         travelComponentSeconds:
-          $ref: '#/components/schemas/TravelComponentSeconds'
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: Optional; omitted or null means not broken out. When present, must be between 0 and expectedSeconds inclusive (otherwise 422).
+          example: 15
+        teamLift:
+          $ref: '#/components/schemas/TeamLiftRequest'
     Standard:
       type: object
+      required:
+        - taskType
+        - expectedSeconds
+        - effectiveFrom
       properties:
         taskType:
           $ref: '#/components/schemas/TaskType'
+        handlingUnit:
+          $ref: '#/components/schemas/HandlingUnit'
         expectedSeconds:
           type: integer
           format: int64
           example: 45
         travelComponentSeconds:
           $ref: '#/components/schemas/TravelComponentSeconds'
+        teamLift:
+          $ref: '#/components/schemas/TeamLift'
         effectiveFrom:
           type: string
           format: date-time
         effectiveTo:
           type: string
           format: date-time
-          nullable: true
-          description: Present only on a superseded (closed) standard.
+          description: Present only on a superseded (closed) standard; omitted entirely (never null) on the open one.
     TravelComponentSeconds:
       type: integer
       format: int64
       minimum: 0
-      nullable: true
-      description: 'Optional declaration of how much of expectedSeconds is attributable to travel between locations for this TaskType. This service never computes it: it is supplied by the caller, grounded in a real distance estimate performed elsewhere (e.g. facility-layout''s estimate_travel_distance) since this service has no REST dependency in either direction with any sibling context (ADR 0015). Omitted entirely means not broken out, the default and most common case. When present, must be between 0 and expectedSeconds inclusive.'
+      description: 'Optional declaration of how much of expectedSeconds is attributable to travel between locations for this TaskType. This service never computes it: it is supplied by the caller, grounded in a real distance estimate performed elsewhere (e.g. facility-layout''s estimate_travel_distance) since this service has no REST dependency in either direction with any sibling context (ADR 0015). In a response it is omitted entirely (never null or 0) when the standard did not declare one. When present, it is between 0 and expectedSeconds inclusive.'
       example: 15
     TaskTypeBreakdown:
       type: object
+      required:
+        - taskCount
+        - meanEfficiencyPct
       properties:
         taskCount:
           type: integer
@@ -319,6 +468,13 @@ components:
           nullable: true
     Scorecard:
       type: object
+      required:
+        - associateId
+        - taskCount
+        - meanEfficiencyPct
+        - byTaskType
+        - trend
+        - coachingFlag
       properties:
         associateId:
           type: string
@@ -347,6 +503,11 @@ components:
             True iff this associate's 3 most recent SCORED tasks were all below the coaching floor (85% efficiency). Visibility only -- this service never automates coaching, pay, or task-claim decisions from this signal.
     TaskTypePerformance:
       type: object
+      required:
+        - taskType
+        - taskCount
+        - meanEfficiencyPct
+        - meanActualSeconds
       properties:
         taskType:
           $ref: '#/components/schemas/TaskType'
@@ -369,6 +530,7 @@ components:
         type:
           type: string
           format: uri
+          description: '`https://errors.labor-performance.warehouse-systems.dev/<slug>`.'
         title:
           type: string
         status:
@@ -377,6 +539,7 @@ components:
           type: string
         instance:
           type: string
+          description: The request path (omitted when empty).
       required:
         - type
         - title
@@ -386,6 +549,13 @@ components:
       type: object
       description: |
         Idle-gap / utilization read model for either one TaskType (fleet-wide) or one associate, over a trailing window. taskType and associateId are mutually exclusive -- whichever endpoint served the request populates its own identifying field and omits the other.
+      required:
+        - associates
+        - windowSeconds
+        - taskSeconds
+        - idleSeconds
+        - openGapSeconds
+        - utilizationPct
       properties:
         taskType:
           $ref: '#/components/schemas/TaskType'

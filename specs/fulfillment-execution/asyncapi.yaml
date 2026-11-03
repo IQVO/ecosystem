@@ -54,8 +54,8 @@ channels:
     subscribe:
       operationId: consumeFulfillmentIntegrationEvents
       summary: Consume Fulfillment Execution integration events.
-      description: Receive the TaskAvailable, TaskClaimed, TaskCompleted, TaskCPTMissed and PackageManifested
-        CloudEvents this bounded context publishes.
+      description: Receive the TaskAvailable, TaskClaimed, TaskCompleted, TaskCPTMissed, PackageManifested,
+        PackageDiverted and WeightDiscrepancyDetected CloudEvents this bounded context publishes.
       tags:
       - name: fulfillment-execution
       message:
@@ -65,6 +65,8 @@ channels:
         - $ref: '#/components/messages/TaskCompleted'
         - $ref: '#/components/messages/TaskCPTMissed'
         - $ref: '#/components/messages/PackageManifested'
+        - $ref: '#/components/messages/PackageDiverted'
+        - $ref: '#/components/messages/WeightDiscrepancyDetected'
         - $ref: '#/components/messages/TransferPicked'
         - $ref: '#/components/messages/TransferDispatched'
         - $ref: '#/components/messages/TransferArrived'
@@ -134,6 +136,25 @@ channels:
       - name: consumed
       message:
         $ref: '#/components/messages/ProductClassified'
+  warehouse.task-interleaving.events:
+    description: task-interleaving's integration topic (key and `subject` = the station id). This service
+      consumes only InterleavingHintIssued from it, into its local hint copy `interleaving_hints` (ADR-0051),
+      under the consumer group from `TASK_INTERLEAVING_CONSUMER_GROUP`, only when `TASK_INTERLEAVING_MODE=kafka`.
+      Every other type on the topic is ignored.
+    publish:
+      operationId: receiveInterleavingHintIssued
+      summary: Receive InterleavingHintIssued from task-interleaving.
+      description: task-interleaving publishes an advisory hint (never an assignment) of which open tasks
+        a station could work next. The CloudEvents `id` claim and the per-station superseding upsert of
+        `interleaving_hints` commit in one transaction; the offset is committed afterwards. One ACTIVE hint
+        per station — a newer hint supersedes the previous one. claimNext uses the station's active,
+        unexpired hint only as a tie-break inside one priority band (never across a CPT boundary) and fails
+        open when no hint applies. A message that is not a valid CloudEvent, or whose payload breaks the
+        contract, is logged at WARN and skipped.
+      tags:
+      - name: consumed
+      message:
+        $ref: '#/components/messages/InterleavingHintIssued'
 components:
   messages:
     TaskCompleted:
@@ -352,7 +373,7 @@ components:
       name: TaskCPTMissed
       title: TaskCPTMissed
       summary: A task is still open (Pending or Claimed) past its CPT deadline.
-      description: Raised by the CPT-missed sweep (`POST /tasks/sweep-cpt-misses`, ADR-0025). Re-fires
+      description: Raised by the CPT-missed sweep (`POST /cpt-miss-sweeps`, ADR-0025). Re-fires
         on every sweep pass while the task stays open past its CPT, so consumers must dedupe on their
         own (order-management's RepromiseOrder is idempotent by design). Published on `warehouse.fulfillment.events`,
         keyed by task id. Consumed by order-management.
@@ -726,6 +747,133 @@ components:
           data:
             package_id: pkg-1029
             order_ref: wu-8a1f
+    PackageDiverted:
+      name: PackageDiverted
+      title: PackageDiverted
+      summary: A package was diverted off the standard path to the problem-solve area.
+      description: A package failed its SLAM weigh-check and was routed to the problem-solve area
+        instead of being labelled. Published on `warehouse.fulfillment.events` (keyed by package id)
+        with the same type, subject and data as the analytics occurrence (ADR-0053); also published
+        on `warehouse.fulfillment.analytics`. Consumed by exception-management, which opens its
+        problem-solve case on it.
+      contentType: application/cloudevents+json
+      tags:
+      - name: package
+      - name: fulfillment-execution
+      headers:
+        $ref: '#/components/schemas/KafkaHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/CloudEvent'
+        - type: object
+          required:
+          - type
+          - source
+          - dataschema
+          - data
+          properties:
+            type:
+              type: string
+              const: com.warehouse.wes.fulfillment-execution.package.PackageDiverted
+            source:
+              type: string
+              const: /warehouse/fulfillment-execution
+            dataschema:
+              type: string
+              const: urn:warehouse:fulfillment-execution:events:PackageDiverted:v1
+            data:
+              type: object
+              required:
+              - package_id
+              properties:
+                package_id:
+                  type: string
+                  description: Diverted package id.
+      examples:
+      - name: packageDiverted
+        headers:
+          content-type: application/cloudevents+json; charset=UTF-8
+          traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
+        payload:
+          specversion: "1.0"
+          id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+          source: /warehouse/fulfillment-execution
+          type: com.warehouse.wes.fulfillment-execution.package.PackageDiverted
+          subject: p1
+          time: '2026-09-30T15:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:warehouse:fulfillment-execution:events:PackageDiverted:v1
+          data:
+            package_id: p1
+    WeightDiscrepancyDetected:
+      name: WeightDiscrepancyDetected
+      title: WeightDiscrepancyDetected
+      summary: SLAM found a package weight out of tolerance.
+      description: The SLAM weigh-check measured a weight outside tolerance — the fact that causes a
+        divert. Published on `warehouse.fulfillment.events` (keyed by package id) with the same type,
+        subject and data as the analytics occurrence (ADR-0053); also published on
+        `warehouse.fulfillment.analytics`. Consumed by exception-management.
+      contentType: application/cloudevents+json
+      tags:
+      - name: package
+      - name: fulfillment-execution
+      headers:
+        $ref: '#/components/schemas/KafkaHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/CloudEvent'
+        - type: object
+          required:
+          - type
+          - source
+          - dataschema
+          - data
+          properties:
+            type:
+              type: string
+              const: com.warehouse.wes.fulfillment-execution.package.WeightDiscrepancyDetected
+            source:
+              type: string
+              const: /warehouse/fulfillment-execution
+            dataschema:
+              type: string
+              const: urn:warehouse:fulfillment-execution:events:WeightDiscrepancyDetected:v1
+            data:
+              type: object
+              required:
+              - package_id
+              - expected_g
+              - actual_g
+              properties:
+                package_id:
+                  type: string
+                  description: Package id.
+                expected_g:
+                  type: number
+                  description: Expected weight.
+                  format: double
+                actual_g:
+                  type: number
+                  description: Measured weight.
+                  format: double
+      examples:
+      - name: weightDiscrepancyDetected
+        headers:
+          content-type: application/cloudevents+json; charset=UTF-8
+          traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
+        payload:
+          specversion: "1.0"
+          id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+          source: /warehouse/fulfillment-execution
+          type: com.warehouse.wes.fulfillment-execution.package.WeightDiscrepancyDetected
+          subject: p1
+          time: '2026-09-30T15:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:warehouse:fulfillment-execution:events:WeightDiscrepancyDetected:v1
+          data:
+            package_id: p1
+            expected_g: 1000
+            actual_g: 1200
     AnalyticsTaskCreated:
       name: AnalyticsTaskCreated
       title: TaskCreated
@@ -1125,6 +1273,42 @@ components:
                 package_id:
                   type: string
                   description: Package id.
+                ship_in_own_container:
+                  type: boolean
+                  description: Optional and additive (ADR-0056, v1 stays v1). Present, always `true`, only when the
+                    package was sealed in its own container (an order line that is exactly one full active CASE);
+                    omitted from an ordinary carton, whose payload is unchanged.
+                container_source:
+                  type: string
+                  enum:
+                  - CASE
+                  description: Optional. What the package ships in; present exactly when `ship_in_own_container` is.
+                container_gtin:
+                  type: string
+                  pattern: ^[0-9]{14}$
+                  description: Optional. The case GTIN (14 digits); present exactly when `ship_in_own_container` is.
+                container_dims:
+                  type: object
+                  description: Optional. The declared dimensions (mm) and weight (g) of the case, copied at seal
+                    time; present exactly when `ship_in_own_container` is.
+                  required:
+                  - length_mm
+                  - width_mm
+                  - height_mm
+                  - weight_g
+                  properties:
+                    length_mm:
+                      type: integer
+                      minimum: 1
+                    width_mm:
+                      type: integer
+                      minimum: 1
+                    height_mm:
+                      type: integer
+                      minimum: 1
+                    weight_g:
+                      type: integer
+                      minimum: 1
       examples:
       - name: analyticsPackageSealed
         headers:
@@ -1141,6 +1325,30 @@ components:
           dataschema: urn:warehouse:fulfillment-execution:analytics:PackageSealed:v1
           data:
             package_id: p1
+      - name: analyticsPackageSealedInOwnContainer
+        summary: The package shipped in its own CASE (ship-in-own-container, ADR-0056).
+        headers:
+          content-type: application/cloudevents+json; charset=UTF-8
+          traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
+        payload:
+          specversion: "1.0"
+          id: 0d3b5a7c-91e2-4c48-b6f0-7a2e9c1d4b86
+          source: /warehouse/fulfillment-execution
+          type: com.warehouse.wes.fulfillment-execution.package.PackageSealed
+          subject: p2
+          time: '2026-09-30T15:05:00Z'
+          datacontenttype: application/json
+          dataschema: urn:warehouse:fulfillment-execution:analytics:PackageSealed:v1
+          data:
+            package_id: p2
+            ship_in_own_container: true
+            container_source: CASE
+            container_gtin: '24006381333935'
+            container_dims:
+              length_mm: 400
+              width_mm: 300
+              height_mm: 200
+              weight_g: 6500
     AnalyticsWeightDiscrepancyDetected:
       name: AnalyticsWeightDiscrepancyDetected
       title: WeightDiscrepancyDetected
@@ -2062,6 +2270,133 @@ components:
           dataschema: urn:warehouse:process-path-management:events:ProcessPathDeactivated:v1
           data:
             path_id: PICK
+    ProductPackLevelDeclared:
+      name: ProductPackLevelDeclared
+      title: ProductPackLevelDeclared
+      summary: product-master declared or revised a pack level of a SKU (consumed).
+      description: Published by product-master on `warehouse.product-master.events` (its AsyncAPI is the
+        source of truth); consumed here into the local PackView read per scanned GTIN at scan time (ADR 0054),
+        by the always-on consumer under the required `PACK_VIEW_CONSUMER_GROUP`.
+      contentType: application/cloudevents+json
+      tags:
+      - name: consumed
+      headers:
+        $ref: '#/components/schemas/KafkaHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/CloudEvent'
+        - type: object
+          required:
+          - type
+          - source
+          - dataschema
+          - data
+          properties:
+            type:
+              type: string
+              const: com.warehouse.wms.product-master.product.ProductPackLevelDeclared
+            source:
+              type: string
+              const: /warehouse/product-master
+            dataschema:
+              type: string
+              const: urn:warehouse:product-master:events:ProductPackLevelDeclared:v1
+            data:
+              type: object
+              required:
+              - sku
+              - level
+              - gtin
+              - units_per_pack
+              - is_orderable
+              - is_despatch_unit
+              - effective_from
+              - version
+              properties:
+                sku:
+                  type: string
+                  description: The SKU (also the Kafka key and the CloudEvents `subject`).
+                level:
+                  type: string
+                gtin:
+                  type: string
+                child_gtin:
+                  type: string
+                qty_of_child:
+                  type: integer
+                  minimum: 2
+                  description: Absent for EACH.
+                units_per_pack:
+                  type: integer
+                  minimum: 1
+                  description: Direct factor to eaches; 1 for EACH.
+                is_orderable:
+                  type: boolean
+                is_despatch_unit:
+                  type: boolean
+                effective_from:
+                  type: string
+                  format: date-time
+                version:
+                  type: integer
+                  minimum: 1
+
+    ProductPackLevelRetired:
+      name: ProductPackLevelRetired
+      title: ProductPackLevelRetired
+      summary: product-master retired a pack level of a SKU (consumed).
+      description: Published by product-master on `warehouse.product-master.events` (its AsyncAPI is the
+        source of truth); consumed here into the local PackView read per scanned GTIN at scan time (ADR 0054),
+        by the always-on consumer under the required `PACK_VIEW_CONSUMER_GROUP`.
+      contentType: application/cloudevents+json
+      tags:
+      - name: consumed
+      headers:
+        $ref: '#/components/schemas/KafkaHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/CloudEvent'
+        - type: object
+          required:
+          - type
+          - source
+          - dataschema
+          - data
+          properties:
+            type:
+              type: string
+              const: com.warehouse.wms.product-master.product.ProductPackLevelRetired
+            source:
+              type: string
+              const: /warehouse/product-master
+            dataschema:
+              type: string
+              const: urn:warehouse:product-master:events:ProductPackLevelRetired:v1
+            data:
+              type: object
+              required:
+              - sku
+              - level
+              - gtin
+              - effective_to
+              - reason
+              - version
+              properties:
+                sku:
+                  type: string
+                level:
+                  type: string
+                gtin:
+                  type: string
+                effective_to:
+                  type: string
+                  format: date-time
+                reason:
+                  type: string
+                version:
+                  type: integer
+                  minimum: 1
+
     ProductClassified:
       name: ProductClassified
       title: ProductClassified
@@ -2164,6 +2499,127 @@ components:
             dot_hazard_class: 3
             classification_source: native
             version: 3
+    InterleavingHintIssued:
+      name: InterleavingHintIssued
+      title: InterleavingHintIssued
+      summary: task-interleaving recommended which open tasks a station could work next (consumed).
+      description: Published by task-interleaving on `warehouse.task-interleaving.events` (its AsyncAPI
+        is the source of truth); consumed here into the local hint copy (ADR-0051). Kafka key and `subject`
+        = the station id. `candidates` is non-empty and ranked from 1 by `detour_m` ascending then `task_id`.
+        The hint is advisory and valid until `expires_at`; one ACTIVE hint per station, a newer hint
+        supersedes; dedupe on the CloudEvents `id`.
+      contentType: application/cloudevents+json
+      tags:
+      - name: consumed
+      headers:
+        $ref: '#/components/schemas/KafkaHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/CloudEvent'
+        - type: object
+          required:
+          - type
+          - source
+          - dataschema
+          - data
+          properties:
+            type:
+              type: string
+              const: com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued
+            source:
+              type: string
+              const: /warehouse/task-interleaving
+            dataschema:
+              type: string
+              const: urn:warehouse:task-interleaving:events:InterleavingHintIssued:v1
+            data:
+              type: object
+              required:
+              - hint_id
+              - station_id
+              - site_id
+              - expires_at
+              - candidates
+              properties:
+                hint_id:
+                  type: string
+                  description: The hint id.
+                station_id:
+                  type: string
+                  description: The station the hint is for (also the Kafka key and the CloudEvents `subject`).
+                site_id:
+                  type: string
+                  description: The site the station belongs to.
+                after_task_id:
+                  type: string
+                  description: The task whose completion triggered the hint. Not used here.
+                origin_location:
+                  type: string
+                  description: Where the operator finished `after_task_id`. Not used here.
+                expires_at:
+                  type: string
+                  format: date-time
+                  description: The hint is ignored at and after this instant (fail-open).
+                policy_version:
+                  type: integer
+                  description: The interleaving policy version the hint was issued under. Not used here.
+                candidates:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                    - rank
+                    - task_id
+                    properties:
+                      rank:
+                        type: integer
+                        minimum: 1
+                        description: 1 = the producer's preferred candidate.
+                      task_id:
+                        type: string
+                        description: A task of this context's open pool.
+                      task_type:
+                        type: string
+                        description: Not used here (claimNext scans one type per call).
+                      location:
+                        type: string
+                        description: Not used here.
+                      detour_m:
+                        type: number
+                        description: Not used here.
+      examples:
+      - name: twoCandidates
+        headers:
+          content-type: application/cloudevents+json; charset=UTF-8
+        payload:
+          specversion: "1.0"
+          id: 6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f
+          source: /warehouse/task-interleaving
+          type: com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued
+          subject: STN-07
+          time: '2026-10-17T12:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:warehouse:task-interleaving:events:InterleavingHintIssued:v1
+          data:
+            hint_id: hint-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            station_id: STN-07
+            site_id: SITE-1
+            after_task_id: task-8a1f
+            origin_location: WH1-FWD-A01-01-01-A
+            expires_at: '2026-10-17T12:01:30Z'
+            policy_version: 2
+            candidates:
+            - rank: 1
+              task_id: task-9c2e
+              task_type: PICK
+              location: WH1-FWD-A01-02-01-A
+              detour_m: 4.5
+            - rank: 2
+              task_id: task-9d10
+              task_type: REPLENISH
+              location: WH1-FWD-A02-01-01-A
+              detour_m: 12.0
   schemas:
     TransferFactData:
       type: object

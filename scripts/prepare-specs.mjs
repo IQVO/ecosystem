@@ -16,9 +16,12 @@
 //                 the generator derives sends/receives from it. Topic ownership
 //                 (catalog.contexts.mjs) is the reliable signal: a context sends on topics it
 //                 owns and receives on all others.
-//  4. v3 ids      AsyncAPI 3 files (network-inventory-planning) key messages in camelCase while
-//                 every 2.6 file yields PascalCase ids; the catalog keys on the id, so
-//                 camelCase keys are renamed (and their $refs rewritten) to line up cross-context.
+//  4. v3 ids     AsyncAPI 3 files (network-inventory-planning, retail network) key
+//                 messages in camelCase while every 2.6 file yields PascalCase ids;
+//                 the catalog keys on the id, so camelCase keys are renamed (and
+//                 their $refs rewritten) to line up cross-context. Retail-network
+//                 consumer declarations named `Consumed<X>` are renamed to the
+//                 owner's `<X>` for the same reason: one message id per event.
 //  6. openapi     Path-level `parameters` are copied into each operation (and removed from the
 //                 path item): the generator otherwise lists them as a bogus "PARAMETERS" endpoint.
 //  5. channels    Several contracts re-declare channels they only consume. The generator
@@ -28,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { load, dump } from 'js-yaml';
 import { CONTEXTS } from '../catalog.contexts.mjs';
+import { escapeMdx } from '../catalog.markdown.mjs';
 
 const SRC = 'specs';
 const OUT = '.generated-specs';
@@ -44,12 +48,19 @@ const specDirs = fs
 for (const ctx of specDirs) {
   docs[ctx] = load(fs.readFileSync(path.join(SRC, ctx, 'asyncapi.yaml'), 'utf8'));
 }
+// (7) escape spec prose before any cross-doc copying, so channel descriptions
+// handed from owner to consumer are already MDX-safe.
+for (const ctx of specDirs) escapeAsyncApiProse(docs[ctx]);
 
-// topic -> { description, version } from the owning context
+// topic -> { description, version } from the owning context. 2.6 files key
+// channels by their topic; AsyncAPI 3 files may key them by any name and carry
+// the topic in `address` — resolve both.
+const channelByAddress = (doc, topic) =>
+  doc?.channels?.[topic] ?? Object.values(doc?.channels ?? {}).find((c) => c?.address === topic);
 const topicOwner = {};
 for (const [ctx, { topics }] of Object.entries(CONTEXTS)) {
   for (const t of topics) {
-    const ch = docs[ctx]?.channels?.[t];
+    const ch = channelByAddress(docs[ctx], t);
     if (ch) topicOwner[t] = { ctx, description: ch.description, version: String(docs[ctx].info.version) };
   }
 }
@@ -70,13 +81,69 @@ function hoistPathParameters(api) {
   }
 }
 
+//  7. mdx         The EventCatalog generators escape braces in most spec prose
+//                 themselves (`\{` works in this MDX toolchain), but their `<`
+//                 escape (`\<`) does NOT suppress inline-JSX parsing — a raw
+//                 `<slug>` in prose breaks the Astro build even backslashed.
+//                 Split responsibilities:
+//                 • fields the generator brace-escapes (OpenAPI path prose,
+//                   AsyncAPI info/channel): we pre-convert `<` to `&lt;` only,
+//                   leaving braces for the generator;
+//                 • fields that reach .mdx UNescaped (OpenAPI info, AsyncAPI
+//                   message descriptions): full escapeMdx (braces + `&lt;`).
+//                 Payload/response SCHEMAS are never touched: they render as JSON.
+function mdxEscape(v) {
+  return typeof v === 'string' ? escapeMdx(v) : v;
+}
+function escapeLt(v) {
+  if (typeof v !== 'string') return v;
+  const kept = [];
+  const masked = v.replace(/```[\s\S]*?```|`[^`\n]*`/g, (m) => {
+    kept.push(m);
+    return `__LT_${kept.length - 1}__`;
+  });
+  return masked.replace(/</g, '&lt;').replace(/__LT_(\d+)__/g, (_, i) => kept[Number(i)]);
+}
+function escapeOpenApiProse(api) {
+  if (api.info) {
+    api.info.description = mdxEscape(api.info.description);
+    api.info.summary = mdxEscape(api.info.summary);
+  }
+  for (const item of Object.values(api.paths ?? {})) {
+    const params = [...(item.parameters ?? [])];
+    for (const m of HTTP) {
+      const op = item[m];
+      if (!op) continue;
+      op.description = escapeLt(op.description);
+      op.summary = escapeLt(op.summary);
+      params.push(...(op.parameters ?? []));
+      if (op.requestBody) op.requestBody.description = escapeLt(op.requestBody.description);
+      for (const resp of Object.values(op.responses ?? {})) resp.description = escapeLt(resp.description);
+    }
+    params.forEach((p) => (p.description = escapeLt(p.description)));
+  }
+}
+function escapeAsyncApiProse(doc) {
+  if (doc.info) {
+    doc.info.description = escapeLt(doc.info.description);
+    doc.info.summary = escapeLt(doc.info.summary);
+  }
+  for (const ch of Object.values(doc.channels ?? {})) ch.description = escapeLt(ch.description);
+  for (const msg of Object.values(doc.components?.messages ?? {})) {
+    msg.description = mdxEscape(msg.description);
+    msg.summary = mdxEscape(msg.summary);
+  }
+}
+
 function renameV3MessageKeys(doc) {
   const renames = new Map(); // old $ref -> new $ref
   const rename = (obj, base) => {
     if (!obj) return;
     for (const key of Object.keys(obj)) {
-      const next = pascal(key);
-      if (next === key) continue;
+      // PascalCase ids fleet-wide; strip a `Consumed` prefix (retail-network
+      // consumer declarations) so the id equals the owner's message id.
+      const next = pascal(key).replace(/^Consumed(?=[A-Z])/, '');
+      if (next === key || Object.hasOwn(obj, next)) continue;
       obj[next] = obj[key];
       delete obj[key];
       renames.set(`${base}/${key}`, `${base}/${next}`);
@@ -96,9 +163,11 @@ function renameV3MessageKeys(doc) {
 function normalise(ctx, doc) {
   const owned = new Set(CONTEXTS[ctx]?.topics ?? []);
 
-  // (4) channel metadata aligned to the owner
+  // (4) channel metadata aligned to the owner. AsyncAPI 3 channels may be keyed
+  // by any name with the topic in `address` — resolve the topic first.
   for (const [channel, def] of Object.entries(doc.channels ?? {})) {
-    const owner = topicOwner[channel];
+    const chan = typeof def?.address === 'string' ? def.address : channel;
+    const owner = topicOwner[chan];
     if (!owner) continue;
     if (owner.description) def.description = owner.description;
     def['x-eventcatalog-channel-version'] = owner.version;
@@ -156,6 +225,7 @@ for (const ctx of specDirs) {
     if (!file.startsWith('openapi')) { fs.copyFileSync(path.join(SRC, ctx, file), target); continue; }
     const api = load(fs.readFileSync(path.join(SRC, ctx, file), 'utf8'));
     hoistPathParameters(api);
+    escapeOpenApiProse(api);
     fs.writeFileSync(target, dump(api, { lineWidth: -1, noRefs: true }));
   }
   normalise(ctx, docs[ctx]);

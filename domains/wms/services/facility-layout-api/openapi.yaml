@@ -121,6 +121,8 @@ paths:
         '201':
           description: Site registered.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             Location:
               description: Path of the newly created Site.
               schema:
@@ -137,7 +139,7 @@ paths:
                 siteRole: NON_SORTABLE_FC
         '400':
           description: |
-            Malformed input, or the Idempotency-Key header is absent or empty (ADR 0019).
+            Malformed input, or the Idempotency-Key header is absent (`idempotency-key-required`) or not 1-128 printable ASCII characters (`idempotency-key-invalid`) (ADR 0019).
           content:
             application/problem+json:
               schema:
@@ -152,18 +154,18 @@ paths:
                     detail: invalid character 'x' looking for beginning of value
                     instance: /sites
                 idempotencyKeyRequired:
-                  summary: Idempotency-Key header absent or empty
+                  summary: Idempotency-Key header absent
                   value:
                     type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-required
                     title: Idempotency-Key header is required
                     status: 400
-                    detail: This endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
+                    detail: This endpoint changes state and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
                     instance: /sites
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
           description: |
-            The `siteRole` is not one of the known site roles (`invalid-site-role`, ADR-0037), or the Idempotency-Key was already used with a different request (ADR 0019).
+            The `siteRole` is not one of the known site roles (`invalid-site-role`, ADR-0037).
           content:
             application/problem+json:
               schema:
@@ -177,41 +179,37 @@ paths:
                     status: 422
                     detail: 'site role must be one of the known site roles: "Fulfillment Center"'
                     instance: /sites
-                idempotencyKeyReused:
-                  summary: Idempotency-Key reused with a different request
-                  value:
-                    type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-reused
-                    title: Idempotency-Key was already used with a different request
-                    status: 422
-                    detail: The Idempotency-Key header on this request was already used with a request that had a different body. Use a new Idempotency-Key for a genuinely different request.
-                    instance: /sites
         '500':
           $ref: '#/components/responses/InternalError'
     get:
       operationId: listSites
       summary: List every registered site
       description: |
-        Returns every Site on the warehouse map, ordered by site code, including sites that have been decommissioned (their status says so). This is a read model over the Site repository; it performs no writes and publishes no events.
+        Returns every Site on the warehouse map, ordered by site code, including sites that have been decommissioned (their status says so). This is a read model over the Site repository; it performs no writes and publishes no events. Keyset-paginated: `limit` and `cursor`; follow `nextCursor` until it is absent.
       tags:
         - Sites
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Every registered site, ordered by code.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Site'
+                $ref: '#/components/schemas/SitePage'
               example:
-                - siteCode: ABE8
-                  name: ABE8 - Non-Sortable Fulfillment Center (Breinigsville, PA)
-                  status: Active
-                  siteRole: NON_SORTABLE_FC
-                - siteCode: WH2
-                  name: Fulfilment Centre Two
-                  status: Decommissioned
-                  siteRole: UNSPECIFIED
+                items:
+                  - siteCode: ABE8
+                    name: ABE8 - Non-Sortable Fulfillment Center (Breinigsville, PA)
+                    status: Active
+                    siteRole: NON_SORTABLE_FC
+                  - siteCode: WH2
+                    name: Fulfilment Centre Two
+                    status: Decommissioned
+                    siteRole: UNSPECIFIED
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalError'
   /sites/{siteCode}:
@@ -309,31 +307,35 @@ paths:
       operationId: listSiteRoleTransferDefaults
       summary: The default transfer capability of every site role
       description: |
-        Read-only table (ADR-0037): for every assignable site role, whether a site of that role should be an inter-site transfer origin and/or destination. It is the ONE source of truth the warehouse-infra seed and operators read instead of hard-coding it. It is a default only: nothing applies it automatically, a role change never flips capability, and capability is set with `PUT /sites/{siteCode}/transfer-capability` (ADR-0035). `UNSPECIFIED` has no row: an unclassified site's capability is left as it is. Rows are in a stable display order.
+        Read-only table (ADR-0037): for every assignable site role, whether a site of that role should be an inter-site transfer origin and/or destination. It is the ONE source of truth the warehouse-infra seed and operators read instead of hard-coding it. It is a default only: nothing applies it automatically, a role change never flips capability, and capability is set with `PUT /sites/{siteCode}/transfer-capability` (ADR-0035). `UNSPECIFIED` has no row: an unclassified site's capability is left as it is. Rows are in a stable display order. Keyset-paginated: `limit` and `cursor`; follow `nextCursor` until it is absent.
       tags:
         - Sites
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: One row per assignable site role.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/SiteRoleTransferDefault'
+                $ref: '#/components/schemas/SiteRoleTransferDefaultPage'
               example:
-                - siteRole: NON_SORTABLE_FC
-                  transferOriginEnabled: true
-                  transferDestinationEnabled: true
-                - siteRole: MICRO_FC
-                  transferOriginEnabled: false
-                  transferDestinationEnabled: true
-                - siteRole: INBOUND_CROSS_DOCK
-                  transferOriginEnabled: true
-                  transferDestinationEnabled: false
-                - siteRole: DELIVERY_STATION
-                  transferOriginEnabled: false
-                  transferDestinationEnabled: false
+                items:
+                  - siteRole: NON_SORTABLE_FC
+                    transferOriginEnabled: true
+                    transferDestinationEnabled: true
+                  - siteRole: MICRO_FC
+                    transferOriginEnabled: false
+                    transferDestinationEnabled: true
+                  - siteRole: INBOUND_CROSS_DOCK
+                    transferOriginEnabled: true
+                    transferDestinationEnabled: false
+                  - siteRole: DELIVERY_STATION
+                    transferOriginEnabled: false
+                    transferDestinationEnabled: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalError'
   /sites/{siteCode}/transfer-capability:
@@ -441,15 +443,27 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RegisterZoneRequest'
-            example:
-              areaCode: STOR
-              zoneCode: FRZ
-              temperatureClass: Frozen
-              hazmat: false
+            examples:
+              frozenStorage:
+                summary: A frozen storage zone
+                value:
+                  areaCode: STOR
+                  zoneCode: FRZ
+                  temperatureClass: Frozen
+                  hazmat: false
+              casePickFaces:
+                summary: A case-pick (CPK) zone, a convention on the free-form zone code (ADR 0042)
+                value:
+                  areaCode: STOR
+                  zoneCode: CPK
+                  temperatureClass: Ambient
+                  hazmat: false
       responses:
         '201':
           description: Zone registered.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             Location:
               description: Path of the newly created Zone.
               schema:
@@ -471,7 +485,7 @@ paths:
                 levelPitchM: 1.5
         '400':
           description: |
-            Malformed input, or the Idempotency-Key header is absent or empty (ADR 0019).
+            Malformed input, or the Idempotency-Key header is absent (`idempotency-key-required`) or not 1-128 printable ASCII characters (`idempotency-key-invalid`) (ADR 0019).
           content:
             application/problem+json:
               schema:
@@ -489,7 +503,7 @@ paths:
                     type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-required
                     title: Idempotency-Key header is required
                     status: 400
-                    detail: This endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
+                    detail: This endpoint changes state and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
                     instance: /sites
         '404':
           $ref: '#/components/responses/NotFound'
@@ -497,7 +511,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           description: |
-            Semantically invalid, or the Idempotency-Key was already used with a different request body (ADR 0019).
+            Semantically invalid.
           content:
             application/problem+json:
               schema:
@@ -510,23 +524,18 @@ paths:
                     status: 422
                     detail: 'location type violates a placement rule for this zone: Shelf is denied in zone WH1-STOR-FRZ by rule [RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen]'
                     instance: /locations
-                idempotencyKeyReused:
-                  value:
-                    type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-reused
-                    title: Idempotency-Key was already used with a different request
-                    status: 422
-                    detail: The Idempotency-Key header on this request was already used with a request that had a different body. Use a new Idempotency-Key for a genuinely different request.
-                    instance: /sites
         '500':
           $ref: '#/components/responses/InternalError'
     get:
       operationId: listZones
       summary: List a site's zones
       description: |
-        Returns every Zone in the given Site, ordered by zone id. Answers 404 if the site itself is unknown, rather than an empty list, so a caller can tell "no zones yet" apart from "no such site".
+        Returns every Zone in the given Site, ordered by zone id. Answers 404 if the site itself is unknown, rather than an empty list, so a caller can tell "no zones yet" apart from "no such site". Keyset-paginated: `limit` and `cursor`; follow `nextCursor` until it is absent.
       tags:
         - Zones
       parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/SiteCode'
       responses:
         '200':
@@ -534,28 +543,29 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Zone'
+                $ref: '#/components/schemas/ZonePage'
               example:
-                - zoneId: WH1-RCV-AMB
-                  siteCode: WH1
-                  areaCode: RCV
-                  zoneCode: AMB
-                  temperatureClass: Ambient
-                  hazmat: false
-                  status: Active
-                  bayPitchM: 1.2
-                  levelPitchM: 1.5
-                - zoneId: WH1-STOR-AMB
-                  siteCode: WH1
-                  areaCode: STOR
-                  zoneCode: AMB
-                  temperatureClass: Ambient
-                  hazmat: false
-                  status: Active
-                  bayPitchM: 1.2
-                  levelPitchM: 1.5
+                items:
+                  - zoneId: WH1-RCV-AMB
+                    siteCode: WH1
+                    areaCode: RCV
+                    zoneCode: AMB
+                    temperatureClass: Ambient
+                    hazmat: false
+                    status: Active
+                    bayPitchM: 1.2
+                    levelPitchM: 1.5
+                  - zoneId: WH1-STOR-AMB
+                    siteCode: WH1
+                    areaCode: STOR
+                    zoneCode: AMB
+                    temperatureClass: Ambient
+                    hazmat: false
+                    status: Active
+                    bayPitchM: 1.2
+                    levelPitchM: 1.5
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -563,6 +573,7 @@ paths:
   /sites/{siteCode}/layout:
     get:
       operationId: getSiteLayout
+      x-pagination-exempt: view
       summary: Get a site's full drawable layout
       description: |
         The primary "draw the warehouse" endpoint. Returns the whole structure of one Site as a single nested document — zones → aisles → location slots — with every slot's exploded coordinates, type, capacity and status. Zones come back ordered by id, aisles in SequenceHint **walk order** (not registration order), and slots ordered bay → level → position, so a frontend can render a floor plan directly with no client-side joining or sorting.
@@ -657,10 +668,12 @@ paths:
       operationId: listLocationsByRole
       summary: List a site's locations by role
       description: |
-        Answers "where are this site's dock doors" (or any other LocationRole) without walking the full nested site layout (ADR-0016). Results are ordered zone → aisle → bay → level → position, like getSiteLayout's slots.
+        Answers "where are this site's dock doors" (or any other LocationRole) without walking the full nested site layout (ADR-0016). Results are ordered zone → aisle → bay → level → position, like getSiteLayout's slots. Keyset-paginated: `limit` and `cursor`; follow `nextCursor` until it is absent.
       tags:
         - Layout
       parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/SiteCode'
         - name: role
           in: query
@@ -675,9 +688,9 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/LocationSlot'
+                $ref: '#/components/schemas/LocationSlotPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -705,6 +718,8 @@ paths:
         '201':
           description: The registered structure.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             Location:
               schema:
                 type: string
@@ -715,7 +730,7 @@ paths:
                 $ref: '#/components/schemas/FixedStructure'
         '400':
           description: |
-            Malformed input, or the Idempotency-Key header is absent or empty (ADR 0019).
+            Malformed input, or the Idempotency-Key header is absent (`idempotency-key-required`) or not 1-128 printable ASCII characters (`idempotency-key-invalid`) (ADR 0019).
           content:
             application/problem+json:
               schema:
@@ -733,7 +748,7 @@ paths:
                     type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-required
                     title: Idempotency-Key header is required
                     status: 400
-                    detail: This endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
+                    detail: This endpoint changes state and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
                     instance: /sites
         '404':
           $ref: '#/components/responses/NotFound'
@@ -741,7 +756,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           description: |
-            Semantically invalid, or the Idempotency-Key was already used with a different request body (ADR 0019).
+            Semantically invalid.
           content:
             application/problem+json:
               schema:
@@ -754,22 +769,18 @@ paths:
                     status: 422
                     detail: 'location type violates a placement rule for this zone: Shelf is denied in zone WH1-STOR-FRZ by rule [RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen]'
                     instance: /locations
-                idempotencyKeyReused:
-                  value:
-                    type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-reused
-                    title: Idempotency-Key was already used with a different request
-                    status: 422
-                    detail: The Idempotency-Key header on this request was already used with a request that had a different body. Use a new Idempotency-Key for a genuinely different request.
-                    instance: /sites
         '500':
           $ref: '#/components/responses/InternalError'
     get:
       operationId: listFixedStructures
       summary: List a site's fixed structures
-      description: Returns every FixedStructure registered at a site, ordered by id (ADR-0017).
+      description: |
+        Returns every FixedStructure registered at a site, ordered by id (ADR-0017). Keyset-paginated: `limit` and `cursor`; follow `nextCursor` until it is absent.
       tags:
         - Layout
       parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/SiteCode'
       responses:
         '200':
@@ -777,9 +788,9 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/FixedStructure'
+                $ref: '#/components/schemas/FixedStructurePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -818,6 +829,7 @@ paths:
   /zones/{zoneId}/grid:
     get:
       operationId: getZoneGrid
+      x-pagination-exempt: view
       summary: Get a zone as a 2D renderable grid
       description: |
         The second "draw the warehouse" endpoint. Returns one Zone's slots as an explicit matrix: rows are Levels, columns are (Aisle, Bay) pairs in aisle SequenceHint walk order, and `rows[i].cells` is index-aligned with `columns`. A cell is literal JSON `null` wherever the rack has a gap; otherwise it lists the Positions at that coordinate. A UI iterates rows × columns and paints — no client-side layout maths.
@@ -915,6 +927,8 @@ paths:
         '201':
           description: Aisle registered.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             Location:
               description: Path of the newly created Aisle.
               schema:
@@ -933,7 +947,7 @@ paths:
                 status: Active
         '400':
           description: |
-            Malformed input, or the Idempotency-Key header is absent or empty (ADR 0019).
+            Malformed input, or the Idempotency-Key header is absent (`idempotency-key-required`) or not 1-128 printable ASCII characters (`idempotency-key-invalid`) (ADR 0019).
           content:
             application/problem+json:
               schema:
@@ -951,7 +965,7 @@ paths:
                     type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-required
                     title: Idempotency-Key header is required
                     status: 400
-                    detail: This endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
+                    detail: This endpoint changes state and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
                     instance: /sites
         '404':
           $ref: '#/components/responses/NotFound'
@@ -959,7 +973,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           description: |
-            Semantically invalid, or the Idempotency-Key was already used with a different request body (ADR 0019).
+            Semantically invalid.
           content:
             application/problem+json:
               schema:
@@ -972,23 +986,18 @@ paths:
                     status: 422
                     detail: 'location type violates a placement rule for this zone: Shelf is denied in zone WH1-STOR-FRZ by rule [RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen]'
                     instance: /locations
-                idempotencyKeyReused:
-                  value:
-                    type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-reused
-                    title: Idempotency-Key was already used with a different request
-                    status: 422
-                    detail: The Idempotency-Key header on this request was already used with a request that had a different body. Use a new Idempotency-Key for a genuinely different request.
-                    instance: /sites
         '500':
           $ref: '#/components/responses/InternalError'
     get:
       operationId: listAisles
       summary: List a zone's aisles in walk order
       description: |
-        Returns every Aisle in the given Zone, ordered by SequenceHint then aisle code — that is, in the order an associate would walk them. Answers 404 if the zone itself is unknown.
+        Returns every Aisle in the given Zone, ordered by SequenceHint then aisle code — that is, in the order an associate would walk them. Answers 404 if the zone itself is unknown. Keyset-paginated: `limit` and `cursor`; follow `nextCursor` until it is absent.
       tags:
         - Aisles
       parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/ZoneId'
       responses:
         '200':
@@ -996,22 +1005,23 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Aisle'
+                $ref: '#/components/schemas/AislePage'
               example:
-                - aisleId: WH1-STOR-AMB-A07
-                  zoneId: WH1-STOR-AMB
-                  aisleCode: A07
-                  sequenceHint: 7
-                  direction: TwoWay
-                  status: Active
-                - aisleId: WH1-STOR-AMB-A09
-                  zoneId: WH1-STOR-AMB
-                  aisleCode: A09
-                  sequenceHint: 9
-                  direction: OneWay
-                  status: Active
+                items:
+                  - aisleId: WH1-STOR-AMB-A07
+                    zoneId: WH1-STOR-AMB
+                    aisleCode: A07
+                    sequenceHint: 7
+                    direction: TwoWay
+                    status: Active
+                  - aisleId: WH1-STOR-AMB-A09
+                    zoneId: WH1-STOR-AMB
+                    aisleCode: A09
+                    sequenceHint: 9
+                    direction: OneWay
+                    status: Active
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -1117,6 +1127,9 @@ paths:
       responses:
         '201':
           description: Cross-aisle registered.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -1129,7 +1142,7 @@ paths:
                 active: true
         '400':
           description: |
-            Malformed input, or the Idempotency-Key header is absent or empty (ADR 0019).
+            Malformed input, or the Idempotency-Key header is absent (`idempotency-key-required`) or not 1-128 printable ASCII characters (`idempotency-key-invalid`) (ADR 0019).
           content:
             application/problem+json:
               schema:
@@ -1147,7 +1160,7 @@ paths:
                     type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-required
                     title: Idempotency-Key header is required
                     status: 400
-                    detail: This endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
+                    detail: This endpoint changes state and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
                     instance: /sites
         '404':
           $ref: '#/components/responses/NotFound'
@@ -1155,7 +1168,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           description: |
-            Semantically invalid, or the Idempotency-Key was already used with a different request body (ADR 0019).
+            Semantically invalid.
           content:
             application/problem+json:
               schema:
@@ -1168,23 +1181,18 @@ paths:
                     status: 422
                     detail: 'location type violates a placement rule for this zone: Shelf is denied in zone WH1-STOR-FRZ by rule [RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen]'
                     instance: /locations
-                idempotencyKeyReused:
-                  value:
-                    type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-reused
-                    title: Idempotency-Key was already used with a different request
-                    status: 422
-                    detail: The Idempotency-Key header on this request was already used with a request that had a different body. Use a new Idempotency-Key for a genuinely different request.
-                    instance: /sites
         '500':
           $ref: '#/components/responses/InternalError'
     get:
       operationId: listCrossAisles
       summary: List a zone's cross-aisles
       description: |
-        Returns every declared CrossAisle (ADR-0017) in the zone — its zone-scoped connections between two of its aisles at a bay ordinal — ordered by from-aisle, to-aisle, bay. A read model: it reflects what was registered, including inactive (decommissioned) connections, so a consumer can discover the declared connections without deriving them from the travel graph's edges.
+        Returns every declared CrossAisle (ADR-0017) in the zone — its zone-scoped connections between two of its aisles at a bay ordinal — ordered by from-aisle, to-aisle, bay. A read model: it reflects what was registered, including inactive (decommissioned) connections, so a consumer can discover the declared connections without deriving them from the travel graph's edges. Keyset-paginated: `limit` and `cursor`; follow `nextCursor` until it is absent.
       tags:
         - Aisles
       parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/ZoneId'
       responses:
         '200':
@@ -1192,15 +1200,16 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/CrossAisle'
+                $ref: '#/components/schemas/CrossAislePage'
               example:
-                - zoneId: WH1-STOR-AMB
-                  fromAisle: A07
-                  toAisle: A08
-                  atBay: '02'
-                  active: true
+                items:
+                  - zoneId: WH1-STOR-AMB
+                    fromAisle: A07
+                    toAisle: A08
+                    atBay: '02'
+                    active: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -1208,6 +1217,7 @@ paths:
   /zones/{zoneId}/travel-graph:
     get:
       operationId: getZoneTravelGraph
+      x-pagination-exempt: view
       summary: Get one zone's travel graph
       description: |
         Returns one zone's travel graph (ADR-0017) as every waypoint (aisle + bay) and every directed, weighted edge between them, built fresh from the zone's aisles, registered slots, and active cross-aisles. An edge's metresM is derived from an aisle's real centreline geometry when set, or from the zone's bay pitch otherwise (flagged estimated). This context reports map TOPOLOGY only — never travel time or congestion, which remain wes-work-planning's concern.
@@ -1251,6 +1261,8 @@ paths:
         '201':
           description: Location type registered.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             Location:
               description: Path of the newly created LocationType.
               schema:
@@ -1268,7 +1280,7 @@ paths:
                   maxVolumeM3: 2.4
         '400':
           description: |
-            Malformed input, or the Idempotency-Key header is absent or empty (ADR 0019).
+            Malformed input, or the Idempotency-Key header is absent (`idempotency-key-required`) or not 1-128 printable ASCII characters (`idempotency-key-invalid`) (ADR 0019).
           content:
             application/problem+json:
               schema:
@@ -1286,13 +1298,13 @@ paths:
                     type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-required
                     title: Idempotency-Key header is required
                     status: 400
-                    detail: This endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
+                    detail: This endpoint changes state and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
                     instance: /sites
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
           description: |
-            Semantically invalid, or the Idempotency-Key was already used with a different request body (ADR 0019).
+            Semantically invalid.
           content:
             application/problem+json:
               schema:
@@ -1305,42 +1317,39 @@ paths:
                     status: 422
                     detail: 'location type violates a placement rule for this zone: Shelf is denied in zone WH1-STOR-FRZ by rule [RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen]'
                     instance: /locations
-                idempotencyKeyReused:
-                  value:
-                    type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-reused
-                    title: Idempotency-Key was already used with a different request
-                    status: 422
-                    detail: The Idempotency-Key header on this request was already used with a request that had a different body. Use a new Idempotency-Key for a genuinely different request.
-                    instance: /sites
         '500':
           $ref: '#/components/responses/InternalError'
     get:
       operationId: listLocationTypes
       summary: List every registered location type
       description: |
-        Returns every LocationType, ordered by name, with its default capacity envelope. PlacementRules reference these by name, so this is the vocabulary a rule author picks from.
+        Returns every LocationType, ordered by name, with its default capacity envelope. PlacementRules reference these by name, so this is the vocabulary a rule author picks from. Keyset-paginated: `limit` and `cursor`; follow `nextCursor` until it is absent.
       tags:
         - Location Types
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Every location type, ordered by name.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/LocationType'
+                $ref: '#/components/schemas/LocationTypePage'
               example:
-                - name: Amnesty
-                  role: Storage
-                  defaultCapacity:
-                    maxWeightKg: 30
-                    maxVolumeM3: 0.2
-                - name: PalletRack
-                  role: Storage
-                  defaultCapacity:
-                    maxWeightKg: 1200
-                    maxVolumeM3: 2.4
+                items:
+                  - name: Amnesty
+                    role: Storage
+                    defaultCapacity:
+                      maxWeightKg: 30
+                      maxVolumeM3: 0.2
+                  - name: PalletRack
+                    role: Storage
+                    defaultCapacity:
+                      maxWeightKg: 1200
+                      maxVolumeM3: 2.4
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalError'
   /location-types/{name}:
@@ -1406,6 +1415,8 @@ paths:
         '201':
           description: Placement rule defined.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             Location:
               description: Path of the newly created PlacementRule.
               schema:
@@ -1424,7 +1435,7 @@ paths:
                 description: 'RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen'
         '400':
           description: |
-            Malformed input, or the Idempotency-Key header is absent or empty (ADR 0019).
+            Malformed input, or the Idempotency-Key header is absent (`idempotency-key-required`) or not 1-128 printable ASCII characters (`idempotency-key-invalid`) (ADR 0019).
           content:
             application/problem+json:
               schema:
@@ -1442,7 +1453,7 @@ paths:
                     type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-required
                     title: Idempotency-Key header is required
                     status: 400
-                    detail: This endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
+                    detail: This endpoint changes state and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
                     instance: /sites
         '404':
           $ref: '#/components/responses/NotFound'
@@ -1450,7 +1461,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           description: |
-            Semantically invalid, or the Idempotency-Key was already used with a different request body (ADR 0019).
+            Semantically invalid.
           content:
             application/problem+json:
               schema:
@@ -1463,44 +1474,41 @@ paths:
                     status: 422
                     detail: 'location type violates a placement rule for this zone: Shelf is denied in zone WH1-STOR-FRZ by rule [RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen]'
                     instance: /locations
-                idempotencyKeyReused:
-                  value:
-                    type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-reused
-                    title: Idempotency-Key was already used with a different request
-                    status: 422
-                    detail: The Idempotency-Key header on this request was already used with a request that had a different body. Use a new Idempotency-Key for a genuinely different request.
-                    instance: /sites
         '500':
           $ref: '#/components/responses/InternalError'
     get:
       operationId: listPlacementRules
       summary: List every defined placement rule
       description: |
-        Returns every PlacementRule, ordered by rule id, each with a human-readable description of what it constrains. This is the full rule set a slot registration is evaluated against.
+        Returns every PlacementRule, ordered by rule id, each with a human-readable description of what it constrains. This is the full rule set a slot registration is evaluated against. Keyset-paginated: `limit` and `cursor`; follow `nextCursor` until it is absent.
       tags:
         - Placement Rules
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Every placement rule, ordered by id.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PlacementRule'
+                $ref: '#/components/schemas/PlacementRulePage'
               example:
-                - ruleId: RULE-FRZ-NO-SHELF
-                  locationType: Shelf
-                  effect: Deny
-                  zone:
-                    temperatureClass: Frozen
-                  description: 'RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen'
-                - ruleId: RULE-HAZ-ONLY-RACK
-                  locationType: PalletRack
-                  effect: Allow
-                  zone:
-                    zoneCode: HAZ
-                  description: 'RULE-HAZ-ONLY-RACK: Allow PalletRack where zoneCode=HAZ'
+                items:
+                  - ruleId: RULE-FRZ-NO-SHELF
+                    locationType: Shelf
+                    effect: Deny
+                    zone:
+                      temperatureClass: Frozen
+                    description: 'RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen'
+                  - ruleId: RULE-HAZ-ONLY-RACK
+                    locationType: PalletRack
+                    effect: Allow
+                    zone:
+                      zoneCode: HAZ
+                    description: 'RULE-HAZ-ONLY-RACK: Allow PalletRack where zoneCode=HAZ'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalError'
   /placement-rules/{ruleId}:
@@ -1562,6 +1570,8 @@ paths:
         '201':
           description: Location slot registered.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             Location:
               description: Path of the newly created LocationSlot.
               schema:
@@ -1591,7 +1601,7 @@ paths:
                 status: Active
         '400':
           description: |
-            Malformed input, or the Idempotency-Key header is absent or empty (ADR 0019).
+            Malformed input, or the Idempotency-Key header is absent (`idempotency-key-required`) or not 1-128 printable ASCII characters (`idempotency-key-invalid`) (ADR 0019).
           content:
             application/problem+json:
               schema:
@@ -1610,7 +1620,7 @@ paths:
                     type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-required
                     title: Idempotency-Key header is required
                     status: 400
-                    detail: This endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
+                    detail: This endpoint changes state and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
                     instance: /sites
         '404':
           $ref: '#/components/responses/NotFound'
@@ -1618,7 +1628,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           description: |
-            Semantically invalid, or the Idempotency-Key was already used with a different request body (ADR 0019).
+            Semantically invalid.
           content:
             application/problem+json:
               schema:
@@ -1631,16 +1641,9 @@ paths:
                     status: 422
                     detail: 'location type violates a placement rule for this zone: Shelf is denied in zone WH1-STOR-FRZ by rule [RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen]'
                     instance: /locations
-                idempotencyKeyReused:
-                  value:
-                    type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-reused
-                    title: Idempotency-Key was already used with a different request
-                    status: 422
-                    detail: The Idempotency-Key header on this request was already used with a request that had a different body. Use a new Idempotency-Key for a genuinely different request.
-                    instance: /sites
         '500':
           $ref: '#/components/responses/InternalError'
-  /locations/import:
+  /location-imports:
     post:
       operationId: importFacilityLayout
       summary: Bulk-import a whole building's layout
@@ -1650,8 +1653,12 @@ paths:
         Validation is **atomic per row** with partial success reported per row: every row is processed, and the report says exactly which rows failed and why. A 500-row export with 3 bad rows still creates the other 497.
 
         This answers 200 OK, not 201: a bulk import is a partial-success report over many rows, not the creation of one addressable resource, so there is no single Location to hand back. Publishes one FacilityLayoutImported carrying the counts, plus the usual per-entity registration events as structure is created.
+
+        The import is a batch-job noun (`/location-imports`, REST API guideline 1.3 e) and is idempotent: a retry with the same Idempotency-Key replays the stored report with `Idempotency-Replayed: true` instead of importing twice.
       tags:
         - Locations
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -1691,6 +1698,9 @@ paths:
         '200':
           description: |
             The import report. Rows that failed are listed individually with the reason; rows that succeeded were really created.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -1709,6 +1719,8 @@ paths:
                     error: 'location type violates a placement rule for this zone: Shelf is denied in zone WH1-STOR-FRZ by rule [RULE-FRZ-NO-SHELF: Deny Shelf where temperatureClass=Frozen]'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
   /locations/{locationCode}:
@@ -1785,6 +1797,39 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalError'
+  /locations/{locationCode}/handling-unit:
+    put:
+      operationId: declareLocationHandlingUnit
+      summary: Declare a location slot's handling unit
+      description: |
+        Sets or changes the unit of handling (EACH, CASE or PALLET) the slot accepts (ADR-0040). The slot must already exist and must not be Decommissioned. Naturally idempotent (same body, same state), like the geometry PUT, so it takes no Idempotency-Key. Publishes LocationSlotHandlingUnitDeclared. inventory-storage uses the value to decide whether a sealed case may be stowed in the bin.
+      tags:
+        - Locations
+      parameters:
+        - $ref: '#/components/parameters/LocationCode'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeclareHandlingUnitRequest'
+      responses:
+        '200':
+          description: The location slot, with its handling unit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationSlot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /locations/{locationCode}/classification:
     get:
       operationId: getLocationClassification
@@ -1815,21 +1860,25 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
-  /locations/{locationCode}/decommission:
+  /locations/{locationCode}/decommissionings:
     post:
       operationId: decommissionLocationSlot
       summary: Permanently retire a location slot
       description: |
-        Marks the slot Decommissioned. This is a genuine domain command, not a CRUD update, which is why it is a verb-suffixed action on the slot resource rather than a PATCH.
+        Marks the slot Decommissioned. This is a genuine domain command, not a CRUD update, which is why it is modelled as a transition resource (`decommissionings`) of the slot rather than a PATCH (REST API guideline 1.3 d). A retry with the same Idempotency-Key replays the stored 204 with `Idempotency-Replayed: true` instead of answering 409.
 
         The transition is **one-way** in v1: there is no reactivation use case, calling it twice is a 409, and re-registering the same LocationCode afterwards is rejected as a duplicate rather than quietly resurrecting the slot. Publishes LocationSlotDecommissioned. Returns 204 with no body — there is nothing to say beyond "done".
       tags:
         - Locations
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/LocationCode'
       responses:
         '204':
           description: Slot decommissioned. No body.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -1841,6 +1890,7 @@ paths:
   /distance:
     get:
       operationId: estimateTravelDistance
+      x-pagination-exempt: view
       summary: Compute the shortest travel distance between two locations
       description: |
         Computes the shortest travel distance, in metres, between two coded locations over the pure-domain travel graph (ADR-0017): Dijkstra's algorithm honouring one-way aisles and active cross-aisles. The result is flagged `estimated` when any leg of the route used a zone's bay-pitch fallback instead of real aisle centreline geometry.
@@ -1894,11 +1944,30 @@ components:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
-      required: false
-      description: 'Caller-generated unique key (a UUID per logical submit) that makes a retried request safe (ADR 0019). Clients MUST always send a non-empty, unique-per-submit key: the header is required whenever the service runs with Postgres — i.e. in every deployment — and an absent or empty key is answered 400 `idempotency-key-required`. A replay with the same key and the same body returns the original response verbatim; the same key with a different body is 422 `idempotency-key-reused`. It is declared `required: false` here only because the in-memory development mode (no DATABASE_URL) does not enforce the middleware and the Schemathesis contract run boots that mode.'
+      required: true
+      description: 'Caller-generated key (a UUID per logical submit, 1-128 printable ASCII characters) that makes a retried POST safe (ADR 0019, ADR 0044). Clients MUST always send it: the service runs on Postgres in every deployment (ADR 0039), so the header is always enforced and an absent key is answered 400 `idempotency-key-required`, a malformed one 400 `idempotency-key-invalid`. A replay with the same key, method, path and body returns the original response verbatim plus the response header `Idempotency-Replayed: true`; the same key with a different method, path or body is 409 `idempotency-key-reused`. The key is global (not per route).'
       schema:
         type: string
+        minLength: 1
+        maxLength: 128
         example: 5b0f6a0e-6a41-4c63-9f33-0c8f5c1d2a77
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size, 1-500 (default 100). An empty, repeated, non-integer or out-of-range value is 400 `invalid-limit`.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: 'Opaque page token: the `nextCursor` of the previous page, with the same filters repeated. A token that does not decode is 400 `invalid-cursor`. Any query parameter the collection does not declare is 400 `unknown-query-parameter`.'
+      schema:
+        type: string
     ZoneId:
       name: zoneId
       in: path
@@ -1919,20 +1988,64 @@ components:
         type: string
         pattern: ^[A-Z0-9]+(-[A-Z0-9]+){6}$
       example: WH1-STOR-AMB-A07-03-02-B
+  headers:
+    IdempotencyReplayed:
+      description: '`true` when this response is the stored answer of an earlier request with the same Idempotency-Key; never present on the first execution.'
+      schema:
+        type: string
+        enum:
+          - 'true'
   responses:
     BadRequest:
       description: |
-        Malformed input: a body that is not valid JSON, a location code that is not seven `[A-Z0-9]` segments, a missing required identifier, or a query parameter outside its documented enum.
+        Malformed input: a body that is not valid JSON, a location code that is not seven `[A-Z0-9]` segments, a missing required identifier, a query parameter outside its documented enum, an invalid `limit` / `cursor` or an undeclared query parameter on a paged collection, or a missing / malformed Idempotency-Key on a POST.
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
-          example:
-            type: https://errors.facility-layout.warehouse-systems.dev/malformed-location-code
-            title: Malformed location code
-            status: 400
-            detail: 'location code must have exactly 7 hyphen-joined segments (site-area-zone-aisle-bay-level-position): got 4 segments in "WH1-STOR-AMB-A07"'
-            instance: /locations
+          examples:
+            malformedLocationCode:
+              value:
+                type: https://errors.facility-layout.warehouse-systems.dev/malformed-location-code
+                title: Malformed location code
+                status: 400
+                detail: 'location code must have exactly 7 hyphen-joined segments (site-area-zone-aisle-bay-level-position): got 4 segments in "WH1-STOR-AMB-A07"'
+                instance: /locations
+            idempotencyKeyRequired:
+              value:
+                type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-required
+                title: Idempotency-Key header is required
+                status: 400
+                detail: This endpoint changes state and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice.
+                instance: /location-imports
+            idempotencyKeyInvalid:
+              value:
+                type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-invalid
+                title: Idempotency-Key header is invalid
+                status: 400
+                detail: The Idempotency-Key header must be 1-128 printable ASCII characters (a client-generated UUID per logical submit).
+                instance: /location-imports
+            invalidLimit:
+              value:
+                type: https://errors.facility-layout.warehouse-systems.dev/invalid-limit
+                title: limit must be an integer between 1 and 500
+                status: 400
+                detail: limit must be an integer between 1 and 500
+                instance: /sites
+            invalidCursor:
+              value:
+                type: https://errors.facility-layout.warehouse-systems.dev/invalid-cursor
+                title: cursor is not a valid page token
+                status: 400
+                detail: invalid cursor
+                instance: /sites
+            unknownQueryParameter:
+              value:
+                type: https://errors.facility-layout.warehouse-systems.dev/unknown-query-parameter
+                title: the collection does not declare this query parameter
+                status: 400
+                detail: 'unknown query parameter: after'
+                instance: /sites
     NotFound:
       description: The named site, zone, aisle, slot, location type or placement rule does not exist.
       content:
@@ -1947,17 +2060,26 @@ components:
             instance: /sites/NOPE
     Conflict:
       description: |
-        A state conflict: a code already taken, a parent that exists but is no longer Active, or a slot already decommissioned.
+        A state conflict: a code already taken, a parent that exists but is no longer Active, or a slot already decommissioned. On a POST it is also the answer to an Idempotency-Key reused with a different method, path or body (`idempotency-key-reused`); the problem type tells the two apart.
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
-          example:
-            type: https://errors.facility-layout.warehouse-systems.dev/duplicate-location-code
-            title: A location slot with this code already exists
-            status: 409
-            detail: a location slot with this code already exists
-            instance: /locations
+          examples:
+            duplicateLocationCode:
+              value:
+                type: https://errors.facility-layout.warehouse-systems.dev/duplicate-location-code
+                title: A location slot with this code already exists
+                status: 409
+                detail: a location slot with this code already exists
+                instance: /locations
+            idempotencyKeyReused:
+              value:
+                type: https://errors.facility-layout.warehouse-systems.dev/idempotency-key-reused
+                title: Idempotency-Key was already used with a different request
+                status: 409
+                detail: The Idempotency-Key header on this request was already used with a different method, path or body. Use a new Idempotency-Key for a genuinely different request.
+                instance: /sites
     UnprocessableEntity:
       description: |
         Semantically invalid: a non-positive capacity, an unknown enum value, or a PlacementRule violation.
@@ -2104,7 +2226,7 @@ components:
           example: STOR
         zone:
           type: string
-          description: Behavioral class within the area (AMB, CHL, FRZ, HAZ, FWD, RSV).
+          description: Behavioral class within the area (AMB, CHL, FRZ, HAZ, FWD, RSV, CPK). CPK = case-pick faces whose capacity slotting plans in cases (a convention on this free-form string, not validated here; ADR 0042).
           example: AMB
         aisle:
           type: string
@@ -2334,7 +2456,7 @@ components:
         zoneCode:
           type: string
           pattern: ^[A-Z0-9]+$
-          description: Behavioral zone, e.g. AMB, CHL, FRZ, HAZ, FWD, RSV.
+          description: Behavioral zone, e.g. AMB, CHL, FRZ, HAZ, FWD, RSV, CPK. CPK = case-pick faces whose capacity slotting plans in cases. Free-form, so any [A-Z0-9]+ code is accepted and none is validated against a list (ADR 0042).
           example: FRZ
         temperatureClass:
           $ref: '#/components/schemas/TemperatureClass'
@@ -2506,6 +2628,22 @@ components:
           minimum: 0
           description: Optional explicit pick-path override for this slot. JSON null is treated as omitted.
           example: 42
+    HandlingUnit:
+      type: string
+      enum:
+        - EACH
+        - CASE
+        - PALLET
+      description: |
+        The unit of handling a slot accepts (ADR-0040). Absent on a slot means none was recorded.
+      example: CASE
+    DeclareHandlingUnitRequest:
+      type: object
+      required:
+        - handlingUnit
+      properties:
+        handlingUnit:
+          $ref: '#/components/schemas/HandlingUnit'
     SetAisleGeometryRequest:
       type: object
       required:
@@ -2900,6 +3038,8 @@ components:
           minimum: 0
           description: Explicit pick-path override, when set (ADR-0017).
           example: 42
+        handlingUnit:
+          $ref: '#/components/schemas/HandlingUnit'
     LocationClassification:
       type: object
       description: |
@@ -2960,6 +3100,8 @@ components:
             - $ref: '#/components/schemas/Capacity'
           description: |
             Optional. Omit to inherit the LocationType's default envelope.
+        handlingUnit:
+          $ref: '#/components/schemas/HandlingUnit'
     ImportRow:
       type: object
       description: |
@@ -3347,3 +3489,120 @@ components:
           description: One row per level, each index-aligned with `columns`.
           items:
             $ref: '#/components/schemas/GridRow'
+    AislePage:
+      type: object
+      description: One keyset page of Aisle (REST API guideline 3).
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Aisle'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
+    CrossAislePage:
+      type: object
+      description: One keyset page of CrossAisle (REST API guideline 3).
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CrossAisle'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
+    FixedStructurePage:
+      type: object
+      description: One keyset page of FixedStructure (REST API guideline 3).
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FixedStructure'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
+    LocationSlotPage:
+      type: object
+      description: One keyset page of LocationSlot (REST API guideline 3).
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocationSlot'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
+    LocationTypePage:
+      type: object
+      description: One keyset page of LocationType (REST API guideline 3).
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocationType'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
+    PlacementRulePage:
+      type: object
+      description: One keyset page of PlacementRule (REST API guideline 3).
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlacementRule'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
+    SitePage:
+      type: object
+      description: One keyset page of Site (REST API guideline 3).
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Site'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
+    SiteRoleTransferDefaultPage:
+      type: object
+      description: One keyset page of SiteRoleTransferDefault (REST API guideline 3).
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SiteRoleTransferDefault'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
+    ZonePage:
+      type: object
+      description: One keyset page of Zone (REST API guideline 3).
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Zone'
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.

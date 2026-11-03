@@ -1,0 +1,70 @@
+---
+id: customer-ordering-api-placeOrder
+version: 0.1.0
+name: placeOrder
+summary: 'Place a customer order, promising and confirming every shipment group'
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Checkout'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /checkout
+  statusCodes:
+    - '201'
+    - '400'
+    - '409'
+    - '422'
+    - '503'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+PlaceOrder. For each shipment group the service calls delivery-promise MakePromise (POST /promises) with the offer the shopper saw and then ConfirmPromise (POST /promises/\{promiseId\}:confirm) before anything is stored. If an offer expired or was consumed, or a confirm fails, it re-quotes (QuoteDeliveryOffers, POST /delivery-offers:quote) and answers 409 offer-not-quotable with the new offers; no order is placed. On success the order is PLACED and CustomerOrderPlaced is published through the outbox in the same transaction. The order id is derived from the Idempotency-Key, so a retry after a timeout reuses the same promises.
+
+
+
+
+## POST `(/checkout)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Client-chosen key (route, key; 24 hour TTL); a replay with the same body returns the stored response.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+The customer order without the ship-to address.
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">503 Service Unavailable</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-503.json" maxHeight="500" id="response-503" />
+
+
+
+## Architecture
+
+<NodeGraph />

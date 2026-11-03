@@ -1,0 +1,139 @@
+---
+id: node-topology
+name: Node Topology (events)
+version: 1.0.0
+summary: >-
+  The authoritative registry of the network's physical shape: every node (vendor
+  fulfillment centres, cross-docks, returns centres, and the network's own
+  sortation centres, delivery stations and air hubs), its declared operational
+  profile, the directed lanes between nodes, the regions, and which delivery
+  station serves which postal area.
+badges:
+  - content: node-topology
+    textColor: blue
+    backgroundColor: blue
+  - content: node
+    textColor: blue
+    backgroundColor: blue
+  - content: lane
+    textColor: blue
+    backgroundColor: blue
+  - content: servicearea
+    textColor: blue
+    backgroundColor: blue
+  - content: region
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: NodeRegistered
+    version: 1.0.0
+    to:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeOperationalProfileDeclared
+    version: 1.0.0
+    to:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeActivated
+    version: 1.0.0
+    to:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeSuspended
+    version: 1.0.0
+    to:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: NodeRetired
+    version: 1.0.0
+    to:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: LaneOpened
+    version: 1.0.0
+    to:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: LaneClosed
+    version: 1.0.0
+    to:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: ServiceAreaAssigned
+    version: 1.0.0
+    to:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: RegionDefined
+    version: 1.0.0
+    to:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+receives: []
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+The authoritative registry of the network's physical shape: every node (vendor fulfillment centres, cross-docks, returns centres, and the network's own sortation centres, delivery stations and air hubs), its declared operational profile, the directed lanes between nodes, the regions, and which delivery station serves which postal area.
+
+| | |
+|---|---|
+| Bounded context | `node-topology` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, logistics tier |
+| Publishes (Kafka) | `retailnetwork.node-topology.events` |
+| Consumes (Kafka) | `nodeTopologyEvents` |
+| CloudEvents type prefix | `com.retailnetwork.logistics.node-topology.` |
+| Event source | `/retailnetwork/node-topology` |
+| Repository | [IQVO/node-topology](https://github.com/IQVO/node-topology) |
+| REST API | [node-topology-api](/docs/services/node-topology-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **node-topology** bounded context of the retail
+network (logistics tier): the authoritative registry of nodes, their
+declared operational profiles, the directed lanes between them, the regions
+and which delivery station serves which postal prefix (ADR 0001, ADR 0002).
+
+**Published.** Nine events, all on the topic `retailnetwork.node-topology.events`,
+through a **transactional outbox**: the aggregate row and its already-encoded
+events are written in ONE database transaction and an always-on relay drains
+them to Kafka (at-least-once; the CloudEvents `id` is stored with the outbox
+row, so a retry republishes the same `id`). The nine types are catalogued in
+ADR 0004.
+
+**Consumed.** None (ADR 0003). The context consumes no Kafka topic and calls
+no sibling context.
+
+**Analytics.** The model names no analytics-only event for this context, so
+nothing is published on `retailnetwork.node-topology.analytics`.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+header `content-type: application/cloudevents+json; charset=UTF-8`.
+`specversion`, `id`, `source` (`/retailnetwork/node-topology`), `type`,
+`subject` (the aggregate root id), `time`, `datacontenttype`
+(`application/json`) and `dataschema`
+(`urn:retailnetwork:node-topology:events:<EventName>:v1`) are all required.
+Kafka key = the subject, so one aggregate's events stay ordered on one
+partition. Type = `com.retailnetwork.logistics.node-topology.<entity>.<EventName>`
+with entity `node`, `lane`, `servicearea` or `region`. A breaking payload
+change is a new `.v2` type, never a mutation. Dispatch on the full `type`,
+ignore unknown types, dedupe on `id`.
+
+**Conventions.** `data` is camelCase; timestamps are RFC 3339 UTC; local
+times are `HH:mm` in the declared `timezone`; optional fields are omitted
+when unset except where a message says a field is `null`.
+
+
+## Architecture diagram
+<NodeGraph />

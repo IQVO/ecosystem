@@ -1,0 +1,76 @@
+---
+id: checkout-api-confirmCheckoutSession
+version: 0.1.0
+name: confirmCheckoutSession
+summary: Confirm the session with a payment method token
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:CheckoutSessions'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/checkout-sessions/{sessionId}/confirmations'
+  statusCodes:
+    - '200'
+    - '202'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+ConfirmSession with the PSP payment method token (never a card number). AUTHORIZING calls customer-payments POST /payment-authorizations (key `<sessionId>:auth:<attempt>`, the attempt counter grows on every retry after a decline; allocations per group); the authorized amount must equal the quote total (ErrAuthorizationMismatch). PLACING persists the placement request and calls customer-ordering POST /checkout with Idempotency-Key equal to the sessionId. Outcomes: 200 with the session in a definitive state (COMPLETED, DECLINED, REQUOTE_REQUIRED with requotedOffers after a successful void, or FAILED after a void plus an alert for a contract bug); 202 while the place-order outcome is unknown (the session stays PLACING; poll GET /checkout-sessions/\{sessionId\}). A DECLINED session may be confirmed again with another token while the price quote is valid.
+
+
+
+
+## POST `(/checkout-sessions/{sessionId}/confirmations)`
+
+### Parameters
+- **sessionId** (path) (required)
+- **Idempotency-Key** (header) (required): Client-generated UUID per logical submit, 1-128 printable ASCII characters. A repeat of the same method, path and body replays the stored answer (response header Idempotency-Replayed: true); the same key on a different request is 409 idempotency-key-reused.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-green-500">202 Accepted</span>
+<SchemaViewer file="response-202.json" maxHeight="500" id="response-202" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+
+
+## Architecture
+
+<NodeGraph />

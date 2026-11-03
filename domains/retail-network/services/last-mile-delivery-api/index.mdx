@@ -1,0 +1,76 @@
+---
+id: last-mile-delivery-api
+version: 0.1.0
+name: Last Mile Delivery API
+summary: >-
+  REST API of last-mile-delivery. Runs each delivery station: publishes delivery
+  waves (induct cutoff, delivery window, stop capacity) that the promise relies
+  on, plans routes for delivery service partners, and records every delivery
+  attempt.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Last-Mile Delivery API
+badges:
+  - content: Waves
+    textColor: blue
+    backgroundColor: blue
+  - content: Routes
+    textColor: blue
+    backgroundColor: blue
+  - content: Partners
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: last-mile-delivery-api-scheduleWave
+    version: 0.1.0
+  - id: last-mile-delivery-api-listWaves
+    version: 0.1.0
+  - id: last-mile-delivery-api-getWaveStops
+    version: 0.1.0
+  - id: last-mile-delivery-api-closeInduction
+    version: 0.1.0
+  - id: last-mile-delivery-api-dispatchWave
+    version: 0.1.0
+  - id: last-mile-delivery-api-cancelWave
+    version: 0.1.0
+  - id: last-mile-delivery-api-planRoute
+    version: 0.1.0
+  - id: last-mile-delivery-api-getRoute
+    version: 0.1.0
+  - id: last-mile-delivery-api-startRoute
+    version: 0.1.0
+  - id: last-mile-delivery-api-recordAttempt
+    version: 0.1.0
+  - id: last-mile-delivery-api-contractPartner
+    version: 0.1.0
+  - id: last-mile-delivery-api-deactivatePartner
+    version: 0.1.0
+---
+## Purpose
+Runs each delivery station: publishes delivery waves (induct cutoff, delivery window, stop capacity) that the promise relies on, plans routes for delivery service partners, and records every delivery attempt.
+
+| | |
+|---|---|
+| Bounded context | `last-mile-delivery` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, logistics tier |
+| Repository | [IQVO/last-mile-delivery](https://github.com/IQVO/last-mile-delivery) |
+| Events | [last-mile-delivery](/docs/services/last-mile-delivery) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+REST contract of the last-mile-delivery bounded context of the retail network (logistics tier), derived from retail-network-docs model/model.yaml (contexts[last-mile-delivery].rest, .aggregates, .publishes, conventions.errors) and adjusted by the orchestrator's contracts-delta and Gap Register resolutions (G5, G11, G16, G17, G34). The context runs the network's delivery stations: it schedules delivery waves (induct cutoff, delivery window, stop capacity), inducts arrived packages into them, plans routes for delivery service partners (DSPs) and records delivery attempts. No endpoint carries an address or any other PII: packages are identified by tracking number and grouped into stops by the opaque `stopKey` that shipping-and-tracking derives at label time. No authentication, consistent with the rest of the network. Every state changing POST takes a required `Idempotency-Key` header (table idempotency_keys, 24 h): a missing or over-long key is 400 `idempotency-key-required`, a key reused with another body on the same resource is 422 `idempotency-key-reused`, and a repeated request replays the stored 2xx response with the header `Idempotent-Replayed: true`. Errors are RFC 9457 `application/problem+json`; the `type` is a slug. The shared slugs are `not-found` (404), `illegal-transition` (409), `concurrent-update` (409) and `validation-failed` (422), plus one slug per model Err name (kebab-case without the `Err` prefix). The first eight operations of this file are the model's REST list; `getWaveStops`, `cancelWave`, `getRoute` and `deactivatePartner` are the additions of Gap Register G11, G17 and G34 (ADR 0002).  
+
+## Architecture diagram
+<NodeGraph />

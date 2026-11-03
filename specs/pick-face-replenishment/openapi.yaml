@@ -47,6 +47,10 @@ tags:
     description: Replenishment requests, raised by detection or by an operator.
   - name: Sites
     description: Site-wide commands.
+  - name: Reports
+    description: |
+      The analytics read side (ADR 0008), served read-only by the separate
+      pfr-reports binary (Service `<release>-reports`).
   - name: Health
     description: Liveness and readiness probes.
 
@@ -59,6 +63,8 @@ paths:
         Lists the declared policies ordered by site and SKU, a page at a time.
         `cursor` is the opaque `nextCursor` of the previous page; a response
         without `nextCursor` is the last page. `siteId` and `sku` narrow the list.
+        `limit` and `cursor` are single-valued; an empty or repeated `limit`, a
+        repeated `cursor` and any undeclared query parameter are 400.
       tags: [Policies]
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -87,6 +93,8 @@ paths:
                     minQty: 10
                     maxQty: 60
                     multiple: 6
+                    source: DECLARED
+                    stale: false
                     version: 2
                     declaredAt: "2026-10-17T09:00:00Z"
                 nextCursor: U0lURS0xL1NLVS0x
@@ -110,6 +118,10 @@ paths:
         value is a 409 `concurrent-modification`. The values must satisfy
         `0 <= minQty < maxQty` and `multiple >= 1` (`multiple` defaults to 1). A
         request quantity is always rounded down to a multiple of `multiple`.
+        With `source: PACK_DERIVED` the multiple is not sent: it is taken from the
+        SKU's active CASE pack level (units per case) in the local copy of
+        product-master's pack levels, and re-derived when that level is superseded;
+        a SKU with no active CASE level is a 422 `no-active-case-level`.
         Publishes `ReplenishmentPolicyDeclared` on the analytics topic. The
         response carries the new version as `ETag`.
       tags: [Policies]
@@ -143,12 +155,16 @@ paths:
                 minQty: 10
                 maxQty: 60
                 multiple: 6
+                source: DECLARED
+                stale: false
                 version: 1
                 declaredAt: "2026-10-17T09:00:00Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -276,8 +292,8 @@ paths:
         `no-policy`), at most the source bin's usable stock (422 `no-source-stock`).
         At most one request is open per forward bin and SKU (409
         `replenishment-already-open`). Publishes `ReplenishmentRequested`. Requires
-        an `Idempotency-Key`; replaying the same key and body returns the original
-        request.
+        an `Idempotency-Key`; replaying the same key and request returns the
+        original answer with `Idempotency-Replayed: true`.
       tags: [Replenishments]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -299,6 +315,8 @@ paths:
               description: Path of the new request.
               schema:
                 type: string
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
@@ -401,7 +419,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /replenishments/{requestId}/cancel:
+  /replenishments/{requestId}/cancellations:
     parameters:
       - $ref: "#/components/parameters/RequestId"
     post:
@@ -420,6 +438,9 @@ paths:
       responses:
         "200":
           description: The request is now Cancelled.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
@@ -430,12 +451,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /sites/{siteId}/evaluate:
+  /sites/{siteId}/evaluations:
     parameters:
       - $ref: "#/components/parameters/SiteId"
     post:
@@ -446,13 +465,17 @@ paths:
         the requests it finds. It is a sweep that converges: a pick face that
         already has an open request is reported as `alreadyOpen` and left alone,
         so running it twice raises nothing the second time. Requires an
-        `Idempotency-Key`; replaying the same key returns the original summary.
+        `Idempotency-Key`; replaying the same key returns the original summary
+        with `Idempotency-Replayed: true`.
       tags: [Sites]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: The sweep finished.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
@@ -470,8 +493,8 @@ paths:
                   - repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
         "400":
           $ref: "#/components/responses/BadRequest"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -516,6 +539,130 @@ paths:
                 status: 503
                 detail: "not ready: kafka"
                 instance: /readyz
+
+  /reports/replenishment-funnel:
+    servers:
+      - url: http://localhost:8092
+        description: pfr-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getReplenishmentFunnel
+      summary: The replenishment funnel per day
+      tags: [Reports]
+      description: |
+        How does replenishment flow at the site? `days[]` has one row per UTC
+        calendar day intersecting `[from, to)` (zeros included); a day's counts
+        cover the part of the day inside the range. `requests_raised`,
+        `requests_completed` and `requests_cancelled` count the events whose
+        `time` fell in the window, and `units_requested` / `units_replenished`
+        sum their quantity. `completion_latency` is the requested-to-completed
+        time of the requests completed in the window whose request the
+        projection also saw; a request completed without a seen request counts
+        in `requests_completed` but has no latency. `p50_seconds` /
+        `p95_seconds` are linear-interpolated percentiles and are null when
+        `count` is 0. `policies_declared` counts the policy versions declared
+        in the window (the analytics-only `ReplenishmentPolicyDeclared`).
+        `siteId` narrows every counter to one site (omitted = every site);
+        `granularity` is `day` (the only bucket; the default). The data is as
+        fresh as `GET /reports/freshness` says.
+      parameters:
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+        - name: siteId
+          in: query
+          required: false
+          description: Narrows every counter to one site. Omitted = every site.
+          schema:
+            type: string
+          example: SITE-1
+        - name: granularity
+          in: query
+          required: false
+          description: The time-bucket resolution; only `day` exists (the default).
+          schema:
+            type: string
+            enum: [day]
+          example: day
+      responses:
+        "200":
+          description: The funnel for the effective range.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplenishmentFunnelReport"
+              example:
+                from: "2026-10-05T00:00:00Z"
+                to: "2026-10-07T00:00:00Z"
+                site_id: "SITE-1"
+                granularity: day
+                days:
+                  - day: "2026-10-05"
+                    requests_raised: 12
+                    units_requested: 288
+                    requests_completed: 9
+                    units_replenished: 216
+                    requests_cancelled: 1
+                    completion_latency: { count: 9, p50_seconds: 1800, p95_seconds: 5400 }
+                    policies_declared: 2
+                  - day: "2026-10-06"
+                    requests_raised: 0
+                    units_requested: 0
+                    requests_completed: 0
+                    units_replenished: 0
+                    requests_cancelled: 0
+                    completion_latency: { count: 0, p50_seconds: null, p95_seconds: null }
+                    policies_declared: 0
+        "400":
+          description: "`from` / `to` are not RFC 3339, empty or inverted, span more than 366 days, or `granularity` is not `day`."
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                invalidRange:
+                  summary: from and to are not a valid range
+                  value:
+                    type: https://errors.pick-face-replenishment.warehouse-systems.dev/invalid-report-range
+                    title: from and to must form a valid RFC 3339 range of at most 366 days
+                    status: 400
+                    detail: from must be strictly before to
+                    instance: /reports/replenishment-funnel
+                invalidGranularity:
+                  summary: granularity is not day
+                  value:
+                    type: https://errors.pick-face-replenishment.warehouse-systems.dev/invalid-report-granularity
+                    title: granularity must be "day"
+                    status: 400
+                    detail: 'granularity must be "day", got "hour"'
+                    instance: /reports/replenishment-funnel
+        "500":
+          $ref: "#/components/responses/ReportStoreError"
+  /reports/freshness:
+    servers:
+      - url: http://localhost:8092
+        description: pfr-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getReportsFreshness
+      summary: How far the analytics projection is behind
+      tags: [Reports]
+      description: |
+        The freshness lag of the projection the report reads: `as_of` is the
+        CloudEvents time of the newest event the projector has applied and
+        `lag_seconds` is now minus `as_of` (never negative). Both are null
+        until the first event is applied. A growing lag means the projector
+        is down or behind, not that the report is wrong: it catches up when
+        the projector does.
+      responses:
+        "200":
+          description: The freshness (null fields while nothing was projected).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportsFreshness"
+              example:
+                as_of: "2026-10-07T11:59:55Z"
+                lag_seconds: 4.2
+        "500":
+          $ref: "#/components/responses/ReportStoreError"
 
 components:
   parameters:
@@ -590,12 +737,44 @@ components:
         retried request safe. The service always runs on Postgres, so it is
         required on every deployment and answered with 400
         `idempotency-key-required` when absent; a replay with the same key and
-        the same body returns the original response, while the same key with a
-        different body is 422 `idempotency-key-reused`.
+        the same request (method, path and body) returns the original response
+        with the header `Idempotency-Replayed: true`, while the same key with a
+        different request is 409 `idempotency-key-reused`. A key longer than 128
+        characters is also 400 `idempotency-key-required`. A 4xx answer is stored
+        and replayed like a success; a 5xx is never stored.
       schema:
         type: string
         minLength: 1
         maxLength: 128
+
+    ReportFrom:
+      name: from
+      in: query
+      required: false
+      description: RFC 3339 instant, inclusive. Defaults to `to` minus 30 days.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-05T00:00:00Z"
+    ReportTo:
+      name: to
+      in: query
+      required: false
+      description: RFC 3339 instant, exclusive. Defaults to now. At most 366 days after `from`.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-07T00:00:00Z"
+
+  headers:
+    IdempotencyReplayed:
+      description: >-
+        `true` when this response is the stored answer of an earlier request
+        with the same `Idempotency-Key` and the same method, path and body (the
+        handler did not run again). Absent on the first execution.
+      schema:
+        type: string
+        enum: ["true"]
 
   responses:
     BadRequest:
@@ -683,7 +862,7 @@ components:
                 type: https://errors.pick-face-replenishment.warehouse-systems.dev/invalid-limit
                 title: Limit is invalid
                 status: 400
-                detail: limit must be between 1 and 500
+                detail: limit must be a single integer between 1 and 500
                 instance: /replenishments
             invalidCursor:
               summary: Invalid cursor
@@ -692,6 +871,14 @@ components:
                 title: Cursor is invalid
                 status: 400
                 detail: cursor is not a value returned by this API
+                instance: /replenishments
+            unknownQueryParameter:
+              summary: Undeclared query parameter on a paged list
+              value:
+                type: https://errors.pick-face-replenishment.warehouse-systems.dev/unknown-query-parameter
+                title: Unknown query parameter
+                status: 400
+                detail: "unknown query parameter: offset"
                 instance: /replenishments
             idempotencyKeyRequired:
               summary: Missing Idempotency-Key
@@ -725,7 +912,7 @@ components:
                 detail: replenishment request not found
                 instance: /replenishments/repl-unknown
     Conflict:
-      description: The resource is in the wrong state for the command, or another request changed it first.
+      description: The resource is in the wrong state for the command, another request changed it first, or the Idempotency-Key was already used with a different request (`idempotency-key-reused`).
       content:
         application/problem+json:
           schema:
@@ -754,7 +941,7 @@ components:
                 title: Only a Requested replenishment can be cancelled
                 status: 409
                 detail: replenishment request is not Requested
-                instance: /replenishments/repl-1/cancel
+                instance: /replenishments/repl-1/cancellations
             concurrentModification:
               summary: Stale If-Match or concurrent write
               value:
@@ -763,21 +950,29 @@ components:
                 status: 409
                 detail: concurrent modification
                 instance: /policies/SITE-1/SKU-1
+            idempotencyKeyReused:
+              summary: The Idempotency-Key was used with a different request
+              value:
+                type: https://errors.pick-face-replenishment.warehouse-systems.dev/idempotency-key-reused
+                title: Idempotency-Key was already used with a different request
+                status: 409
+                detail: the Idempotency-Key was used with a different request (method, path or body)
+                instance: /replenishments
     UnprocessableEntity:
-      description: The request is well-formed but the current state does not allow it, or the Idempotency-Key was reused.
+      description: The request is well-formed but the current state does not allow it.
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
           examples:
-            idempotencyKeyReused:
-              summary: The Idempotency-Key was used with a different body
+            noActiveCaseLevel:
+              summary: PACK_DERIVED policy for a SKU with no active CASE pack level
               value:
-                type: https://errors.pick-face-replenishment.warehouse-systems.dev/idempotency-key-reused
-                title: Idempotency-Key was already used with a different request
+                type: https://errors.pick-face-replenishment.warehouse-systems.dev/no-active-case-level
+                title: The SKU has no active CASE pack level
                 status: 422
-                detail: the Idempotency-Key was used with a different request body
-                instance: /replenishments
+                detail: product-master has declared no CASE level in force for this SKU; declare one there, or declare the policy with source DECLARED
+                instance: /policies/SITE-1/SKU-1
             noForwardAssignment:
               summary: The SKU has no forward bin
               value:
@@ -830,6 +1025,18 @@ components:
             status: 500
             detail: an unexpected error occurred
             instance: /replenishments
+    ReportStoreError:
+      description: The analytical database query failed (pfr-reports only).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: https://errors.pick-face-replenishment.warehouse-systems.dev/report-store-error
+            title: The report could not be served
+            status: 500
+            detail: the analytical database query failed
+            instance: /reports/replenishment-funnel
 
   schemas:
     RequestState:
@@ -875,7 +1082,17 @@ components:
           format: int64
           minimum: 1
           default: 1
-          description: A request quantity is rounded down to a multiple of this (a case or inner-pack size).
+          description: >-
+            A request quantity is rounded down to a multiple of this (a case or
+            inner-pack size). Must be omitted when `source` is `PACK_DERIVED`.
+        source:
+          type: string
+          enum: [DECLARED, PACK_DERIVED]
+          default: DECLARED
+          description: >-
+            DECLARED keeps the multiple as sent. PACK_DERIVED takes it from the
+            SKU's active CASE pack level (units per case) and re-derives it when
+            that level is superseded.
     RequestReplenishmentRequest:
       type: object
       additionalProperties: false
@@ -901,13 +1118,15 @@ components:
 
     Policy:
       type: object
-      required: [siteId, sku, minQty, maxQty, multiple, version, declaredAt]
+      required: [siteId, sku, minQty, maxQty, multiple, source, stale, version, declaredAt]
       properties:
         siteId: { type: string }
         sku: { type: string }
         minQty: { type: integer, format: int64, minimum: 0 }
         maxQty: { type: integer, format: int64, minimum: 1 }
         multiple: { type: integer, format: int64, minimum: 1 }
+        source: { type: string, enum: [DECLARED, PACK_DERIVED], description: "Where `multiple` comes from." }
+        stale: { type: boolean, description: "PACK_DERIVED only: the CASE level it was derived from is gone and no other is in force; the last multiple still applies." }
         version: { type: integer, format: int64, minimum: 1, description: "Starts at 1, +1 per accepted change." }
         declaredAt: { type: string, format: date-time }
     PolicyPage:
@@ -994,10 +1213,48 @@ components:
           description: The requests raised, in forward-bin order.
           items: { type: string }
 
+    CompletionLatencyTiming:
+      type: object
+      description: The requested-to-completed durations of one day's completed requests (linear-interpolated percentiles).
+      required: [count, p50_seconds, p95_seconds]
+      properties:
+        count: { type: integer, minimum: 0 }
+        p50_seconds: { type: number, format: double, nullable: true, minimum: 0, description: Null when count is 0. }
+        p95_seconds: { type: number, format: double, nullable: true, minimum: 0, description: Null when count is 0. }
+    ReplenishmentFunnelDay:
+      type: object
+      required: [day, requests_raised, units_requested, requests_completed, units_replenished, requests_cancelled, completion_latency, policies_declared]
+      properties:
+        day: { type: string, format: date, description: The UTC calendar day. }
+        requests_raised: { type: integer, minimum: 0, description: ReplenishmentRequested events that fell in the day's window. }
+        units_requested: { type: integer, format: int64, minimum: 0, description: Total quantity of those requests. }
+        requests_completed: { type: integer, minimum: 0, description: ReplenishmentCompleted events that fell in the day's window. }
+        units_replenished: { type: integer, format: int64, minimum: 0, description: Total quantity moved by those completions. }
+        requests_cancelled: { type: integer, minimum: 0, description: ReplenishmentCancelled events that fell in the day's window. }
+        completion_latency: { $ref: "#/components/schemas/CompletionLatencyTiming" }
+        policies_declared: { type: integer, minimum: 0, description: Policy versions declared (ReplenishmentPolicyDeclared) in the day's window. }
+    ReplenishmentFunnelReport:
+      type: object
+      required: [from, to, granularity, days]
+      properties:
+        from: { type: string, format: date-time, description: The effective range start (inclusive). }
+        to: { type: string, format: date-time, description: The effective range end (exclusive). }
+        site_id: { type: string, description: The site scope; omitted when the report covers every site. }
+        granularity: { type: string, enum: [day] }
+        days:
+          type: array
+          description: One dense row per UTC calendar day intersecting the range, zeros included.
+          items: { $ref: "#/components/schemas/ReplenishmentFunnelDay" }
+    ReportsFreshness:
+      type: object
+      required: [as_of, lag_seconds]
+      properties:
+        as_of: { type: string, format: date-time, nullable: true, description: The CloudEvents time of the newest applied event; null until the first. }
+        lag_seconds: { type: number, format: double, nullable: true, minimum: 0, description: "now - as_of, never negative; null until the first event." }
     Problem:
       type: object
       description: RFC 7807 problem document used for every non-2xx response.
-      required: [type, title, status, detail]
+      required: [type, title, status, detail, instance]
       properties:
         type: { type: string, format: uri }
         title: { type: string }

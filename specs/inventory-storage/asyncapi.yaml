@@ -6,7 +6,7 @@ info:
   description: >
     Domain-event catalog for the **inventory-storage** bounded context, the
     WMS-tier authoritative record of what is held where, and what portion of
-    it is usable. This context implements Amazon-style chaotic (random) stow:
+    it is usable. This context implements chaotic (random) stow:
     there is no fixed product location — an inbound item may be stowed into
     any free bin, and this service records the exact bin it landed in. It
     supplies "stock reality" to the Work Planning bounded context
@@ -50,18 +50,18 @@ info:
     catalog for the bounded context. Two topics carry a subset of it:
     `warehouse.inventory.events` (the integration contract — `StockReserved`,
     `ReservationRevoked`, the transfer replies, the transfer receipt/stow events,
-    `BinStockLevelChanged` (the per-bin absolute level feed, ADR 0040), and the legacy
-    `ProductClassified`, from
-    `internal/adapters/outbound/kafka/publisher.go`) and
+    `BinStockLevelChanged` (the per-bin absolute level feed, ADR 0040), and
+    the promoted exception facts `DiscrepancyDetected`, `ItemUnlocated` and
+    `ItemStowed` (ADR 0043 — byte-identical copies of the analytics feed),
+    from `internal/adapters/outbound/kafka/publisher.go`) and
     `warehouse.inventory.analytics` (the analytics data product — every
-    message below except `LocationRecorded` and `ProductClassified`, from
+    message below except `LocationRecorded`, from
     `internal/adapters/outbound/kafka/analytics_publisher.go`). Each message
     says which topics it reaches. `LocationRecorded` is in-process only (no
-    consumer; decided 2026-10-06). Since ADR 0034 product-master owns
-    product classification: `ProductClassified` is no longer raised by any
-    write path and is emitted only by the one-shot
-    `republish-product-classifications` backfill command (product-master ADR
-    0003 stage B), on the integration topic.
+    consumer; decided 2026-10-06). Product-master owns product classification
+    (ADR 0034); the legacy `ProductClassified` and the one-shot
+    `republish-product-classifications` backfill that re-emitted it were
+    removed at product-master ADR 0003 stage E (2026-10-17).
 
 
     **Consumed.** This service also consumes product-master's
@@ -76,8 +76,13 @@ info:
     from `warehouse.inbound-receiving.events` (channel below, ADR 0037): a
     line with `condition=Good` is booked as a staged receipt through the
     existing ReceiveStock use case (the same `StockReceived` as
-    `POST /stock/receive`, analytics topic; quantity staged, stow stays the RF
-    action); `Damaged` is not booked in v1.
+    `POST /stock-receipts`, analytics topic; quantity staged, stow stays the RF
+    action); `Damaged` is not booked in v1. And it consumes
+    returns-processing's `ReturnLineStaged` from
+    `warehouse.returns-processing.events` (channel below, ADR 0044): the
+    RESTOCK disposition's handover is booked through the SAME ReceiveStock
+    seam as a receipt line (same `StockReceived`, analytics topic; quantity
+    staged, stow stays the RF action).
 
 
     **CloudEvents is mandatory (ADR-0024).** Every message on both topics is
@@ -119,8 +124,7 @@ tags:
     description: >
       Events about SKU-level handling master data (hazmat, fragile,
       temperature, ...). Owned by product-master since ADR 0034; this
-      service only re-emits its legacy `ProductClassified` from the one-shot
-      backfill command and consumes product-master's own events.
+      service consumes product-master's own events.
   - name: product-master
     description: >
       Events consumed from the product-master bounded context (wms
@@ -134,6 +138,11 @@ tags:
       Events consumed from the inbound-receiving bounded context (wms
       subdomain): ReceiptLineReceived, from which Good lines are booked as
       staged stock (ADR 0037).
+  - name: returns-processing
+    description: >
+      Events consumed from the returns-processing bounded context (wms
+      subdomain): ReturnLineStaged, from which restocked return lines are
+      booked as staged stock (ADR 0044).
 
 servers:
   production:
@@ -142,9 +151,9 @@ servers:
     description: >
       The shared warehouse-systems Kafka broker. Locally this is the broker
       started by `~/warehouse-systems/docker-compose.kafka.yml`, addressed via
-      the `KAFKA_BROKERS` environment variable (default `localhost:9092`).
-      The Kafka publisher is selected with `EVENT_PUBLISHER=kafka`; the
-      default `log` publisher writes events to stdout instead.
+      the `KAFKA_BROKERS` environment variable (required, no default).
+      Events always leave through the transactional outbox and its relay
+      (ADR 0042); there is no log publisher.
 
 defaultContentType: application/cloudevents+json
 
@@ -155,11 +164,15 @@ channels:
       constant in `internal/adapters/outbound/kafka/publisher.go`). Reaching
       it: `StockReserved` and `ReservationRevoked` (keyed by reservation
       id), the transfer replies and receipt/stow events (keyed by transfer line id),
-      `StockRelocated` (keyed by relocation id, ADR 0039), `BinStockLevelChanged`
-      (keyed by `<bin>:<sku>`, ADR 0040), and the legacy `ProductClassified`
-      (keyed by SKU), which since ADR 0034 only the one-shot
-      `republish-product-classifications` backfill emits (product-master's
-      legacy importer consumes it). The primary downstream consumer is
+      `StockRelocated` (keyed by relocation id, ADR 0039),
+      `BinStockLevelChanged` (keyed by `<bin>:<sku>`, ADR 0040) and the
+      promoted exception facts `DiscrepancyDetected`, `ItemUnlocated` and
+      `ItemStowed` (ADR 0043 — byte-identical copies of the analytics
+      feed, consumed by exception-management and returns-processing) and the
+      container events `ContainerRegistered`, `ContainerStowed`, `CaseBroken`
+      and `ContainerEmptied` (keyed by LPN, ADR 0045/0046). The legacy
+      `ProductClassified` was retired at product-master ADR 0003 stage E
+      (2026-10-17). The primary downstream consumer is
       wes-work-planning, which dispatches on their full `type` strings and
       projects them into its `UsableInventoryObserved` read model, keyed by
       SKU.
@@ -185,7 +198,13 @@ channels:
           - $ref: "#/components/messages/TransferStockStowed"
           - $ref: "#/components/messages/StockRelocated"
           - $ref: "#/components/messages/BinStockLevelChanged"
-          - $ref: "#/components/messages/ProductClassified"
+          - $ref: "#/components/messages/DiscrepancyDetected"
+          - $ref: "#/components/messages/ItemUnlocated"
+          - $ref: "#/components/messages/ItemStowed"
+          - $ref: "#/components/messages/ContainerRegistered"
+          - $ref: "#/components/messages/ContainerStowed"
+          - $ref: "#/components/messages/CaseBroken"
+          - $ref: "#/components/messages/ContainerEmptied"
 
   warehouse.inventory.analytics:
     description: >
@@ -198,10 +217,9 @@ channels:
       for reservation-lifecycle events). Consumed only by this service's own
       projector (`cmd/inventory-projector`), which dispatches on the full
       `type`, dedupes on `id`, and skips (WARN) anything that is not a valid
-      CloudEvent. `ProductClassified` no longer reaches this topic (ADR
-      0034: the write path stopped raising it and the backfill writes the
-      integration topic only); the projector would acknowledge it without
-      touching the read model.
+      CloudEvent. The legacy `ProductClassified` never reaches this topic
+      and was retired at product-master ADR 0003 stage E (2026-10-17); the
+      projector would acknowledge it without touching the read model.
     subscribe:
       operationId: consumeInventoryStorageAnalytics
       summary: Consume inventory-storage analytics events (internal).
@@ -232,11 +250,12 @@ channels:
       CONSUMED by this service (ADR 0034), not published: key = SKU,
       `source=/warehouse/product-master`, `subject` = SKU. Only
       `com.warehouse.wms.product-master.product.ProductClassified` is acted
-      on; `ProductRegistered`, `ProductDescriptionChanged`,
+      on, and `ProductPackLevelDeclared` / `ProductPackLevelRetired` feed the
+      local PackagingView (ADR 0046); `ProductRegistered`, `ProductDescriptionChanged`,
       `ProductDimensionsDeclared` and `ProductMeasured` share the topic and
-      are committed past untouched. The consumer runs only when
-      `PRODUCT_MASTER_CONSUMER_GROUP` is set (stable group id; also requires
-      `DATABASE_URL` and `KAFKA_BROKERS`).
+      are committed past untouched. The consumer always runs, under the stable group id
+      `PRODUCT_MASTER_CONSUMER_GROUP` (mandatory, as are `DATABASE_URL` and
+      `KAFKA_BROKERS`).
     publish:
       operationId: applyProductMasterClassification
       summary: Apply product-master's ProductClassified to the local copy.
@@ -255,7 +274,43 @@ channels:
         - name: product-master
           description: Consumed from the product-master bounded context.
       message:
-        $ref: "#/components/messages/ProductMasterProductClassified"
+        oneOf:
+          - $ref: "#/components/messages/ProductMasterProductClassified"
+          - $ref: "#/components/messages/ProductMasterProductPackLevelDeclared"
+          - $ref: "#/components/messages/ProductMasterProductPackLevelRetired"
+
+  warehouse.facility.events:
+    description: |
+      facility-layout's integration topic. Consumed ONLY for the four types the
+      facility cache dispatches on (ADR 0024 / this repo's ADR 0047):
+      `ZoneRegistered` (zone classification: temperature + hazmat, for stow
+      legality), `LocationSlotRegistered` (slot existence, zone and optional
+      handling unit), `LocationSlotDecommissioned` (evict the slot; the stow
+      check then fails open for it) and `LocationSlotHandlingUnitDeclared`
+      (set/change a bin's handling unit, ADR 0040). The consumer rebuilds an
+      in-memory cache from the topic's FULL history on every start (offset
+      reset to the first offset) under a dedicated PER-PROCESS consumer group
+      `inventory-storage-facility-location-cache-<host>-<pid>-<nanos>`
+      (deliberately not configurable and not shared: there is no
+      `FACILITY_CONSUMER_GROUP`); last write wins per subject (same
+      partition). A message that is not a valid CloudEvent, has an
+      undecodable payload or lacks a required field is written to
+      `warehouse.facility.events.dlq` and the consumer carries on.
+    publish:
+      operationId: applyFacilityCache
+      summary: Apply facility-layout's published language to the facility cache.
+      description: |
+        Upserts/evicts rows of the in-memory facility cache (no database and
+        no `processed_events` claim: the cache is rebuilt by replaying the
+        topic from the beginning on every start); last write wins per
+        subject. A malformed message is dead-lettered to
+        `warehouse.facility.events.dlq` and skipped.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/FacilityLayoutZoneRegistered"
+          - $ref: "#/components/messages/FacilityLayoutLocationSlotRegistered"
+          - $ref: "#/components/messages/FacilityLayoutLocationSlotDecommissioned"
+          - $ref: "#/components/messages/FacilityLayoutLocationSlotHandlingUnitDeclared"
 
   warehouse.fulfillment.events:
     description: >
@@ -267,10 +322,9 @@ channels:
       `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` is acted on
       (task_type `PICK`, ADR 0035/0036, and `RELOCATE`, ADR 0039);
       `TaskCPTMissed`, `PackageManifested` and the `Transfer*` facts share the
-      topic and are committed past untouched. The consumer runs only when
-      `TASK_COMPLETED_CONSUMER_MODE=kafka` (default `off`; also requires
-      `DATABASE_URL` and `KAFKA_BROKERS`), under the fixed group
-      `TASK_COMPLETED_CONSUMER_GROUP` (default `inventory-storage-confirm-pick`).
+      topic and are committed past untouched. The consumer always runs (ADR 0042), under the stable group
+      `TASK_COMPLETED_CONSUMER_GROUP` (mandatory, as are `DATABASE_URL` and
+      `KAFKA_BROKERS`; chart default `inventory-storage-confirm-pick`).
       Poison messages and messages whose handling kept failing are written to
       `warehouse.fulfillment.events.dlq`.
     publish:
@@ -372,10 +426,12 @@ channels:
       by this service (ADR 0037), not published: key = ASN number,
       `source=/warehouse/inbound-receiving`, `subject` = the receipt id. Only
       `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` is acted
-      on; `ASNRegistered`, `ASNCancelled`, `DockAppointment*`, `ReceiptOpened`
+      on, and `ReceiptCartonReceived` creates or links Containers (ADR 0045,
+      0046; it never books a quantity); `ASNRegistered`, `ASNCancelled`, `DockAppointment*`, `ReceiptOpened`
       and `ReceiptClosed` share the topic and are committed past untouched. The
-      consumer runs only when `INBOUND_RECEIPT_CONSUMER_GROUP` is set (stable
-      group id; also requires `DATABASE_URL` and `KAFKA_BROKERS`).
+      consumer always runs, under the stable group id
+      `INBOUND_RECEIPT_CONSUMER_GROUP` (mandatory, as are `DATABASE_URL` and
+      `KAFKA_BROKERS`).
     publish:
       operationId: bookInboundReceiptLine
       summary: Book a received Good line as a staged receipt.
@@ -386,7 +442,7 @@ channels:
         SAME transaction as the existing ReceiveStock use case, which raises
         `StockReceived` through the outbox (analytics topic): the units are
         staged and not yet usable, and stow stays the RF action (item scan plus
-        location scan). `POST /stock/receive` is unchanged and keeps working
+        location scan). `POST /stock-receipts` is unchanged and keeps working
         for ad-hoc receipts. `condition=Damaged` is NOT booked in v1
         (quarantine is a later ADR): it is claimed, logged at INFO and counted
         in `inventory.inbound_receipt_units{outcome=damaged_not_booked}`.
@@ -398,7 +454,50 @@ channels:
         - name: inbound-receiving
           description: Consumed from the inbound-receiving bounded context.
       message:
-        $ref: "#/components/messages/InboundReceivingReceiptLineReceived"
+        oneOf:
+          - $ref: "#/components/messages/InboundReceivingReceiptLineReceived"
+          - $ref: "#/components/messages/InboundReceivingReceiptCartonReceived"
+
+  warehouse.returns-processing.events:
+    description: >
+      returns-processing's integration topic, its Published Language for the
+      reverse flow of goods (returns-processing ADR 0001; the
+      `ReturnsProcessingTopic` constant in
+      `internal/adapters/inbound/kafka/return_line_consumer.go`). CONSUMED
+      by this service (ADR 0044), not published: key and `subject` = the
+      disposition id, `source=/warehouse/returns-processing`. Only
+      `com.warehouse.wms.returns-processing.disposition.ReturnLineStaged` is
+      acted on (the RESTOCK disposition's handover);
+      `ReturnAuthorized`, `ReturnAuthorizationRejected`, the `ReturnReceipt*`
+      types, `UnexpectedReturnReceived` and `DispositionDecided` share the
+      topic and are committed past untouched. The consumer always runs, under
+      the stable group id `RETURN_LINE_CONSUMER_GROUP` (mandatory, as are
+      `DATABASE_URL` and `KAFKA_BROKERS`).
+    publish:
+      operationId: bookReturnLine
+      summary: Book a staged return line as a staged receipt.
+      description: >
+        At-least-once, fixed group: FetchMessage, then CommitMessages only
+        after the handler settles. The CloudEvents `id` is claimed in
+        `processed_events` (consumer `return-line-staged`, the flow's
+        provenance record — the mirror of `inbound-receipt-line`) in the SAME
+        transaction as the existing ReceiveStock use case — the SAME
+        staged-receipt seam an inbound receipt line and
+        `POST /stock-receipts` drive — which raises `StockReceived` through
+        the outbox (analytics topic): the units are staged and not yet
+        usable, and stow stays the RF action (item scan plus location scan).
+        Return context (`receipt_id`, `rma_id`, `disposition_id`, `site_id`,
+        `received_at`) is logged, never stored on the stock event. A
+        redelivered `id` is a no-op. A transient failure retries the same
+        message with capped backoff; a message that is not a valid
+        CloudEvent, has an undecodable payload, an empty `sku`, a
+        non-positive `quantity`, an empty `disposition_id` or a `condition`
+        other than the constant `Good` is logged (WARN) and committed past.
+      tags:
+        - name: returns-processing
+          description: Consumed from the returns-processing bounded context.
+      message:
+        $ref: "#/components/messages/ReturnsProcessingReturnLineStaged"
 
   warehouse.network-inventory-planning.events:
     description: >
@@ -410,10 +509,10 @@ channels:
       Only
       `com.warehouse.wes.network-inventory-planning.transfer.TransferAllocationRequested`
       is acted on; every other CloudEvents `type` on the topic is ignored.
-      The consumer runs only when `TRANSFER_ALLOCATION_CONSUMER_MODE=kafka`
-      (default `off`; also requires `DATABASE_URL` and `KAFKA_BROKERS`),
-      under the fixed group `inventory-storage-transfer-allocation`
-      (override `TRANSFER_ALLOCATION_CONSUMER_GROUP`).
+      The consumer always runs (ADR 0042), under the stable group
+      `TRANSFER_ALLOCATION_CONSUMER_GROUP` (mandatory, as are `DATABASE_URL`
+      and `KAFKA_BROKERS`; chart default
+      `inventory-storage-transfer-allocation`).
     publish:
       operationId: allocateTransferStock
       summary: Apply the transfer-allocation command and reply through the outbox.
@@ -473,6 +572,7 @@ components:
               quantity: 50
 
     ItemStowed:
+      x-no-consumer-reason: "pending: promoted to the integration topic; network-fulfillment cache consumer in flight, no spec declares it yet"
       name: ItemStowed
       title: Item Stowed
       summary: A quantity of a SKU was placed into a bin.
@@ -484,7 +584,11 @@ components:
         exceeded. This is the point at which the quantity becomes usable.
 
 
-        Published to `warehouse.inventory.analytics` only (subject = SKU, Kafka key = SKU). Analytics `data`: `{sku, bin_id, quantity}`.
+        **Published to both topics** (promoted to the integration topic
+        2026-10-21, ADR 0043, so returns-processing can close its restock
+        loop on it). Subject = Kafka key = SKU on both topics; `data` is
+        byte-identical: `{sku, bin_id, quantity}`. Only the `dataschema`
+        stream differs (`...:events:` vs `...:analytics:`).
       contentType: application/cloudevents+json
       tags:
         - name: stock
@@ -542,70 +646,70 @@ components:
               stock_unit_id: su-7781
               bin_id: A-12-3
 
-    ProductClassified:
-      name: ProductClassified
-      title: Product Classified (legacy, backfill only)
-      summary: A SKU's handling classification, re-emitted by the one-shot backfill.
+    FacilityLayoutZoneRegistered:
+      name: FacilityLayoutZoneRegistered
+      title: ZoneRegistered (from facility-layout, consumed)
+      summary: A zone and its classification (temperature, hazmat) was registered.
       description: >
-        LEGACY (ADR 0034). product-master owns product classification; no
-        write path in this service raises this event any more. It is emitted
-        only by the one-shot `republish-product-classifications` command
-        (product-master ADR 0003 stage B): one message per
-        `product_classifications` row, enqueued through the transactional
-        outbox and published by the running pod's relay, on
-        `warehouse.inventory.events` only (dataschema
-        `urn:warehouse:inventory-storage:events:ProductClassified:v1`).
-        product-master's legacy importer turns it into product-master data.
-        The wire contract is unchanged from ADR 0031. Retired at
-        product-master ADR 0003 stage E.
-
-
-        CloudEvents `subject` and the Kafka key are the SKU. `data` is
-        `{sku, handling_tags, temperature_class?, dot_hazard_class?}`. It is
-        a **full-state replacement**: overwrite your local row; an absent
-        optional field means "none". `handling_tags` is in the stable enum
-        order. No PII. Re-running the backfill re-emits the same states,
-        which is harmless.
+        CONSUMED, not produced. Pinned by facility-layout's `apis/asyncapi.yaml`:
+        type `com.warehouse.wms.facility-layout.zone.ZoneRegistered`,
+        `source=/warehouse/facility-layout`, subject and Kafka key = the zoneId.
+        Only the fields the facility cache relies on are listed; the producer's
+        own AsyncAPI is authoritative and unknown fields are ignored.
       contentType: application/cloudevents+json
       tags:
-        - name: product
-          description: Legacy SKU master-data event (backfill only).
+        - name: facility-layout
+          description: Consumed from facility-layout.
       payload:
-        $ref: "#/components/schemas/ProductClassifiedEvent"
-      examples:
-        - name: hazmatFrozenSku
-          summary: SKU-9 classified as Hazmat + TemperatureSensitive (Frozen), DOT class 3.
-          payload:
-            specversion: "1.0"
-            id: 7e2f5d18-0a9c-4b34-9d61-4c8a3e7b1f05
-            source: /warehouse/inventory-storage
-            type: com.warehouse.wms.inventory-storage.product.ProductClassified
-            subject: SKU-9
-            time: "2026-10-06T12:00:00Z"
-            datacontenttype: application/json
-            dataschema: urn:warehouse:inventory-storage:events:ProductClassified:v1
-            data:
-              sku: SKU-9
-              handling_tags:
-                - Hazmat
-                - TemperatureSensitive
-              temperature_class: Frozen
-              dot_hazard_class: 3
-        - name: fragileSku
-          summary: SKU-1 classified as Fragile only (no optional fields).
-          payload:
-            specversion: "1.0"
-            id: 9a4c1e66-3d57-4f20-b8e9-2a6d0c5f7b13
-            source: /warehouse/inventory-storage
-            type: com.warehouse.wms.inventory-storage.product.ProductClassified
-            subject: SKU-1
-            time: "2026-10-06T12:01:00Z"
-            datacontenttype: application/json
-            dataschema: urn:warehouse:inventory-storage:events:ProductClassified:v1
-            data:
-              sku: SKU-1
-              handling_tags:
-                - Fragile
+        $ref: "#/components/schemas/FacilityLayoutZoneRegisteredEvent"
+    FacilityLayoutLocationSlotRegistered:
+      name: FacilityLayoutLocationSlotRegistered
+      title: LocationSlotRegistered (from facility-layout, consumed)
+      summary: A coded storage slot was registered, with its zone and optional handling unit.
+      description: >
+        CONSUMED, not produced. Pinned by facility-layout's `apis/asyncapi.yaml`:
+        type `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered`,
+        `source=/warehouse/facility-layout`, subject and Kafka key = the locationCode.
+        Only the fields the facility cache relies on are listed; the producer's
+        own AsyncAPI is authoritative and unknown fields are ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: facility-layout
+          description: Consumed from facility-layout.
+      payload:
+        $ref: "#/components/schemas/FacilityLayoutLocationSlotRegisteredEvent"
+    FacilityLayoutLocationSlotDecommissioned:
+      name: FacilityLayoutLocationSlotDecommissioned
+      title: LocationSlotDecommissioned (from facility-layout, consumed)
+      summary: A coded slot was permanently retired.
+      description: >
+        CONSUMED, not produced. Pinned by facility-layout's `apis/asyncapi.yaml`:
+        type `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned`,
+        `source=/warehouse/facility-layout`, subject and Kafka key = the locationCode.
+        Only the fields the facility cache relies on are listed; the producer's
+        own AsyncAPI is authoritative and unknown fields are ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: facility-layout
+          description: Consumed from facility-layout.
+      payload:
+        $ref: "#/components/schemas/FacilityLayoutLocationSlotDecommissionedEvent"
+    FacilityLayoutLocationSlotHandlingUnitDeclared:
+      name: FacilityLayoutLocationSlotHandlingUnitDeclared
+      title: LocationSlotHandlingUnitDeclared (from facility-layout, consumed)
+      summary: A slot's handling unit (EACH, CASE or PALLET) was set or changed (ADR 0040).
+      description: >
+        CONSUMED, not produced. Pinned by facility-layout's `apis/asyncapi.yaml`:
+        type `com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared`,
+        `source=/warehouse/facility-layout`, subject and Kafka key = the locationCode.
+        Only the fields the facility cache relies on are listed; the producer's
+        own AsyncAPI is authoritative and unknown fields are ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: facility-layout
+          description: Consumed from facility-layout.
+      payload:
+        $ref: "#/components/schemas/FacilityLayoutLocationSlotHandlingUnitDeclaredEvent"
 
     ProductMasterProductClassified:
       name: ProductMasterProductClassified
@@ -648,6 +752,304 @@ components:
               dot_hazard_class: 3
               classification_source: native
               version: 3
+
+    ContainerRegistered:
+      x-no-consumer-reason: "pending: container fact (ADR 0045); no consumer declared in any fleet spec yet"
+      name: ContainerRegistered
+      title: Container Registered
+      summary: A sealed carton became a Container (LPN), bounded by its receipt line's booking.
+      description: >-
+        Raised through the transactional outbox when the Container is created
+        (ADR 0045, 0046): a sealed, single-SKU, Good carton of
+        `ReceiptCartonReceived` whose receipt line is booked for at least the
+        container quantities so far AND whose GTIN is in the local
+        PackagingView. Either arrival order of the line and the carton gives
+        the same result, at most once per LPN. No quantity is booked by it
+        (`StockReceived` of `ReceiptLineReceived` already did, once). Kafka
+        key and `subject` are the LPN. Integration topic only.
+      contentType: application/cloudevents+json
+      tags:
+        - name: container
+          description: Raised by the Container aggregate (ADR 0045).
+      payload:
+        $ref: "#/components/schemas/ContainerRegisteredEvent"
+      examples:
+        - name: registered
+          summary: One sealed case of 12 eaches of SKU-1 for seller-a.
+          payload:
+            specversion: "1.0"
+            id: 0b7c4a1e-2f3d-4e5a-8b6c-7d8e9f0a1b2c
+            source: /warehouse/inventory-storage
+            type: com.warehouse.wms.inventory-storage.container.ContainerRegistered
+            subject: "003400000000000017"
+            time: "2026-10-24T12:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inventory-storage:events:ContainerRegistered:v1
+            data:
+              lpn: "003400000000000017"
+              sku: SKU-1
+              gtin: "24006381333935"
+              units_per_pack: 12
+              qty_eaches: 12
+              owner_ref: seller-a
+              lot: L1
+              expiry: "2027-03-01"
+              receipt_id: rcpt-1
+              line_no: 1
+              at: "2026-10-24T12:00:00Z"
+    ContainerStowed:
+      x-no-consumer-reason: "pending: container fact (ADR 0045); no consumer declared in any fleet spec yet"
+      name: ContainerStowed
+      title: Container Stowed
+      summary: A sealed case was stowed into a case bin; its site is the bin's site.
+      description: >-
+        Raised by StowContainer (ADR 0045) on the first stow and on every move
+        to another bin of the same site. `site_id` is derived from the bin
+        here (the carton event carries no site, contract R6). The SEALED_CASE
+        stock unit is created at the first stow and its eaches enter the bin
+        occupancy; `ItemStowed` and `BinStockLevelChanged` accompany it as for
+        any stow. Kafka key and `subject` are the LPN.
+      contentType: application/cloudevents+json
+      tags:
+        - name: container
+          description: Raised by the Container aggregate (ADR 0045).
+      payload:
+        $ref: "#/components/schemas/ContainerStowedEvent"
+      examples:
+        - name: stowed
+          summary: The case went to a case bin of WH1.
+          payload:
+            specversion: "1.0"
+            id: 0b7c4a1e-2f3d-4e5a-8b6c-7d8e9f0a1b2c
+            source: /warehouse/inventory-storage
+            type: com.warehouse.wms.inventory-storage.container.ContainerStowed
+            subject: "003400000000000017"
+            time: "2026-10-24T12:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inventory-storage:events:ContainerStowed:v1
+            data:
+              lpn: "003400000000000017"
+              sku: SKU-1
+              qty_eaches: 12
+              owner_ref: seller-a
+              site_id: WH1
+              bin: WH1-STOR-AMB-A01-01-01-A
+              at: "2026-10-24T12:05:00Z"
+    CaseBroken:
+      x-no-consumer-reason: "pending: container fact (ADR 0045/0046); no consumer declared in any fleet spec yet"
+      name: CaseBroken
+      title: Case Broken
+      summary: A sealed case was opened and its eaches moved to loose stock.
+      description: >-
+        Raised by BreakCase (ADR 0045) in the same transaction that moves
+        exactly `qty_eaches` (the case's units per pack) from the SEALED_CASE
+        unit to loose stock of the same owner in `loose_bin`; the ledger total
+        in eaches does not change (conservation). `ContainerEmptied` follows
+        in the same transaction. `owner_ref` is an additive field beyond the
+        contract's minimal payload. Kafka key and `subject` are the LPN.
+      contentType: application/cloudevents+json
+      tags:
+        - name: container
+          description: Raised by the Container aggregate (ADR 0045).
+      payload:
+        $ref: "#/components/schemas/CaseBrokenEvent"
+      examples:
+        - name: broken
+          summary: 12 eaches moved to a pick bin.
+          payload:
+            specversion: "1.0"
+            id: 0b7c4a1e-2f3d-4e5a-8b6c-7d8e9f0a1b2c
+            source: /warehouse/inventory-storage
+            type: com.warehouse.wms.inventory-storage.container.CaseBroken
+            subject: "003400000000000017"
+            time: "2026-10-24T12:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inventory-storage:events:CaseBroken:v1
+            data:
+              lpn: "003400000000000017"
+              sku: SKU-1
+              qty_eaches: 12
+              owner_ref: seller-a
+              from_bin: WH1-STOR-AMB-A01-01-01-A
+              loose_bin: WH1-PICK-AMB-B01-01-01-A
+              at: "2026-10-24T12:10:00Z"
+    ContainerEmptied:
+      x-no-consumer-reason: "pending: container fact (ADR 0045/0046); no consumer declared in any fleet spec yet"
+      name: ContainerEmptied
+      title: Container Emptied
+      summary: A container has no contents left; it leaves its bin.
+      description: >-
+        Raised when a Container reaches EMPTY (ADR 0045): `reason` is
+        `BROKEN` (BreakCase) or `PICKED` (a whole-case reservation was
+        confirmed as picked). Kafka key and `subject` are the LPN.
+      contentType: application/cloudevents+json
+      tags:
+        - name: container
+          description: Raised by the Container aggregate (ADR 0045).
+      payload:
+        $ref: "#/components/schemas/ContainerEmptiedEvent"
+      examples:
+        - name: emptied
+          summary: The case was broken.
+          payload:
+            specversion: "1.0"
+            id: 0b7c4a1e-2f3d-4e5a-8b6c-7d8e9f0a1b2c
+            source: /warehouse/inventory-storage
+            type: com.warehouse.wms.inventory-storage.container.ContainerEmptied
+            subject: "003400000000000017"
+            time: "2026-10-24T12:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inventory-storage:events:ContainerEmptied:v1
+            data:
+              lpn: "003400000000000017"
+              sku: SKU-1
+              owner_ref: seller-a
+              site_id: WH1
+              reason: BROKEN
+              at: "2026-10-24T12:10:00Z"
+    InboundReceivingReceiptCartonReceived:
+      name: InboundReceivingReceiptCartonReceived
+      title: Receipt Carton Received (from inbound-receiving, consumed)
+      summary: A sealed carton was received on a receipt line; it becomes a Container once the line is booked.
+      description: >-
+        CONSUMED, not produced (ADR 0045, 0046; contract section 2 with R6/R7
+        applied): type
+        `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived`,
+        `source=/warehouse/inbound-receiving`. `data` is snake_case:
+        `{receipt_id, asn_number, sscc, parent_sscc, sealed, lpn, owner_ref,
+        contents[{line_no, sku, gtin, qty, lot, expiry, condition}],
+        received_at}`. It carries NO site (R6): the container's site is
+        derived at StowContainer from the bin. Unknown fields are ignored.
+
+
+        Only a sealed, single-content, `Good` carton whose `qty` equals the
+        case's units per pack in the PackagingView gets a Container (mixed,
+        unsealed and damaged cartons keep their eaches as ordinary staged
+        stock and get none). The carton is recorded keyed by
+        (`receipt_id`, `line_no`, `lpn`) and settles idempotently in either
+        arrival order relative to `ReceiptLineReceived`: the container exists
+        only when the sum of container quantities of the line stays within
+        the eaches `ReceiptLineReceived` booked, and when `gtin` is known to
+        the PackagingView (otherwise it waits in the pending table). This
+        message books NO quantity. The CloudEvents `id` is claimed in
+        `processed_events` (consumer `inbound-carton`) in the same
+        transaction.
+      contentType: application/cloudevents+json
+      tags:
+        - name: inbound-receiving
+          description: Consumed from inbound-receiving.
+      payload:
+        $ref: "#/components/schemas/InboundReceivingReceiptCartonReceivedEvent"
+      examples:
+        - name: sealedCase
+          summary: One sealed case of 12 eaches of SKU-1.
+          payload:
+            specversion: "1.0"
+            id: 8e2f4a6b-1c3d-4e5f-9a7b-0c1d2e3f4a5b
+            source: /warehouse/inbound-receiving
+            type: com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived
+            subject: rcpt-223e4567-e89b-12d3-a456-426614174000
+            time: "2026-10-24T11:50:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:inbound-receiving:events:ReceiptCartonReceived:v1
+            data:
+              receipt_id: rcpt-223e4567-e89b-12d3-a456-426614174000
+              asn_number: ASN-1001
+              sscc: "003400000000000017"
+              parent_sscc: "003400000000000999"
+              sealed: true
+              lpn: "003400000000000017"
+              owner_ref: seller-a
+              contents:
+                - line_no: 1
+                  sku: SKU-1
+                  gtin: "24006381333935"
+                  qty: 12
+                  lot: L1
+                  expiry: "2027-03-01"
+                  condition: Good
+              received_at: "2026-10-24T11:50:00Z"
+
+    ProductMasterProductPackLevelDeclared:
+      name: ProductMasterProductPackLevelDeclared
+      title: Product Pack Level Declared (from product-master, consumed)
+      summary: A pack level (EACH, INNER, CASE, PALLET) of a SKU with its GTIN and units per pack.
+      description: >-
+        CONSUMED, not produced (ADR 0046, contract R8): type
+        `com.warehouse.wms.product-master.product.ProductPackLevelDeclared`,
+        `source=/warehouse/product-master`, subject and Kafka key = SKU.
+        Projected into the local PackagingView, keyed by GTIN and by
+        (sku, level); an event applies only when its product `version` is
+        not older than the stored one, and the CloudEvents `id` is claimed
+        in `processed_events` (consumer `product-master-pack-level`). A newly known GTIN
+        settles the cartons that were waiting for it. Unknown fields are
+        ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product-master
+          description: Consumed from product-master.
+      payload:
+        $ref: "#/components/schemas/ProductMasterProductPackLevelDeclaredEvent"
+      examples:
+        - name: caseOf12
+          summary: SKU-1 is packed in cases of 12.
+          payload:
+            specversion: "1.0"
+            id: 4a6c8e0f-2b4d-4f6a-8c0e-1d3f5a7b9c2e
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductPackLevelDeclared
+            subject: SKU-1
+            time: "2026-10-06T20:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductPackLevelDeclared:v1
+            data:
+              sku: SKU-1
+              level: CASE
+              gtin: "24006381333935"
+              child_gtin: "04006381333931"
+              qty_of_child: 12
+              units_per_pack: 12
+              is_orderable: true
+              is_despatch_unit: true
+              effective_from: "2026-10-06T20:00:00Z"
+              version: 3
+
+    ProductMasterProductPackLevelRetired:
+      name: ProductMasterProductPackLevelRetired
+      title: Product Pack Level Retired (from product-master, consumed)
+      summary: A pack level stops being in force from a date; its GTIN stays resolvable.
+      description: >-
+        CONSUMED, not produced (ADR 0046, contract R8): type
+        `com.warehouse.wms.product-master.product.ProductPackLevelRetired`.
+        End-dates the level of `gtin` in the PackagingView (`effective_to`);
+        the GTIN remains resolvable so cartons labelled with it still link.
+        Applied when `version` is not older than the stored one; an unknown
+        GTIN is a no-op.
+      contentType: application/cloudevents+json
+      tags:
+        - name: product-master
+          description: Consumed from product-master.
+      payload:
+        $ref: "#/components/schemas/ProductMasterProductPackLevelRetiredEvent"
+      examples:
+        - name: superseded
+          summary: The old case GTIN is retired.
+          payload:
+            specversion: "1.0"
+            id: 5b7d9f1a-3c5e-4a7b-9d1f-2e4a6b8c0d3f
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductPackLevelRetired
+            subject: SKU-1
+            time: "2026-10-06T21:01:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductPackLevelRetired:v1
+            data:
+              sku: SKU-1
+              level: CASE
+              gtin: "24006381333935"
+              effective_to: "2026-10-06T21:01:00Z"
+              reason: superseded
+              version: 4
 
     FulfillmentTaskCompleted:
       name: FulfillmentTaskCompleted
@@ -829,6 +1231,53 @@ components:
               quantity: 4
               condition: Damaged
               received_at: "2026-10-09T08:12:00Z"
+
+    ReturnsProcessingReturnLineStaged:
+      name: ReturnsProcessingReturnLineStaged
+      title: Return Line Staged (from returns-processing, consumed)
+      summary: A RESTOCK disposition hands restockable units back as a staged receipt line.
+      description: >
+        CONSUMED, not produced (ADR 0044). Pinned by returns-processing's
+        `apis/asyncapi.yaml`: type
+        `com.warehouse.wms.returns-processing.disposition.ReturnLineStaged`,
+        `source=/warehouse/returns-processing`, subject and Kafka key = the
+        disposition id. `data` is inbound-receiving's ReceiptLineReceived
+        fields plus `rma_id`, `disposition_id` and `site_id`:
+        `{receipt_id, line_no, sku, quantity, condition, received_at,
+        rma_id, disposition_id, site_id}` with `condition` the constant
+        `Good` (only a RESTOCK disposition stages a line). This service books
+        `sku` and `quantity` through the SAME ReceiveStock use case as a
+        receipt line (its own clock stamps the resulting `StockReceived`;
+        the return context is logged, not stored), so the units are staged
+        and not yet usable until stow.
+      contentType: application/cloudevents+json
+      tags:
+        - name: returns-processing
+          description: Consumed from returns-processing.
+      payload:
+        $ref: "#/components/schemas/ReturnsProcessingReturnLineStagedEvent"
+      examples:
+        - name: staged
+          summary: The 2 restockable units of SKU-1 are staged at WH1.
+          payload:
+            specversion: "1.0"
+            id: 6d8e0f1a-4b5c-4e6f-9a7b-8c9d0e1f2a3c
+            source: /warehouse/returns-processing
+            type: com.warehouse.wms.returns-processing.disposition.ReturnLineStaged
+            subject: disp-0c1d2e3f-4a5b-4e6f-9a7b-8c9d0e1f2a3b
+            time: "2026-10-22T15:10:02Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:returns-processing:events:ReturnLineStaged:v1
+            data:
+              receipt_id: rcpt-8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d
+              line_no: 1
+              sku: SKU-1
+              quantity: 2
+              condition: Good
+              received_at: "2026-10-22T14:05:00Z"
+              rma_id: rma-4d5e6f7a-8b9c-4d0e-a1f2-3b4c5d6e7f80
+              disposition_id: disp-0c1d2e3f-4a5b-4e6f-9a7b-8c9d0e1f2a3b
+              site_id: WH1
 
     NetworkInventoryPlanningTransferAllocationRequested:
       name: NetworkInventoryPlanningTransferAllocationRequested
@@ -1069,7 +1518,7 @@ components:
       summary: A staged transfer receipt was placed into destination bins — destination usable rose, exactly once.
       description: >-
         Raised by the StowTransferStock use case (ADR 0033 — POST
-        /transfers/{transferLineId}/stow): the ONLY path that raises the
+        /transfers/{transferLineId}/stowages): the ONLY path that raises the
         destination site's usable stock for a transfer. One StockUnit per
         bin leg was created AT the destination site
         (NewStockUnitAtSite), every bin verified to belong to that
@@ -1238,7 +1687,10 @@ components:
         no bin).
         A bin whose site cannot be determined (not registered, or neither a
         recorded site custody nor a facility-layout location code) raises no
-        event.
+        event. Stock owned by a seller (ADR 0045) has its own level per
+        owner: the optional `owner_ref` names it and the `version` counter is
+        per (bin, sku, owner); a consumer that ignores `owner_ref` sees
+        interleaved levels, so it should key on (bin, sku, owner_ref).
 
 
         **Integration topic only** (no analytics variant). Kafka key and
@@ -1404,7 +1856,13 @@ components:
         exactly one known bin" rule.
 
 
-        Published to `warehouse.inventory.analytics` only (subject = stock unit id, Kafka key = SKU). Analytics `data`: `{sku, bin_id, stock_unit_id, quantity}`.
+        **Published to both topics** (promoted to the integration topic
+        2026-10-21, ADR 0043, for exception-management). Subject = stock
+        unit id, Kafka key = SKU on both topics (the split the analytics
+        publisher always used: every fact about one SKU's units stays on
+        one partition while the subject names the lost unit); `data` is
+        byte-identical: `{sku, bin_id, stock_unit_id, quantity}`. Only the
+        `dataschema` stream differs.
       contentType: application/cloudevents+json
       tags:
         - name: stock
@@ -1477,7 +1935,10 @@ components:
         quantity that could not be found.
 
 
-        Published to `warehouse.inventory.analytics` only (subject = bin id, Kafka key = bin id). Analytics `data`: `{bin_id, counted, system}`.
+        **Published to both topics** (promoted to the integration topic
+        2026-10-21, ADR 0043, for exception-management). Subject = Kafka
+        key = bin id on both topics; `data` is byte-identical:
+        `{bin_id, counted, system}`. Only the `dataschema` stream differs.
       contentType: application/cloudevents+json
       tags:
         - name: bin
@@ -1623,8 +2084,8 @@ components:
               const: "com.warehouse.wms.inventory-storage.stock.ItemStowed"
             dataschema:
               type: string
-              description: urn:warehouse:inventory-storage:analytics:ItemStowed:v1
-              pattern: "^urn:warehouse:inventory-storage:analytics:ItemStowed:v1$"
+              description: urn:warehouse:inventory-storage:events:ItemStowed:v1 on the integration topic, ...:analytics:ItemStowed:v1 on the analytics topic (ADR 0043).
+              pattern: "^urn:warehouse:inventory-storage:(events|analytics):ItemStowed:v1$"
             data:
               type: object
               description: Business payload for ItemStowed.
@@ -1677,55 +2138,192 @@ components:
                   type: string
                   description: The bin that authoritatively holds that StockUnit.
 
-    ProductClassifiedEvent:
+    FacilityLayoutZoneRegisteredEvent:
+      type: object
       description: >
-        CloudEvents envelope for the legacy ProductClassified event. Since
-        ADR 0034 only the integration-topic (`events`) variant is emitted, by
-        the backfill command; the `analytics` dataschema is still accepted by
-        the encoder's frozen contract but no longer produced.
-      allOf:
-        - $ref: "#/components/schemas/CloudEventBase"
-        - type: object
-          required:
-            - type
-            - data
+        CloudEvents 1.0 envelope of facility-layout's ZoneRegistered as consumed here
+        (not composed from CloudEventBase, whose `source` is this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+        source:
+          type: string
+          enum: ["/warehouse/facility-layout"]
+        type:
+          type: string
+          const: "com.warehouse.wms.facility-layout.zone.ZoneRegistered"
+        subject:
+          type: string
+          description: The zoneId (also the Kafka key).
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          description: urn:warehouse:facility-layout:events:ZoneRegistered:v1
+        data:
+          type: object
+          required: [zoneId, temperatureClass, hazmat]
           properties:
-            type:
+            zoneId: { type: string }
+            temperatureClass: { type: string }
+            hazmat: { type: boolean }
+    FacilityLayoutLocationSlotRegisteredEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of facility-layout's LocationSlotRegistered as consumed here
+        (not composed from CloudEventBase, whose `source` is this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+        source:
+          type: string
+          enum: ["/warehouse/facility-layout"]
+        type:
+          type: string
+          const: "com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered"
+        subject:
+          type: string
+          description: The locationCode (also the Kafka key).
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          description: urn:warehouse:facility-layout:events:LocationSlotRegistered:v1
+        data:
+          type: object
+          required: [locationCode, zoneId]
+          properties:
+            locationCode: { type: string }
+            zoneId: { type: string }
+            handlingUnit:
               type: string
-              description: Fixed event type for ProductClassified.
-              const: "com.warehouse.wms.inventory-storage.product.ProductClassified"
-            dataschema:
+              enum: [EACH, CASE, PALLET]
+              description: Optional handling unit recorded at registration; omitted when none was.
+    FacilityLayoutLocationSlotDecommissionedEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of facility-layout's LocationSlotDecommissioned as consumed here
+        (not composed from CloudEventBase, whose `source` is this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+        source:
+          type: string
+          enum: ["/warehouse/facility-layout"]
+        type:
+          type: string
+          const: "com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned"
+        subject:
+          type: string
+          description: The locationCode (also the Kafka key).
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          description: urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1
+        data:
+          type: object
+          required: [locationCode]
+          properties:
+            locationCode: { type: string }
+    FacilityLayoutLocationSlotHandlingUnitDeclaredEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of facility-layout's LocationSlotHandlingUnitDeclared as consumed here
+        (not composed from CloudEventBase, whose `source` is this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+        source:
+          type: string
+          enum: ["/warehouse/facility-layout"]
+        type:
+          type: string
+          const: "com.warehouse.wms.facility-layout.locationslot.LocationSlotHandlingUnitDeclared"
+        subject:
+          type: string
+          description: The locationCode (also the Kafka key).
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          description: urn:warehouse:facility-layout:events:LocationSlotHandlingUnitDeclared:v1
+        data:
+          type: object
+          required: [locationCode, handlingUnit]
+          properties:
+            locationCode: { type: string }
+            handlingUnit:
               type: string
-              description: urn:warehouse:inventory-storage:events:ProductClassified:v1 on the integration topic, ...:analytics:ProductClassified:v1 on the analytics topic.
-              pattern: "^urn:warehouse:inventory-storage:(events|analytics):ProductClassified:v1$"
-            data:
-              type: object
-              description: >
-                Full-state replacement of the SKU's classification. Optional
-                fields are omitted when unset.
-              required:
-                - sku
-                - handling_tags
-              properties:
-                sku:
-                  type: string
-                  description: The classified SKU (also the CloudEvents subject and Kafka key).
-                handling_tags:
-                  type: array
-                  minItems: 1
-                  description: Non-empty, duplicate-free set of handling tags, in the aggregate's stable enum order.
-                  items:
-                    type: string
-                    enum: [Hazmat, Fragile, TemperatureSensitive, Oversized, HighValue]
-                temperature_class:
-                  type: string
-                  enum: [Ambient, Chilled, Frozen]
-                  description: Present if and only if handling_tags includes TemperatureSensitive.
-                dot_hazard_class:
-                  type: integer
-                  minimum: 1
-                  maximum: 9
-                  description: Top-level US DOT hazard class; present only for a Hazmat classification with one recorded (ADR 0010).
+              enum: [EACH, CASE, PALLET]
 
     ProductMasterProductClassifiedEvent:
       type: object
@@ -1985,6 +2583,543 @@ components:
             received_at:
               type: string
               format: date-time
+            owner_ref:
+              type: string
+              maxLength: 64
+              description: Optional (ADR 0046). The owner of the received stock; absent means fleet-owned. A malformed value is logged and committed past.
+            pack_gtin:
+              type: string
+              description: Optional. GTIN-14 of the case pack level when the line was received in sealed cases.
+            cases:
+              type: integer
+              minimum: 1
+              description: Optional. Number of sealed cases in the line.
+            sscc:
+              type: string
+              description: Optional. SSCC of the pallet or carton the line was received on.
+
+    ContainerRegisteredEvent:
+      description: CloudEvents envelope for a ContainerRegistered domain event (ADR 0045).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for ContainerRegistered.
+              const: "com.warehouse.wms.inventory-storage.container.ContainerRegistered"
+            subject:
+              type: string
+              description: The LPN (also the Kafka key).
+            dataschema:
+              type: string
+              description: urn:warehouse:inventory-storage:events:ContainerRegistered:v1
+              pattern: "^urn:warehouse:inventory-storage:events:ContainerRegistered:v1$"
+            data:
+              type: object
+              required: [lpn, sku, gtin, units_per_pack, qty_eaches, receipt_id, line_no, at]
+              properties:
+                lpn:
+                  type: string
+                  description: The container's license plate.
+                sku:
+                  type: string
+                  description: The SKU in the container.
+                gtin:
+                  type: string
+                  description: GTIN-14 of the case pack level.
+                units_per_pack:
+                  type: integer
+                  description: Eaches per case at registration.
+                  minimum: 1
+                qty_eaches:
+                  type: integer
+                  description: Eaches in the container.
+                  minimum: 1
+                owner_ref:
+                  type: string
+                  description: Owner of the stock. Omitted for fleet-owned stock.
+                  maxLength: 64
+                lot:
+                  type: string
+                  description: Lot of the carton, when declared.
+                expiry:
+                  type: string
+                  description: Expiry date (YYYY-MM-DD), when declared.
+                receipt_id:
+                  type: string
+                  description: The receipt the carton arrived on.
+                line_no:
+                  type: integer
+                  description: The receipt line whose booking bounds the container.
+                  minimum: 1
+                at:
+                  type: string
+                  description: When the fact happened (the service clock).
+                  format: date-time
+
+    ContainerStowedEvent:
+      description: CloudEvents envelope for a ContainerStowed domain event (ADR 0045).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for ContainerStowed.
+              const: "com.warehouse.wms.inventory-storage.container.ContainerStowed"
+            subject:
+              type: string
+              description: The LPN (also the Kafka key).
+            dataschema:
+              type: string
+              description: urn:warehouse:inventory-storage:events:ContainerStowed:v1
+              pattern: "^urn:warehouse:inventory-storage:events:ContainerStowed:v1$"
+            data:
+              type: object
+              required: [lpn, sku, qty_eaches, site_id, bin, at]
+              properties:
+                lpn:
+                  type: string
+                  description: The container's license plate.
+                sku:
+                  type: string
+                  description: The SKU in the container.
+                qty_eaches:
+                  type: integer
+                  description: Eaches in the container.
+                  minimum: 1
+                owner_ref:
+                  type: string
+                  description: Owner of the stock. Omitted for fleet-owned stock.
+                  maxLength: 64
+                site_id:
+                  type: string
+                  description: The site, derived from the bin.
+                bin:
+                  type: string
+                  description: The bin the container is now in.
+                at:
+                  type: string
+                  description: When the fact happened (the service clock).
+                  format: date-time
+
+    CaseBrokenEvent:
+      description: CloudEvents envelope for a CaseBroken domain event (ADR 0045).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for CaseBroken.
+              const: "com.warehouse.wms.inventory-storage.container.CaseBroken"
+            subject:
+              type: string
+              description: The LPN (also the Kafka key).
+            dataschema:
+              type: string
+              description: urn:warehouse:inventory-storage:events:CaseBroken:v1
+              pattern: "^urn:warehouse:inventory-storage:events:CaseBroken:v1$"
+            data:
+              type: object
+              required: [lpn, sku, qty_eaches, from_bin, loose_bin, at]
+              properties:
+                lpn:
+                  type: string
+                  description: The container's license plate.
+                sku:
+                  type: string
+                  description: The SKU in the container.
+                qty_eaches:
+                  type: integer
+                  description: Eaches in the container.
+                  minimum: 1
+                owner_ref:
+                  type: string
+                  description: Owner of the stock. Omitted for fleet-owned stock.
+                  maxLength: 64
+                from_bin:
+                  type: string
+                  description: The case bin the container was in.
+                loose_bin:
+                  type: string
+                  description: The bin that received the loose eaches.
+                at:
+                  type: string
+                  description: When the fact happened (the service clock).
+                  format: date-time
+
+    ContainerEmptiedEvent:
+      description: CloudEvents envelope for a ContainerEmptied domain event (ADR 0045).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type for ContainerEmptied.
+              const: "com.warehouse.wms.inventory-storage.container.ContainerEmptied"
+            subject:
+              type: string
+              description: The LPN (also the Kafka key).
+            dataschema:
+              type: string
+              description: urn:warehouse:inventory-storage:events:ContainerEmptied:v1
+              pattern: "^urn:warehouse:inventory-storage:events:ContainerEmptied:v1$"
+            data:
+              type: object
+              required: [lpn, sku, site_id, reason, at]
+              properties:
+                lpn:
+                  type: string
+                  description: The container's license plate.
+                sku:
+                  type: string
+                  description: The SKU in the container.
+                owner_ref:
+                  type: string
+                  description: Owner of the stock. Omitted for fleet-owned stock.
+                  maxLength: 64
+                site_id:
+                  type: string
+                  description: The container's site.
+                reason:
+                  type: string
+                  description: Why it became EMPTY.
+                  enum: [BROKEN, PICKED]
+                at:
+                  type: string
+                  description: When the fact happened (the service clock).
+                  format: date-time
+
+    InboundReceivingReceiptCartonReceivedEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of ReceiptCartonReceived as consumed here (not
+        composed from CloudEventBase, whose `source` is this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+        source:
+          type: string
+          enum: ["/warehouse/inbound-receiving"]
+        type:
+          type: string
+          const: "com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived"
+        subject:
+          type: string
+          description: The receipt id.
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          description: urn:warehouse:inbound-receiving:events:ReceiptCartonReceived:v1
+        data:
+          type: object
+          description: Unknown fields are ignored (forward compatible). NO site (contract R6).
+          required: [receipt_id, sscc, sealed, contents]
+          properties:
+            receipt_id:
+              type: string
+            asn_number:
+              type: string
+            sscc:
+              type: string
+              description: SSCC-18 of the carton.
+            parent_sscc:
+              type: string
+              description: SSCC of the pallet it arrived on, when palletised.
+            sealed:
+              type: boolean
+              description: Only a sealed carton gets a Container.
+            lpn:
+              type: string
+              description: The license plate - the SSCC, or an internal `LPN-<site>-<id>` for an unlabelled carton. Absent falls back to `sscc`.
+            owner_ref:
+              type: string
+              maxLength: 64
+              description: Owner of the stock; absent means fleet-owned.
+            contents:
+              type: array
+              minItems: 1
+              description: More than one content line is a mixed carton and gets no Container.
+              items:
+                type: object
+                required: [line_no, sku, gtin, qty]
+                properties:
+                  line_no:
+                    type: integer
+                    minimum: 1
+                  sku:
+                    type: string
+                  gtin:
+                    type: string
+                    description: GTIN-14 of the case; must be known to the PackagingView and belong to `sku`.
+                  qty:
+                    type: integer
+                    minimum: 1
+                    description: Eaches in the carton; must equal the case's units per pack.
+                  lot:
+                    type: string
+                  expiry:
+                    type: string
+                    description: YYYY-MM-DD.
+                  condition:
+                    type: string
+                    enum: [Good, Damaged]
+                    description: Only Good gets a Container.
+            received_at:
+              type: string
+              format: date-time
+    ProductMasterProductPackLevelDeclaredEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of ProductPackLevelDeclared as consumed here (not
+        composed from CloudEventBase, whose `source` is this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+        source:
+          type: string
+          enum: ["/warehouse/product-master"]
+        type:
+          type: string
+          const: "com.warehouse.wms.product-master.product.ProductPackLevelDeclared"
+        subject:
+          type: string
+          description: The SKU (also the Kafka key).
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          description: urn:warehouse:product-master:events:ProductPackLevelDeclared:v1
+        data:
+          type: object
+          description: Unknown fields (dims, flags, ...) are ignored.
+          required: [sku, level, gtin, units_per_pack, effective_from, version]
+          properties:
+            sku:
+              type: string
+            level:
+              type: string
+              enum: [EACH, INNER, CASE, PALLET]
+            gtin:
+              type: string
+              description: GTIN-14 of this level; the PackagingView's primary key.
+            child_gtin:
+              type: string
+              description: GTIN of the level below.
+            qty_of_child:
+              type: integer
+              minimum: 1
+            units_per_pack:
+              type: integer
+              minimum: 1
+              description: Eaches in one unit of this level.
+            effective_from:
+              type: string
+              format: date-time
+            version:
+              type: integer
+              format: int64
+              minimum: 1
+              description: The product version; an older one never overwrites a newer.
+    ProductMasterProductPackLevelRetiredEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of ProductPackLevelRetired as consumed here (not
+        composed from CloudEventBase, whose `source` is this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events).
+        source:
+          type: string
+          enum: ["/warehouse/product-master"]
+        type:
+          type: string
+          const: "com.warehouse.wms.product-master.product.ProductPackLevelRetired"
+        subject:
+          type: string
+          description: The SKU (also the Kafka key).
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          description: urn:warehouse:product-master:events:ProductPackLevelRetired:v1
+        data:
+          type: object
+          required: [sku, level, gtin, effective_to, version]
+          properties:
+            sku:
+              type: string
+            level:
+              type: string
+              enum: [EACH, INNER, CASE, PALLET]
+            gtin:
+              type: string
+            effective_to:
+              type: string
+              format: date-time
+            reason:
+              type: string
+            version:
+              type: integer
+              format: int64
+              minimum: 1
+    ReturnsProcessingReturnLineStagedEvent:
+      type: object
+      description: >
+        CloudEvents 1.0 envelope of returns-processing's ReturnLineStaged v1
+        as consumed here (not composed from CloudEventBase, whose `source` is
+        this service's own).
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: CloudEvents id; the dedupe key (claimed in processed_events under consumer `return-line-staged`).
+        source:
+          type: string
+          enum: ["/warehouse/returns-processing"]
+        type:
+          type: string
+          const: "com.warehouse.wms.returns-processing.disposition.ReturnLineStaged"
+        subject:
+          type: string
+          description: The disposition id (also the Kafka key).
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          description: urn:warehouse:returns-processing:events:ReturnLineStaged:v1
+        data:
+          type: object
+          description: >
+            inbound-receiving's ReceiptLineReceived fields plus rma_id,
+            disposition_id and site_id — the whole consumed contract.
+          required:
+            - receipt_id
+            - line_no
+            - sku
+            - quantity
+            - condition
+            - received_at
+            - rma_id
+            - disposition_id
+            - site_id
+          properties:
+            receipt_id:
+              type: string
+            line_no:
+              type: integer
+              minimum: 1
+            sku:
+              type: string
+              description: Must be non-empty; an empty SKU is logged and committed past.
+            quantity:
+              type: integer
+              minimum: 1
+              description: Restockable units handed over. A value <= 0 is logged and committed past.
+            condition:
+              type: string
+              const: Good
+              description: >
+                A staged return line is always Good (only a RESTOCK disposition
+                stages one); any other value is logged and committed past.
+            received_at:
+              type: string
+              format: date-time
+              description: When the line arrived on the return receipt; logged, not stored.
+            rma_id:
+              type: string
+              description: The RMA the line was authorized against; logged, not stored.
+            disposition_id:
+              type: string
+              description: >
+                The RESTOCK disposition this staging belongs to (the producer's
+                idempotency key). Must be non-empty; an empty value is logged
+                and committed past. Logged, not stored.
+            site_id:
+              type: string
+              description: The site the goods were received back at; logged, not stored.
 
     NetworkInventoryPlanningTransferAllocationRequestedEvent:
       type: object
@@ -2266,8 +3401,8 @@ components:
               const: "com.warehouse.wms.inventory-storage.stock.ItemUnlocated"
             dataschema:
               type: string
-              description: urn:warehouse:inventory-storage:analytics:ItemUnlocated:v1
-              pattern: "^urn:warehouse:inventory-storage:analytics:ItemUnlocated:v1$"
+              description: urn:warehouse:inventory-storage:events:ItemUnlocated:v1 on the integration topic, ...:analytics:ItemUnlocated:v1 on the analytics topic (ADR 0043).
+              pattern: "^urn:warehouse:inventory-storage:(events|analytics):ItemUnlocated:v1$"
             data:
               type: object
               description: Business payload for ItemUnlocated.
@@ -2351,8 +3486,8 @@ components:
               const: "com.warehouse.wms.inventory-storage.bin.DiscrepancyDetected"
             dataschema:
               type: string
-              description: urn:warehouse:inventory-storage:analytics:DiscrepancyDetected:v1
-              pattern: "^urn:warehouse:inventory-storage:analytics:DiscrepancyDetected:v1$"
+              description: urn:warehouse:inventory-storage:events:DiscrepancyDetected:v1 on the integration topic, ...:analytics:DiscrepancyDetected:v1 on the analytics topic (ADR 0043).
+              pattern: "^urn:warehouse:inventory-storage:(events|analytics):DiscrepancyDetected:v1$"
             data:
               type: object
               description: Business payload for DiscrepancyDetected.
@@ -2754,6 +3889,14 @@ components:
                   format: int64
                   minimum: 1
                   description: Per-(bin, sku) strictly increasing counter; keep the highest, ignore lower.
+                owner_ref:
+                  type: string
+                  maxLength: 64
+                  description: >-
+                    Optional (ADR 0045, additive within v1). The owner whose
+                    share of the bin this level is; the version counter is per
+                    (bin, sku, owner). Omitted for fleet-owned stock, so every
+                    event of fleet stock is byte-identical to before.
                 reason:
                   type: string
                   enum: [STOW, PICK, RELOCATE, REPLENISHMENT, COUNT, RESERVE, REVOKE, UNLOCATED]

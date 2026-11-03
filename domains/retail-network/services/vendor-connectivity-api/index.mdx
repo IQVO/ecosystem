@@ -1,0 +1,143 @@
+---
+id: vendor-connectivity-api
+version: 1.0.0
+name: Vendor Connectivity API
+summary: >-
+  REST API of vendor-connectivity. The network's Open Host Service for vendors
+  that operate fulfillment nodes.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Vendor Connectivity API
+badges:
+  - content: Purchase Orders
+    textColor: blue
+    backgroundColor: blue
+  - content: Acknowledgements
+    textColor: blue
+    backgroundColor: blue
+  - content: Inventory
+    textColor: blue
+    backgroundColor: blue
+  - content: Nodes
+    textColor: blue
+    backgroundColor: blue
+  - content: Shipping Labels
+    textColor: blue
+    backgroundColor: blue
+  - content: Shipment Confirmations
+    textColor: blue
+    backgroundColor: blue
+  - content: Inbound Shipments
+    textColor: blue
+    backgroundColor: blue
+  - content: Inbound Receipts
+    textColor: blue
+    backgroundColor: blue
+  - content: Transactions
+    textColor: blue
+    backgroundColor: blue
+  - content: Vendors
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: vendor-connectivity-api-pollPurchaseOrders
+    version: 1.0.0
+  - id: vendor-connectivity-api-getPurchaseOrder
+    version: 1.0.0
+  - id: vendor-connectivity-api-submitAcknowledgement
+    version: 1.0.0
+  - id: vendor-connectivity-api-submitInventory
+    version: 1.0.0
+  - id: vendor-connectivity-api-listVendorNodes
+    version: 1.0.0
+  - id: vendor-connectivity-api-registerVendorNode
+    version: 1.0.0
+  - id: vendor-connectivity-api-getNode
+    version: 1.0.0
+  - id: vendor-connectivity-api-declareNodeProfile
+    version: 1.0.0
+  - id: vendor-connectivity-api-getScorecard
+    version: 1.0.0
+  - id: vendor-connectivity-api-requestLabel
+    version: 1.0.0
+  - id: vendor-connectivity-api-submitShipmentConfirmation
+    version: 1.0.0
+  - id: vendor-connectivity-api-pollInboundShipments
+    version: 1.0.0
+  - id: vendor-connectivity-api-getInboundShipment
+    version: 1.0.0
+  - id: vendor-connectivity-api-submitInboundReceipt
+    version: 1.0.0
+  - id: vendor-connectivity-api-getTransaction
+    version: 1.0.0
+  - id: vendor-connectivity-api-onboardVendor
+    version: 1.0.0
+  - id: vendor-connectivity-api-getVendor
+    version: 1.0.0
+  - id: vendor-connectivity-api-suspendVendor
+    version: 1.0.0
+  - id: vendor-connectivity-api-reinstateVendor
+    version: 1.0.0
+---
+## Purpose
+The network's Open Host Service for vendors that operate fulfillment nodes. Publishes the Vendor API and its Published Language: vendors register nodes, declare their operational profile, send inventory feeds, poll purchase orders, acknowledge them in full inside the acknowledgement window, request labels and confirm shipment. Every write is an asynchronous transaction a vendor reconciles.
+
+| | |
+|---|---|
+| Bounded context | `vendor-connectivity` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, partner tier |
+| Repository | [IQVO/vendor-connectivity](https://github.com/IQVO/vendor-connectivity) |
+| Events | [vendor-connectivity](/docs/services/vendor-connectivity) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+This is the **Vendor API**: the Open Host Service of the `vendor-connectivity`
+bounded context. Its JSON schemas are the **Published Language** that every
+vendor conforms to. The warehouse-systems fleet (vendor `V-WS`) reaches the
+retail network only through this contract, from its `network-fulfillment`
+context (Conformist + Anti-Corruption Layer). It is the only channel between
+the two organizations.
+
+Protocol rules (from the model's `business_decisions` and the Gap Register):
+
+- Poll purchase orders with `GET /vendor/purchase-orders`, paging with `nextToken`.
+  A purchase order may be delivered more than once (simulation knob
+  `PO_REDELIVERY_RATE`); be idempotent on `poNumber`.
+- Acknowledge once, in full, before `ackBy`. Fill-or-kill: one decision covers
+  every line. `ackBy = min(issuedAt + vendor ackWindow, requiredShipBy - node handlingTime)`.
+- Every asynchronous vendor write returns `202` with a `transactionId`. The write
+  takes effect only when `GET /vendor/transactions/{transactionId}` reports
+  `SUCCESS`. Processing waits at least `TX_PROCESSING_DELAY`; a share of
+  transactions fails on purpose (`TX_FAILURE_RATE`). The processed
+  `NODE_REGISTRATION` transaction carries the new `nodeId` (G30).
+- A label is issued only for an `ACCEPTED` purchase order. A shipment is
+  confirmed only with a label for every package. The label request is the one
+  synchronous write: `200` with the labels, never `202` (G31).
+- Vendor identity under no authentication (G32): `vendorId` is in every write
+  body and a required query parameter on every read. Ownership is checked
+  against it (`ErrNodeNotOwnedByVendor`); this is a consistency check, not security.
+  A suspended vendor's writes are refused (`ErrVendorSuspended`, `vendor-suspended`).
+- Rate limits are part of the contract: `429` with `Retry-After` (`RATE_LIMIT_RPS`).
+- Every state-changing `POST`/`PUT` takes `Idempotency-Key`; a repeat replays the first response.
+- Errors are RFC 9457 `application/problem+json`; the shared problem types are
+  `not-found` 404, `illegal-transition` 409, `concurrent-update` 409 and
+  `validation-failed` 422, plus one slug per model `Err...` name.
+- No ship-to PII anywhere. A label is `labelRef + trackingNumber + carrier`, never
+  an address.
+- No authentication (consistent with the fleet).
+  
+
+## Architecture diagram
+<NodeGraph />
