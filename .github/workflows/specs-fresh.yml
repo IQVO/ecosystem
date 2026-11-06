@@ -1,0 +1,28 @@
+name: specs-fresh
+
+# specs/ is a committed copy of every context's contract. Fails when a copy differs from the producer's develop, on
+# every PR, on pushes, and nightly (a producer can move while this repo is quiet). Exit 2 = a producer is unreadable.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 6 * * *"
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  specs-fresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - name: The gate's own tests
+        run: python3 scripts/test_check_specs_fresh.py
+      - name: Spec copies equal the producers' develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check-specs-fresh.py
