@@ -29,7 +29,7 @@ info:
     and which delivery station serves which postal prefix (ADR 0001, ADR 0002).
 
 
-    **Published.** Nine events, all on the topic
+    **Published.** Ten events, all on the topic
     `retailnetwork.node-topology.events`,
 
     through a **transactional outbox**: the aggregate row and its
@@ -39,7 +39,7 @@ info:
 
     them to Kafka (at-least-once; the CloudEvents `id` is stored with the outbox
 
-    row, so a retry republishes the same `id`). The nine types are catalogued in
+    row, so a retry republishes the same `id`). The ten types are catalogued in
 
     ADR 0004.
 
@@ -1230,6 +1230,122 @@ channels:
                 laneId: lane-5c21d8
                 closedAt: '2026-11-02T10:00:00Z'
         x-parser-unique-object-id: LaneClosed
+      LaneCostDeclared:
+        name: LaneCostDeclared
+        title: Lane cost declared
+        summary: >-
+          The planner declared the cost of moving one package-unit across the
+          lane.
+        description: >-
+          `type` =
+          `com.retailnetwork.logistics.node-topology.lane.LaneCostDeclared`;
+          subject and key = the laneId. Raised by DeclareLaneCost, on every
+          declaration (a newer declaration supersedes the previous value).
+          `costPerUnitCents` is the declared marginal cost of moving ONE
+          package-unit across the lane on one departure, integer cents, 0 to
+          10000000; 0 is legal (zero declared marginal cost). A lane with no
+          declaration publishes nothing. Consumed by order-sourcing, which keeps
+          the latest declaration per laneId and folds it into its
+          money-denominated AssignmentCost (roadmap F7, order-sourcing ADR
+          0011).
+        contentType: application/cloudevents+json
+        tags:
+          - name: lane
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-1>
+                id:
+                  type: string
+                  format: uuid
+                  x-parser-schema-id: <anonymous-schema-2>
+                source:
+                  type: string
+                  const: /retailnetwork/node-topology
+                  x-parser-schema-id: <anonymous-schema-3>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-4>
+                subject:
+                  type: string
+                  description: The aggregate root id (nodeId
+                  laneId: null
+                  postalPrefix or regionId).: null
+                  x-parser-schema-id: <anonymous-schema-5>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-6>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-7>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-8>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - laneId
+                    - costPerUnitCents
+                    - declaredAt
+                  properties:
+                    laneId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-71>
+                    costPerUnitCents:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 10000000
+                      description: >-
+                        The planner's declared marginal cost of moving ONE
+                        package-unit across this lane on one departure, integer
+                        cents.
+                      x-parser-schema-id: <anonymous-schema-72>
+                    declaredAt:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-73>
+                  x-parser-schema-id: <anonymous-schema-70>
+              x-parser-schema-id: <anonymous-schema-69>
+          x-parser-schema-id: LaneCostDeclaredEvent
+        examples:
+          - name: laneCostDeclared
+            summary: >-
+              The planner declared the cost of moving one package-unit across
+              the lane.
+            payload:
+              specversion: '1.0'
+              id: 3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1c4c
+              source: /retailnetwork/node-topology
+              type: com.retailnetwork.logistics.node-topology.lane.LaneCostDeclared
+              subject: lane-5c21d8
+              time: '2026-11-05T09:30:00Z'
+              datacontenttype: application/json
+              dataschema: urn:retailnetwork:node-topology:events:LaneCostDeclared:v1
+              data:
+                laneId: lane-5c21d8
+                costPerUnitCents: 320
+                declaredAt: '2026-11-05T09:30:00Z'
+        x-parser-unique-object-id: LaneCostDeclared
       ServiceAreaAssigned:
         name: ServiceAreaAssigned
         title: Service area assigned
@@ -1305,20 +1421,20 @@ channels:
                   properties:
                     postalPrefix:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-76>
                     deliveryStationNodeId:
                       type: string
                       description: The DELIVERY_STATION that serves the prefix.
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-77>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-73>
+                      x-parser-schema-id: <anonymous-schema-78>
                     assignmentVersion:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-74>
-                  x-parser-schema-id: <anonymous-schema-70>
-              x-parser-schema-id: <anonymous-schema-69>
+                      x-parser-schema-id: <anonymous-schema-79>
+                  x-parser-schema-id: <anonymous-schema-75>
+              x-parser-schema-id: <anonymous-schema-74>
           x-parser-schema-id: ServiceAreaAssignedEvent
         examples:
           - name: serviceAreaAssigned
@@ -1411,16 +1527,16 @@ channels:
                   properties:
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-82>
                     code:
                       type: string
                       description: Unique short code.
-                      x-parser-schema-id: <anonymous-schema-78>
+                      x-parser-schema-id: <anonymous-schema-83>
                     name:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-79>
-                  x-parser-schema-id: <anonymous-schema-76>
-              x-parser-schema-id: <anonymous-schema-75>
+                      x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-81>
+              x-parser-schema-id: <anonymous-schema-80>
           x-parser-schema-id: RegionDefinedEvent
         examples:
           - name: regionDefined
@@ -1445,7 +1561,7 @@ operations:
   publishNodeTopologyEvents:
     action: send
     title: Publish node-topology events
-    summary: Publish the nine node-topology events through the transactional outbox.
+    summary: Publish the ten node-topology events through the transactional outbox.
     description: |
       The service sends every event of its four aggregates (Node, Lane,
       ServiceArea, Region) to `retailnetwork.node-topology.events`. Consumers
@@ -2596,6 +2712,123 @@ operations:
                   laneId: lane-5c21d8
                   closedAt: '2026-11-02T10:00:00Z'
           x-parser-unique-object-id: LaneClosed
+        LaneCostDeclared:
+          name: LaneCostDeclared
+          title: Lane cost declared
+          summary: >-
+            The planner declared the cost of moving one package-unit across the
+            lane.
+          description: >-
+            `type` =
+            `com.retailnetwork.logistics.node-topology.lane.LaneCostDeclared`;
+            subject and key = the laneId. Raised by DeclareLaneCost, on every
+            declaration (a newer declaration supersedes the previous value).
+            `costPerUnitCents` is the declared marginal cost of moving ONE
+            package-unit across the lane on one departure, integer cents, 0 to
+            10000000; 0 is legal (zero declared marginal cost). A lane with no
+            declaration publishes nothing. Consumed by order-sourcing, which
+            keeps the latest declaration per laneId and folds it into its
+            money-denominated AssignmentCost (roadmap F7, order-sourcing ADR
+            0011).
+          contentType: application/cloudevents+json
+          tags:
+            - name: lane
+          payload:
+            allOf:
+              - type: object
+                required:
+                  - specversion
+                  - id
+                  - source
+                  - type
+                  - subject
+                  - time
+                  - datacontenttype
+                  - dataschema
+                  - data
+                properties:
+                  specversion:
+                    type: string
+                    const: '1.0'
+                    x-parser-schema-id: <anonymous-schema-1>
+                  id:
+                    type: string
+                    format: uuid
+                    x-parser-schema-id: <anonymous-schema-2>
+                  source:
+                    type: string
+                    const: /retailnetwork/node-topology
+                    x-parser-schema-id: <anonymous-schema-3>
+                  type:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-4>
+                  subject:
+                    type: string
+                    description: The aggregate root id (nodeId
+                    laneId: null
+                    postalPrefix or regionId).: null
+                    x-parser-schema-id: <anonymous-schema-5>
+                  time:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-6>
+                  datacontenttype:
+                    type: string
+                    const: application/json
+                    x-parser-schema-id: <anonymous-schema-7>
+                  dataschema:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-8>
+                x-parser-schema-id: CloudEventEnvelope
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - laneId
+                      - costPerUnitCents
+                      - declaredAt
+                    properties:
+                      laneId:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-71>
+                      costPerUnitCents:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                        maximum: 10000000
+                        description: >-
+                          The planner's declared marginal cost of moving ONE
+                          package-unit across this lane on one departure,
+                          integer cents.
+                        x-parser-schema-id: <anonymous-schema-72>
+                      declaredAt:
+                        type: string
+                        format: date-time
+                        x-parser-schema-id: <anonymous-schema-73>
+                    x-parser-schema-id: <anonymous-schema-70>
+                x-parser-schema-id: <anonymous-schema-69>
+            x-parser-schema-id: LaneCostDeclaredEvent
+          examples:
+            - name: laneCostDeclared
+              summary: >-
+                The planner declared the cost of moving one package-unit across
+                the lane.
+              payload:
+                specversion: '1.0'
+                id: 3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1c4c
+                source: /retailnetwork/node-topology
+                type: >-
+                  com.retailnetwork.logistics.node-topology.lane.LaneCostDeclared
+                subject: lane-5c21d8
+                time: '2026-11-05T09:30:00Z'
+                datacontenttype: application/json
+                dataschema: urn:retailnetwork:node-topology:events:LaneCostDeclared:v1
+                data:
+                  laneId: lane-5c21d8
+                  costPerUnitCents: 320
+                  declaredAt: '2026-11-05T09:30:00Z'
+          x-parser-unique-object-id: LaneCostDeclared
         ServiceAreaAssigned:
           name: ServiceAreaAssigned
           title: Service area assigned
@@ -2672,20 +2905,20 @@ operations:
                     properties:
                       postalPrefix:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-71>
+                        x-parser-schema-id: <anonymous-schema-76>
                       deliveryStationNodeId:
                         type: string
                         description: The DELIVERY_STATION that serves the prefix.
-                        x-parser-schema-id: <anonymous-schema-72>
+                        x-parser-schema-id: <anonymous-schema-77>
                       regionId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-73>
+                        x-parser-schema-id: <anonymous-schema-78>
                       assignmentVersion:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-74>
-                    x-parser-schema-id: <anonymous-schema-70>
-                x-parser-schema-id: <anonymous-schema-69>
+                        x-parser-schema-id: <anonymous-schema-79>
+                    x-parser-schema-id: <anonymous-schema-75>
+                x-parser-schema-id: <anonymous-schema-74>
             x-parser-schema-id: ServiceAreaAssignedEvent
           examples:
             - name: serviceAreaAssigned
@@ -2778,16 +3011,16 @@ operations:
                     properties:
                       regionId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-77>
+                        x-parser-schema-id: <anonymous-schema-82>
                       code:
                         type: string
                         description: Unique short code.
-                        x-parser-schema-id: <anonymous-schema-78>
+                        x-parser-schema-id: <anonymous-schema-83>
                       name:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-79>
-                    x-parser-schema-id: <anonymous-schema-76>
-                x-parser-schema-id: <anonymous-schema-75>
+                        x-parser-schema-id: <anonymous-schema-84>
+                    x-parser-schema-id: <anonymous-schema-81>
+                x-parser-schema-id: <anonymous-schema-80>
             x-parser-schema-id: RegionDefinedEvent
           examples:
             - name: regionDefined
@@ -3928,6 +4161,121 @@ operations:
                 laneId: lane-5c21d8
                 closedAt: '2026-11-02T10:00:00Z'
         x-parser-unique-object-id: LaneClosed
+      - name: LaneCostDeclared
+        title: Lane cost declared
+        summary: >-
+          The planner declared the cost of moving one package-unit across the
+          lane.
+        description: >-
+          `type` =
+          `com.retailnetwork.logistics.node-topology.lane.LaneCostDeclared`;
+          subject and key = the laneId. Raised by DeclareLaneCost, on every
+          declaration (a newer declaration supersedes the previous value).
+          `costPerUnitCents` is the declared marginal cost of moving ONE
+          package-unit across the lane on one departure, integer cents, 0 to
+          10000000; 0 is legal (zero declared marginal cost). A lane with no
+          declaration publishes nothing. Consumed by order-sourcing, which keeps
+          the latest declaration per laneId and folds it into its
+          money-denominated AssignmentCost (roadmap F7, order-sourcing ADR
+          0011).
+        contentType: application/cloudevents+json
+        tags:
+          - name: lane
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-1>
+                id:
+                  type: string
+                  format: uuid
+                  x-parser-schema-id: <anonymous-schema-2>
+                source:
+                  type: string
+                  const: /retailnetwork/node-topology
+                  x-parser-schema-id: <anonymous-schema-3>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-4>
+                subject:
+                  type: string
+                  description: The aggregate root id (nodeId
+                  laneId: null
+                  postalPrefix or regionId).: null
+                  x-parser-schema-id: <anonymous-schema-5>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-6>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-7>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-8>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - laneId
+                    - costPerUnitCents
+                    - declaredAt
+                  properties:
+                    laneId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-71>
+                    costPerUnitCents:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 10000000
+                      description: >-
+                        The planner's declared marginal cost of moving ONE
+                        package-unit across this lane on one departure, integer
+                        cents.
+                      x-parser-schema-id: <anonymous-schema-72>
+                    declaredAt:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-73>
+                  x-parser-schema-id: <anonymous-schema-70>
+              x-parser-schema-id: <anonymous-schema-69>
+          x-parser-schema-id: LaneCostDeclaredEvent
+        examples:
+          - name: laneCostDeclared
+            summary: >-
+              The planner declared the cost of moving one package-unit across
+              the lane.
+            payload:
+              specversion: '1.0'
+              id: 3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1c4c
+              source: /retailnetwork/node-topology
+              type: com.retailnetwork.logistics.node-topology.lane.LaneCostDeclared
+              subject: lane-5c21d8
+              time: '2026-11-05T09:30:00Z'
+              datacontenttype: application/json
+              dataschema: urn:retailnetwork:node-topology:events:LaneCostDeclared:v1
+              data:
+                laneId: lane-5c21d8
+                costPerUnitCents: 320
+                declaredAt: '2026-11-05T09:30:00Z'
+        x-parser-unique-object-id: LaneCostDeclared
       - name: ServiceAreaAssigned
         title: Service area assigned
         summary: >-
@@ -4002,20 +4350,20 @@ operations:
                   properties:
                     postalPrefix:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-76>
                     deliveryStationNodeId:
                       type: string
                       description: The DELIVERY_STATION that serves the prefix.
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-77>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-73>
+                      x-parser-schema-id: <anonymous-schema-78>
                     assignmentVersion:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-74>
-                  x-parser-schema-id: <anonymous-schema-70>
-              x-parser-schema-id: <anonymous-schema-69>
+                      x-parser-schema-id: <anonymous-schema-79>
+                  x-parser-schema-id: <anonymous-schema-75>
+              x-parser-schema-id: <anonymous-schema-74>
           x-parser-schema-id: ServiceAreaAssignedEvent
         examples:
           - name: serviceAreaAssigned
@@ -4107,16 +4455,16 @@ operations:
                   properties:
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-82>
                     code:
                       type: string
                       description: Unique short code.
-                      x-parser-schema-id: <anonymous-schema-78>
+                      x-parser-schema-id: <anonymous-schema-83>
                     name:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-79>
-                  x-parser-schema-id: <anonymous-schema-76>
-              x-parser-schema-id: <anonymous-schema-75>
+                      x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-81>
+              x-parser-schema-id: <anonymous-schema-80>
           x-parser-schema-id: RegionDefinedEvent
         examples:
           - name: regionDefined
@@ -5262,6 +5610,121 @@ components:
               laneId: lane-5c21d8
               closedAt: '2026-11-02T10:00:00Z'
       x-parser-unique-object-id: LaneClosed
+    LaneCostDeclared:
+      name: LaneCostDeclared
+      title: Lane cost declared
+      summary: >-
+        The planner declared the cost of moving one package-unit across the
+        lane.
+      description: >-
+        `type` =
+        `com.retailnetwork.logistics.node-topology.lane.LaneCostDeclared`;
+        subject and key = the laneId. Raised by DeclareLaneCost, on every
+        declaration (a newer declaration supersedes the previous value).
+        `costPerUnitCents` is the declared marginal cost of moving ONE
+        package-unit across the lane on one departure, integer cents, 0 to
+        10000000; 0 is legal (zero declared marginal cost). A lane with no
+        declaration publishes nothing. Consumed by order-sourcing, which keeps
+        the latest declaration per laneId and folds it into its
+        money-denominated AssignmentCost (roadmap F7, order-sourcing ADR 0011).
+      contentType: application/cloudevents+json
+      tags:
+        - name: lane
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /retailnetwork/node-topology
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate root id (nodeId
+                laneId: null
+                postalPrefix or regionId).: null
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - laneId
+                  - costPerUnitCents
+                  - declaredAt
+                properties:
+                  laneId:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-71>
+                  costPerUnitCents:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 10000000
+                    description: >-
+                      The planner's declared marginal cost of moving ONE
+                      package-unit across this lane on one departure, integer
+                      cents.
+                    x-parser-schema-id: <anonymous-schema-72>
+                  declaredAt:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-73>
+                x-parser-schema-id: <anonymous-schema-70>
+            x-parser-schema-id: <anonymous-schema-69>
+        x-parser-schema-id: LaneCostDeclaredEvent
+      examples:
+        - name: laneCostDeclared
+          summary: >-
+            The planner declared the cost of moving one package-unit across the
+            lane.
+          payload:
+            specversion: '1.0'
+            id: 3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1c4c
+            source: /retailnetwork/node-topology
+            type: com.retailnetwork.logistics.node-topology.lane.LaneCostDeclared
+            subject: lane-5c21d8
+            time: '2026-11-05T09:30:00Z'
+            datacontenttype: application/json
+            dataschema: urn:retailnetwork:node-topology:events:LaneCostDeclared:v1
+            data:
+              laneId: lane-5c21d8
+              costPerUnitCents: 320
+              declaredAt: '2026-11-05T09:30:00Z'
+      x-parser-unique-object-id: LaneCostDeclared
     ServiceAreaAssigned:
       name: ServiceAreaAssigned
       title: Service area assigned
@@ -5337,20 +5800,20 @@ components:
                 properties:
                   postalPrefix:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-71>
+                    x-parser-schema-id: <anonymous-schema-76>
                   deliveryStationNodeId:
                     type: string
                     description: The DELIVERY_STATION that serves the prefix.
-                    x-parser-schema-id: <anonymous-schema-72>
+                    x-parser-schema-id: <anonymous-schema-77>
                   regionId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-73>
+                    x-parser-schema-id: <anonymous-schema-78>
                   assignmentVersion:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-74>
-                x-parser-schema-id: <anonymous-schema-70>
-            x-parser-schema-id: <anonymous-schema-69>
+                    x-parser-schema-id: <anonymous-schema-79>
+                x-parser-schema-id: <anonymous-schema-75>
+            x-parser-schema-id: <anonymous-schema-74>
         x-parser-schema-id: ServiceAreaAssignedEvent
       examples:
         - name: serviceAreaAssigned
@@ -5443,16 +5906,16 @@ components:
                 properties:
                   regionId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-77>
+                    x-parser-schema-id: <anonymous-schema-82>
                   code:
                     type: string
                     description: Unique short code.
-                    x-parser-schema-id: <anonymous-schema-78>
+                    x-parser-schema-id: <anonymous-schema-83>
                   name:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-79>
-                x-parser-schema-id: <anonymous-schema-76>
-            x-parser-schema-id: <anonymous-schema-75>
+                    x-parser-schema-id: <anonymous-schema-84>
+                x-parser-schema-id: <anonymous-schema-81>
+            x-parser-schema-id: <anonymous-schema-80>
         x-parser-schema-id: RegionDefinedEvent
       examples:
         - name: regionDefined
@@ -6647,6 +7110,82 @@ components:
               x-parser-schema-id: <anonymous-schema-66>
           x-parser-schema-id: <anonymous-schema-65>
       x-parser-schema-id: LaneClosedEvent
+    LaneCostDeclaredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              const: /retailnetwork/node-topology
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The aggregate root id (nodeId
+              laneId: null
+              postalPrefix or regionId).: null
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - laneId
+                - costPerUnitCents
+                - declaredAt
+              properties:
+                laneId:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-71>
+                costPerUnitCents:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  maximum: 10000000
+                  description: >-
+                    The planner's declared marginal cost of moving ONE
+                    package-unit across this lane on one departure, integer
+                    cents.
+                  x-parser-schema-id: <anonymous-schema-72>
+                declaredAt:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-73>
+              x-parser-schema-id: <anonymous-schema-70>
+          x-parser-schema-id: <anonymous-schema-69>
+      x-parser-schema-id: LaneCostDeclaredEvent
     ServiceAreaAssignedEvent:
       allOf:
         - type: object
@@ -6706,20 +7245,20 @@ components:
               properties:
                 postalPrefix:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-71>
+                  x-parser-schema-id: <anonymous-schema-76>
                 deliveryStationNodeId:
                   type: string
                   description: The DELIVERY_STATION that serves the prefix.
-                  x-parser-schema-id: <anonymous-schema-72>
+                  x-parser-schema-id: <anonymous-schema-77>
                 regionId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-73>
+                  x-parser-schema-id: <anonymous-schema-78>
                 assignmentVersion:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-74>
-              x-parser-schema-id: <anonymous-schema-70>
-          x-parser-schema-id: <anonymous-schema-69>
+                  x-parser-schema-id: <anonymous-schema-79>
+              x-parser-schema-id: <anonymous-schema-75>
+          x-parser-schema-id: <anonymous-schema-74>
       x-parser-schema-id: ServiceAreaAssignedEvent
     RegionDefinedEvent:
       allOf:
@@ -6779,16 +7318,16 @@ components:
               properties:
                 regionId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-77>
+                  x-parser-schema-id: <anonymous-schema-82>
                 code:
                   type: string
                   description: Unique short code.
-                  x-parser-schema-id: <anonymous-schema-78>
+                  x-parser-schema-id: <anonymous-schema-83>
                 name:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-79>
-              x-parser-schema-id: <anonymous-schema-76>
-          x-parser-schema-id: <anonymous-schema-75>
+                  x-parser-schema-id: <anonymous-schema-84>
+              x-parser-schema-id: <anonymous-schema-81>
+          x-parser-schema-id: <anonymous-schema-80>
       x-parser-schema-id: RegionDefinedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

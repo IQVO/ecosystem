@@ -1,0 +1,163 @@
+{
+  "allOf": [
+    {
+      "type": "object",
+      "description": "CloudEvents 1.0 structured-mode event (JSON event format), the ONLY envelope on every channel this service produces or consumes (ADR 0030, fleet standard). Every attribute below is REQUIRED in this fleet. Kafka header `content-type` is `application/cloudevents+json; charset=UTF-8`; W3C trace context stays in the `traceparent`/`tracestate` headers. Consumers dispatch on the FULL `type`, ignore unknown types, and dedupe on `id`.",
+      "required": [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "subject",
+        "time",
+        "datacontenttype",
+        "dataschema",
+        "data"
+      ],
+      "properties": {
+        "specversion": {
+          "type": "string",
+          "const": "1.0",
+          "x-parser-schema-id": "<anonymous-schema-6>"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Minted once per domain event and persisted with the outbox row, so a redelivery carries the same id. `(source, id)` is the consumer idempotency key.",
+          "x-parser-schema-id": "<anonymous-schema-7>"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "/warehouse/<repo-name>, e.g. /warehouse/order-management.",
+          "x-parser-schema-id": "<anonymous-schema-8>"
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^com\\.warehouse\\.[a-z]+\\.[a-z-]+\\.[a-z]+\\.[A-Z][A-Za-z]+(\\.v[0-9]+)?$",
+          "description": "com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>",
+          "x-parser-schema-id": "<anonymous-schema-9>"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Id of the aggregate instance the event is about (order id for every event this service publishes).",
+          "x-parser-schema-id": "<anonymous-schema-10>"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The domain event's occurred-at instant, UTC, RFC 3339.",
+          "x-parser-schema-id": "<anonymous-schema-11>"
+        },
+        "datacontenttype": {
+          "type": "string",
+          "const": "application/json",
+          "x-parser-schema-id": "<anonymous-schema-12>"
+        },
+        "dataschema": {
+          "type": "string",
+          "format": "uri",
+          "description": "urn:warehouse:<repo-name>:<events|analytics>:<EventName>:v<N>",
+          "x-parser-schema-id": "<anonymous-schema-13>"
+        },
+        "data": {
+          "type": "object",
+          "description": "The event payload — see each message's own data schema.",
+          "x-parser-schema-id": "<anonymous-schema-14>"
+        }
+      },
+      "x-parser-schema-id": "CloudEvent"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "source": {
+          "const": "/warehouse/outbound-shipping",
+          "x-parser-schema-id": "<anonymous-schema-103>"
+        },
+        "type": {
+          "const": "com.warehouse.wms.outbound-shipping.outboundload.ShipmentConfirmed",
+          "x-parser-schema-id": "<anonymous-schema-104>"
+        },
+        "dataschema": {
+          "const": "urn:warehouse:outbound-shipping:events:ShipmentConfirmed:v1",
+          "x-parser-schema-id": "<anonymous-schema-105>"
+        },
+        "data": {
+          "type": "object",
+          "description": "outbound-shipping's real, shipped ShipmentConfirmed payload (its merged apis/asyncapi.yaml) — decoded independently here, never imported. Only load_id and orders[].order_id are read by order-management (ADR 0051); the other members are decoded-and- ignored so additive producer fields stay forward-compatible.",
+          "required": [
+            "load_id",
+            "site_id",
+            "cpt_id",
+            "carrier",
+            "trailer_id",
+            "seal_number",
+            "departed_at",
+            "orders",
+            "version"
+          ],
+          "properties": {
+            "load_id": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-106>"
+            },
+            "site_id": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-107>"
+            },
+            "cpt_id": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-108>"
+            },
+            "carrier": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-109>"
+            },
+            "trailer_id": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-110>"
+            },
+            "seal_number": {
+              "type": "string",
+              "x-parser-schema-id": "<anonymous-schema-111>"
+            },
+            "departed_at": {
+              "type": "string",
+              "format": "date-time",
+              "x-parser-schema-id": "<anonymous-schema-112>"
+            },
+            "orders": {
+              "type": "array",
+              "description": "Distinct source_order_id of the shipped packages; a package manifested without one is excluded by the producer.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "order_id"
+                ],
+                "properties": {
+                  "order_id": {
+                    "type": "string",
+                    "description": "A bare OrderId — the order whose Released lines this confirmation ships.",
+                    "x-parser-schema-id": "<anonymous-schema-115>"
+                  }
+                },
+                "x-parser-schema-id": "<anonymous-schema-114>"
+              },
+              "x-parser-schema-id": "<anonymous-schema-113>"
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1,
+              "x-parser-schema-id": "<anonymous-schema-116>"
+            }
+          },
+          "x-parser-schema-id": "ShipmentConfirmedData"
+        }
+      },
+      "x-parser-schema-id": "<anonymous-schema-102>"
+    }
+  ],
+  "x-parser-schema-id": "<anonymous-schema-101>"
+}

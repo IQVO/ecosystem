@@ -1,7 +1,7 @@
 asyncapi: 3.0.0
 info:
   title: delivery-promise Domain Events
-  version: 1.1.0
+  version: 1.2.0
   description: 'Event catalog for the **delivery-promise** bounded context of the retail network (commerce tier, Core): it
     quotes delivery offers from a feasible witness path, holds capacity in PromiseBooks, makes and judges promises (ADR 0002,
     ADR 0003).
@@ -21,6 +21,14 @@ info:
     and dispatches on the full `type`. A transient failure is retried with capped backoff (5 attempts), then the message goes to `<topic>.dlq`
     (headers `x-dlq-*`); a payload that can never be applied goes there at once; an unknown type or a message that is not a valid CloudEvent
     is logged and skipped. Offsets are committed only after handling.
+
+
+    **Own events, read back for analytics (ADR 0018).** The analytics projector (`cmd/dp-projector`) reads this context''s
+    OWN two topics in the fixed group `delivery-promise-analytics` and projects DeliveryOfferQuoted and PromiseMade (from
+    `.analytics`) and PromiseRevised, PromiseUnkeepable, PromiseKept and PromiseBroken (from `.events`) into a separate
+    analytical database. It dedupes on the CloudEvents `id` in the same transaction as the projection, dead-letters only
+    deterministic poison to `retailnetwork.delivery-promise.analytics.dlq` and retries transient failures without a bound.
+    It reads no sibling''s topic.
 
 
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka header `content-type: application/cloudevents+json;
@@ -197,6 +205,8 @@ channels:
     messages:
       NodeScorecardUpdated:
         $ref: '#/components/messages/NodeScorecardUpdated'
+      NodeTierEligibilityChanged:
+        $ref: '#/components/messages/NodeTierEligibilityChanged'
   nodeTopologyEvents:
     address: retailnetwork.node-topology.events
     title: node-topology integration topic (consumed)
@@ -276,6 +286,38 @@ operations:
     - $ref: '#/channels/deliveryPromiseAnalytics/messages/PromiseCancelled'
     - $ref: '#/channels/deliveryPromiseAnalytics/messages/DeliveryOfferQuoted'
     - $ref: '#/channels/deliveryPromiseAnalytics/messages/PromisePolicyPublished'
+  projectOwnEventsForAnalytics:
+    action: receive
+    channel:
+      $ref: '#/channels/deliveryPromiseEvents'
+    title: Project this context's own integration events into the analytical database
+    summary: The analytics projector reads back four of the events this service publishes on its integration topic (ADR 0018).
+    description: Inbound adapter internal/adapters/inbound/kafka/analytics_consumer.go, run by cmd/dp-projector in the consumer
+      group ANALYTICS_CONSUMER_GROUP (default delivery-promise-analytics), the same group as projectOwnAnalyticsForAnalytics.
+      Dispatches on the full `type`; PromiseAtRisk and PromiseBookExhausted are acknowledged without projection; any other
+      type or a non-CloudEvents message is skipped with a sampled warning; poison goes to retailnetwork.delivery-promise.analytics.dlq.
+    tags:
+    - name: delivery-promise
+    messages:
+    - $ref: '#/channels/deliveryPromiseEvents/messages/PromiseRevised'
+    - $ref: '#/channels/deliveryPromiseEvents/messages/PromiseKept'
+    - $ref: '#/channels/deliveryPromiseEvents/messages/PromiseBroken'
+    - $ref: '#/channels/deliveryPromiseEvents/messages/PromiseUnkeepable'
+  projectOwnAnalyticsForAnalytics:
+    action: receive
+    channel:
+      $ref: '#/channels/deliveryPromiseAnalytics'
+    title: Project this context's own analytics-only events into the analytical database
+    summary: The analytics projector reads back two of the events this service publishes on its analytics topic (ADR 0018).
+    description: Inbound adapter internal/adapters/inbound/kafka/analytics_consumer.go, run by cmd/dp-projector in the consumer
+      group ANALYTICS_CONSUMER_GROUP (default delivery-promise-analytics), the same group as projectOwnEventsForAnalytics.
+      Dispatches on the full `type`; PromiseConfirmed, PromiseReleased, PromiseCancelled and PromisePolicyPublished are
+      acknowledged without projection; any other type or a non-CloudEvents message is skipped with a sampled warning.
+    tags:
+    - name: delivery-promise
+    messages:
+    - $ref: '#/channels/deliveryPromiseAnalytics/messages/DeliveryOfferQuoted'
+    - $ref: '#/channels/deliveryPromiseAnalytics/messages/PromiseMade'
   receiveCustomerOrderingEvents:
     action: receive
     channel:
@@ -330,7 +372,8 @@ operations:
       LoadArrived from linehaul-transportation.
     description: The service consumes DepartureScheduled, DepartureCapacityChanged, DepartureCancelled, BookingMoved, BookingFailed,
       LoadDeparted and LoadArrived from `retailnetwork.linehaul-transportation.events` to keep its local read models (the
-      load events pair by loadId into the measured-transit read model, ADR 0014) and to drive RepromiseOnRisk, JudgeOnDelivery
+      load events pair by loadId into the measured-transit read model, ADR 0014, and LoadArrived records the arrival of its
+      departureId, when it carries one, for the late-risk sweep, ADR 0021) and to drive RepromiseOnRisk, JudgeOnDelivery
       and CancelPromise. It never calls linehaul-transportation synchronously.
     tags:
     - name: consumed-linehaul-transportation
@@ -364,13 +407,15 @@ operations:
     channel:
       $ref: '#/channels/nodePerformanceEvents'
     title: Consume node-performance events
-    summary: Consume NodeScorecardUpdated from node-performance.
-    description: The service consumes NodeScorecardUpdated from `retailnetwork.node-performance.events` to keep its local
-      read models and to drive RepromiseOnRisk, JudgeOnDelivery and CancelPromise. It never calls node-performance synchronously.
+    summary: Consume NodeScorecardUpdated, NodeTierEligibilityChanged from node-performance.
+    description: The service consumes NodeScorecardUpdated, NodeTierEligibilityChanged from `retailnetwork.node-performance.events`
+      to keep its local read models and to drive RepromiseOnRisk, JudgeOnDelivery and CancelPromise. It never calls node-performance
+      synchronously.
     tags:
     - name: consumed-node-performance
     messages:
     - $ref: '#/channels/nodePerformanceEvents/messages/NodeScorecardUpdated'
+    - $ref: '#/channels/nodePerformanceEvents/messages/NodeTierEligibilityChanged'
   receiveNodeTopologyEvents:
     action: receive
     channel:
@@ -450,6 +495,7 @@ components:
             deliverByLatest: '2026-10-24T02:00:00Z'
             timeZone: America/Chicago
             basis: SCHEDULED
+            confidence: 0.973
             policyVersion: v3
             holdExpiresAt: '2026-10-22T19:24:00Z'
             lines:
@@ -492,8 +538,10 @@ components:
       description: '`type` = `com.retailnetwork.commerce.delivery-promise.promise.PromiseAtRisk`; `dataschema` = `urn:retailnetwork:delivery-promise:events:PromiseAtRisk:v1`;
         subject and key = the promiseId. Topic: retailnetwork.delivery-promise.events. Raised by FlagPromiseAtRisk (RepromiseOnRisk)
         on FulfillmentUnsourceable, PackageExceptionRaised, PackageInductionDeferred, DepartureCancelled, DeliveryWaveCancelled,
-        BookingFailed or BookingMoved affecting the witness path. Consumed by customer-ordering. `reason` is one of NODE_UNSOURCEABLE,
-        PACKAGE_EXCEPTION, INDUCTION_DEFERRED, DEPARTURE_CANCELLED, WAVE_CANCELLED, BOOKING_FAILED, BOOKING_MOVED.'
+        BookingFailed or BookingMoved affecting the witness path, and by the clock-driven late-risk sweep (FlagPredictedLate, ADR 0021)
+        when a departure of the witness path is past its expected arrival plus 15 minutes with no arrival seen. Consumed by
+        customer-ordering. `reason` is one of NODE_UNSOURCEABLE, PACKAGE_EXCEPTION, INDUCTION_DEFERRED, DEPARTURE_CANCELLED,
+        WAVE_CANCELLED, BOOKING_FAILED, BOOKING_MOVED, PREDICTED_LATE.'
       tags:
       - name: promise
       payload:
@@ -767,8 +815,10 @@ components:
             deliverByLatest: '2026-10-24T02:00:00Z'
             timeZone: America/Chicago
             basis: SCHEDULED
+            confidence: 0.973
             policyVersion: v3
             expiresAt: '2026-10-22T19:15:00Z'
+            capacityBand: TIGHT
     PromisePolicyPublished:
       name: PromisePolicyPublished
       title: Promise policy published
@@ -804,6 +854,10 @@ components:
             transitWindowDays: 28
             transitServiceLevelPercent: 90
             minTransitObservations: 20
+            targetOnTimeProbabilityPercent: 95
+            minCalibrationObservations: 50
+            calibrationWindowDays: 28
+            maxCalibrationBufferMinutes: 720
             orderDeadlines:
             - tier: NEXT_DAY
               regionId: R-SC
@@ -1235,7 +1289,8 @@ components:
       contentType: application/cloudevents+json
       description: 'Consumed from `retailnetwork.linehaul-transportation.events`; `type` = `com.retailnetwork.logistics.linehaul-transportation.load.LoadDeparted`
         (dispatch on the full type). Tolerant local copy: only the fields delivery-promise relies on are listed and unknown
-        fields are ignored. Use: opens the load''s pairing row of the measured-transit read model (ADR 0014).'
+        fields are ignored. Use: opens the load''s pairing row of the measured-transit read model (ADR 0014). The optional
+        `departureId` (the scheduled departure the load serves) is carried but not used.'
       tags:
       - name: consumed-linehaul-transportation
       payload:
@@ -1254,6 +1309,7 @@ components:
           dataschema: urn:retailnetwork:linehaul-transportation:events:LoadDeparted:v1
           data:
             loadId: ld-91f2
+            departureId: dep-AUS3-1800
             originNodeId: N-AUS3
             departedAt: '2026-10-22T23:15:00Z'
     LoadArrived:
@@ -1263,7 +1319,9 @@ components:
       contentType: application/cloudevents+json
       description: 'Consumed from `retailnetwork.linehaul-transportation.events`; `type` = `com.retailnetwork.logistics.linehaul-transportation.load.LoadArrived`
         (dispatch on the full type). Tolerant local copy: only the fields delivery-promise relies on are listed and unknown
-        fields are ignored. Use: pairs the load''s open row into one measured transit observation (ADR 0014).'
+        fields are ignored. Use: pairs the load''s open row into one measured transit observation (ADR 0014); when the optional
+        `departureId` is present, records the departure''s arrival in the DepartureArrival read model that the late-risk sweep
+        reads (ADR 0021). An event without a `departureId` is ignored by that model and counted.'
       tags:
       - name: consumed-linehaul-transportation
       payload:
@@ -1282,6 +1340,7 @@ components:
           dataschema: urn:retailnetwork:linehaul-transportation:events:LoadArrived:v1
           data:
             loadId: ld-91f2
+            departureId: dep-AUS3-1800
             destinationNodeId: N-SAU1
             arrivedAt: '2026-10-23T00:45:00Z'
     DeliveryWaveScheduled:
@@ -1429,6 +1488,45 @@ components:
             grade: B
             observations: 120
             computedAt: '2026-10-22T06:00:00Z'
+    NodeTierEligibilityChanged:
+      name: NodeTierEligibilityChanged
+      title: A node's fast-tier eligibility changed
+      summary: A node's fast-tier eligibility changed.
+      contentType: application/cloudevents+json
+      description: 'Consumed from `retailnetwork.node-performance.events`; `type` = `com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged`
+        (dispatch on the full type); subject and Kafka key = the scorecardId (`<nodeId>:7d`). Tolerant local copy: only the
+        fields delivery-promise relies on are listed and unknown fields are ignored (the producer also sends `metric`, `value`,
+        `threshold` and `window`). Raised by node-performance only when the node''s eligibility flips, as one event per tier
+        with the same `changedAt`. Use: upserts NodeTierEligibility (`rm_node_tier_eligibility`) when `changedAt` is not older
+        than the stored one; a missing row means ELIGIBLE. An ineligible node is removed from the SAME_DAY or NEXT_DAY candidates
+        of future quotes and estimates (ADR 0022); existing promises are never touched. An event with a `tier` other than
+        SAME_DAY or NEXT_DAY, or with a missing `nodeId`, `tier`, `eligible` or `changedAt`, is ignored and counted
+        (`deliverypromise_tier_eligibility_events_ignored_total`), never dead-lettered.'
+      tags:
+      - name: consumed-node-performance
+      payload:
+        $ref: '#/components/schemas/NodeTierEligibilityChangedConsumed'
+      examples:
+      - name: nodeTierEligibilityChanged
+        summary: A node lost its NEXT_DAY eligibility.
+        payload:
+          specversion: '1.0'
+          id: 7c1d3e52-0b6a-4f0e-9a41-5d2e8f3a0030
+          source: /retailnetwork/node-performance
+          type: com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged
+          subject: N-VWS-AUS3:7d
+          time: '2026-11-09T12:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:node-performance:events:NodeTierEligibilityChanged:v1
+          data:
+            nodeId: N-VWS-AUS3
+            tier: NEXT_DAY
+            eligible: false
+            metric: onTimeHandoverRate
+            value: 0.87
+            threshold: 0.9
+            window: 7d
+            changedAt: '2026-11-09T12:00:00Z'
     NodeRegistered:
       name: NodeRegistered
       title: A node was registered
@@ -1757,7 +1855,8 @@ components:
       contentType: application/cloudevents+json
       description: 'Consumed from `retailnetwork.offer-availability.events`; `type` = `com.retailnetwork.commerce.offer-availability.listing.ListingCreated`
         (dispatch on the full type). Tolerant local copy: only the fields delivery-promise relies on are listed and unknown
-        fields are ignored. Use: Upserts the listing row of AvailabilityView.'
+        fields are ignored. Use: Upserts the listing row of AvailabilityView, keyed by (catalogItemId, nodeId,
+        ownerRef); an absent ownerRef is operator-owned (ADR 0017).'
       tags:
       - name: consumed-offer-availability
       payload:
@@ -1785,7 +1884,8 @@ components:
       contentType: application/cloudevents+json
       description: 'Consumed from `retailnetwork.offer-availability.events`; `type` = `com.retailnetwork.commerce.offer-availability.listing.ListingAvailabilityChanged`
         (dispatch on the full type). Tolerant local copy: only the fields delivery-promise relies on are listed and unknown
-        fields are ignored. Use: Sets availableQty; an asOf older than the stored one is ignored.'
+        fields are ignored. Use: Sets availableQty of the (catalogItemId, nodeId, ownerRef) key; an asOf older than the
+        one stored for that key is ignored (ADR 0017).'
       tags:
       - name: consumed-offer-availability
       payload:
@@ -1938,6 +2038,15 @@ components:
       - SCHEDULED
       - MEASURED
       - NOMINAL
+    Confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+      multipleOf: 0.001
+      description: The calibrated probability, rounded to three decimals, that the quote is kept on time (ADR 0020),
+        which is the share of the judged promises of its segment (tier, basis, node grade) whose lateness was within the buffer
+        the quote carries. Optional and additive; present only when the segment has at least minCalibrationObservations
+        judgements in the window. Absent means UNKNOWN, never zero.
     GroupLine:
       type: object
       required:
@@ -1948,6 +2057,10 @@ components:
         quantity:
           type: integer
           minimum: 1
+        ownerRef:
+          type: string
+          description: The seller (sellerId) whose listing covers the line, chosen by the OwnerChoice rule (ADR 0017).
+            Optional and additive; omitted when the line is operator-owned.
     OrderDeadline:
       type: object
       required:
@@ -2005,6 +2118,8 @@ components:
                   omitted for a window persisted before it was carried.
               basis:
                 $ref: '#/components/schemas/Basis'
+              confidence:
+                $ref: '#/components/schemas/Confidence'
               policyVersion: *id001
               holdExpiresAt: *id002
               lines:
@@ -2234,8 +2349,20 @@ components:
                   omitted for a window persisted before it was carried.
               basis:
                 $ref: '#/components/schemas/Basis'
+              confidence:
+                $ref: '#/components/schemas/Confidence'
               policyVersion: *id001
               expiresAt: *id002
+              capacityBand:
+                type: string
+                enum:
+                - AMPLE
+                - TIGHT
+                - SCARCE
+                description: 'The capacity pressure on the PromiseBook the offer''s window would charge, read at quote time
+                  (ADR 0023): AMPLE below 60% of the share used by provisional plus confirmed holds, TIGHT from 60% to below
+                  85%, SCARCE from 85%. Optional and additive; omitted when the book has no finite capacity, never an empty
+                  string. Consumers decode tolerantly and ignore it.'
     PromisePolicyPublishedEvent:
       allOf:
       - $ref: '#/components/schemas/CloudEventEnvelope'
@@ -2253,6 +2380,10 @@ components:
             - transitWindowDays
             - transitServiceLevelPercent
             - minTransitObservations
+            - targetOnTimeProbabilityPercent
+            - minCalibrationObservations
+            - calibrationWindowDays
+            - maxCalibrationBufferMinutes
             - orderDeadlines
             - publishedAt
             properties:
@@ -2280,6 +2411,27 @@ components:
                 minimum: 5
                 maximum: 1000
                 description: Observations a lane needs before its measured transit beats the timetable (ADR 0014).
+              targetOnTimeProbabilityPercent:
+                type: integer
+                minimum: 50
+                maximum: 99
+                description: Share of the promises of a calibration segment the buffer aims to deliver on time; one value
+                  for every tier (ADR 0020).
+              minCalibrationObservations:
+                type: integer
+                minimum: 10
+                maximum: 10000
+                description: Judgements a segment needs inside the window before its buffer applies (ADR 0020).
+              calibrationWindowDays:
+                type: integer
+                minimum: 1
+                maximum: 365
+                description: Days of judgements a calibration segment keeps (ADR 0020).
+              maxCalibrationBufferMinutes:
+                type: integer
+                minimum: 0
+                maximum: 2880
+                description: Cap of a segment's buffer in minutes; 0 switches the buffer off (ADR 0020).
               orderDeadlines:
                 type: array
                 items:
@@ -2512,6 +2664,7 @@ components:
             - departedAt
             properties:
               loadId: *id001
+              departureId: *id001
               originNodeId: *id001
               departedAt: *id002
     LoadArrivedConsumed:
@@ -2527,6 +2680,7 @@ components:
             - arrivedAt
             properties:
               loadId: *id001
+              departureId: *id001
               destinationNodeId: *id001
               arrivedAt: *id002
     DeliveryWaveScheduledConsumed:
@@ -2610,6 +2764,30 @@ components:
                 - PROVISIONAL
               observations: *id003
               computedAt: *id002
+    NodeTierEligibilityChangedConsumed:
+      allOf:
+      - $ref: '#/components/schemas/ConsumedEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - nodeId
+            - tier
+            - eligible
+            - changedAt
+            properties:
+              nodeId: *id001
+              tier:
+                type: string
+                description: SAME_DAY or NEXT_DAY, the tiers node-performance governs. Any other value is ignored and counted.
+              eligible:
+                type: boolean
+                description: false = the node is removed from the tier's candidates; true = reinstated.
+              changedAt:
+                type: string
+                format: date-time
+                description: RFC 3339 UTC instant of the flip; an event older than the stored changedAt of the (node, tier) is dropped.
     NodeRegisteredConsumed:
       allOf:
       - $ref: '#/components/schemas/ConsumedEnvelope'
@@ -2806,6 +2984,10 @@ components:
               listingId: *id001
               catalogItemId: *id001
               nodeId: *id001
+              ownerRef:
+                type: string
+                description: The owning seller (sellerId); absent means operator-owned, stored as '' in the
+                  (catalogItemId, nodeId, ownerRef) key of AvailabilityView (ADR 0017).
     ListingAvailabilityChangedConsumed:
       allOf:
       - $ref: '#/components/schemas/ConsumedEnvelope'
@@ -2821,6 +3003,10 @@ components:
               listingId: *id001
               catalogItemId: *id001
               nodeId: *id001
+              ownerRef:
+                type: string
+                description: The owning seller (sellerId); absent means operator-owned (''). Keys the figure with
+                  catalogItemId and nodeId; the asOf rule applies per key (ADR 0017).
               availableQty: *id003
               asOf: *id002
     ListingSuppressedConsumed:

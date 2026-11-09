@@ -1,0 +1,87 @@
+---
+id: fulfillment-execution-api-formWorkBatch
+version: 1.0.0
+name: formWorkBatch
+summary: Form this station's pick walk (ADR 0063)
+schemaPath: ''
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Stations'
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Tasks'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/stations/{stationId}/work-batches'
+  statusCodes:
+    - '200'
+    - '201'
+    - '400'
+    - '404'
+    - '409'
+    - '500'
+    - '503'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Pick batching behind the `PICK_BATCH_MODE` rollout gate. The anchor is exactly the task `POST /stations/{stationId}/task-claims` with `taskType: PICK` would return (the same claimer selects it), so batching never changes who goes first; companions are the station's interleaving-hint candidates inside the anchor's CPT band, in hint rank order, kept only when the station can do them and the cart segregation matrix allows sharing, up to the configured maximum (default 4). A batch of one is valid; nothing waits for a batch to fill. With the mode not `on` (the fleet default is `off`) the surface answers 503 batch-mode-off and `task-claims` is the only dispatch path, exactly as before.
+
+
+
+
+
+## POST `(/stations/{stationId}/work-batches)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Caller-supplied key, 1-128 printable ASCII characters (a UUID minted once per LOGICAL submit; a retry reuses it, a new user action mints a new one). Required on every POST: a missing key is `400 idempotency-key-required`, a malformed one `400 idempotency-key-invalid`. The key is global to the service: a retry with the same method, path and body replays the stored answer (status, body and `Location`) with `Idempotency-Replayed: true` and runs nothing; the same key with a different method, path or body is `409 idempotency-key-reused`.
+
+- **stationId** (path) (required): The station forming its walk, e.g. as registered via `POST /stations`.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+#### <span className="text-red-500">503 Service Unavailable</span>
+RFC 7807 (Problem Details for HTTP APIs) error response, used for every error this API returns. See https://www.rfc-editor.org/rfc/rfc7807.
+
+<SchemaViewer file="response-503.json" maxHeight="500" id="response-503" />
+
+
+
+## Architecture
+
+<NodeGraph />

@@ -1,0 +1,81 @@
+---
+id: dock-scheduling-api-bookAppointment
+version: 1.0.0
+name: bookAppointment
+summary: Book an appointment
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Appointments'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /appointments
+  statusCodes:
+    - '201'
+    - '400'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Books a window on a door. The door must be a known Dock slot of a site whose `dockFlow` allows the direction; the
+window must not start in the past, last at most the site's maximum (4 h) and start and end on the site's slot granularity, lie inside the door's operating hours and
+outside its closures, and not overlap another `BOOKED` or `CHECKED_IN` appointment of the door. INBOUND covers at
+least one known, not cancelled ASN that sits on no other active appointment (409 `asn-already-scheduled`); OUTBOUND names a known `cptId` or at least one shipment reference. Requires an
+`Idempotency-Key`. Publishes `DockAppointmentBooked`. The answer carries the `Location` of the new appointment and
+its `ETag`.
+
+
+
+
+
+## POST `(/appointments)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Caller-generated unique key (a UUID per logical submit; a retry reuses it) that makes a retried request safe.
+Required on every POST; answered with 400 `idempotency-key-required` when absent and 400
+`idempotency-key-invalid` when it is longer than 128 characters or not printable ASCII. A replay with the same key
+and the same request (method, path and body) returns the stored response with `Idempotency-Replayed: true`; the
+same key with a different request is a 409 `idempotency-key-reused`.
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />
