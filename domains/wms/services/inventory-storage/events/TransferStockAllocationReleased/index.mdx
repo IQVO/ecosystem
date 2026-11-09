@@ -1,0 +1,39 @@
+---
+id: TransferStockAllocationReleased
+version: 1.0.0
+name: Transfer Stock Allocation Released
+summary: >-
+  A transfer cancelled after allocation had its origin hold resolved; the saga
+  settles.
+badges:
+  - content: reservation
+    textColor: blue
+    backgroundColor: blue
+schemaPath: schema.json
+owners:
+  - claudioed
+---
+## Description
+Raised by the ReleaseTransferAllocation use case (ADR 0051) when a TransferAllocationReleaseRequested command was decided — the compensation leg of the transfer saga, so a stuck or abandoned ALLOCATED transfer never strands its origin reservation until lazy expiry. `outcome` is a CLOSED set: RELEASED (the reservation still held the stock; this revoked it and returned the quantity to usable), ALREADY_RESOLVED (the reservation had already expired or been confirmed — or the line's allocation was REJECTED, so no hold ever existed; either way the hold is gone). BOTH outcomes settle the saga as success. `reason` is the command's cancellation reason carried through, or IDEMPOTENCY_CONFLICT on the answer to a conflicting replay (the original ledger decision stands).
+
+**Integration topic only** (no analytics variant). Kafka key and CloudEvents `subject` are the transfer_line_id, mirroring TransferStockAllocationRejected — the release settles the line, so the line is the aggregate the fact is about.
+
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inventory-storage.reservation.TransferStockAllocationReleased` |
+| CloudEvents `source` | `/warehouse/inventory-storage` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `tl-77-1`) |
+| CloudEvents `dataschema` | `urn:warehouse:inventory-storage:events:TransferStockAllocationReleased:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inventory.events` |
+| Entity / aggregate | `reservation` |
+
+
+## Architecture
+<NodeGraph />
+
+
+## Schema
+<SchemaViewer file="schema.json" title="Message Schema" maxHeight="500" />

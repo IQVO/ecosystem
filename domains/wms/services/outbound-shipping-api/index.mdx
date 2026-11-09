@@ -1,0 +1,116 @@
+---
+id: outbound-shipping-api
+version: 1.0.0
+name: Outbound Shipping API
+summary: >-
+  REST API of outbound-shipping. Gets every manifested package onto the right
+  load before its cutoff, proves what left on which trailer, and tells the fleet
+  that an order has actually shipped: staging, the outbound load, ship-confirm
+  on the trailer's physical departure, and the bill of lading.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Outbound Shipping API
+badges:
+  - content: Packages
+    textColor: blue
+    backgroundColor: blue
+  - content: Loads
+    textColor: blue
+    backgroundColor: blue
+  - content: Bills of lading
+    textColor: blue
+    backgroundColor: blue
+  - content: Sweeps
+    textColor: blue
+    backgroundColor: blue
+  - content: Reports
+    textColor: blue
+    backgroundColor: blue
+  - content: Health
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: outbound-shipping-api-stagePackage
+    version: 1.0.0
+  - id: outbound-shipping-api-loadPackage
+    version: 1.0.0
+  - id: outbound-shipping-api-unloadPackage
+    version: 1.0.0
+  - id: outbound-shipping-api-closeLoad
+    version: 1.0.0
+  - id: outbound-shipping-api-reopenLoad
+    version: 1.0.0
+  - id: outbound-shipping-api-cancelLoad
+    version: 1.0.0
+  - id: outbound-shipping-api-voidBillOfLading
+    version: 1.0.0
+  - id: outbound-shipping-api-listLoads
+    version: 1.0.0
+  - id: outbound-shipping-api-getLoad
+    version: 1.0.0
+  - id: outbound-shipping-api-listLoadPackages
+    version: 1.0.0
+  - id: outbound-shipping-api-getBillOfLading
+    version: 1.0.0
+  - id: outbound-shipping-api-runMissedLoadSweep
+    version: 1.0.0
+  - id: outbound-shipping-api-getLoadAdherenceReport
+    version: 1.0.0
+  - id: outbound-shipping-api-getLiveness
+    version: 1.0.0
+  - id: outbound-shipping-api-getReadiness
+    version: 1.0.0
+---
+## Purpose
+Gets every manifested package onto the right load before its cutoff, proves what left on which trailer, and tells the fleet that an order has actually shipped: staging, the outbound load, ship-confirm on the trailer's physical departure, and the bill of lading.
+
+| | |
+|---|---|
+| Bounded context | `outbound-shipping` |
+| Domain | WMS (`wms`) |
+| DDD classification | Supporting |
+| Tier | WMS |
+| Repository | [IQVO/outbound-shipping](https://github.com/IQVO/outbound-shipping) |
+| Events | [outbound-shipping](/docs/services/outbound-shipping) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+Commands and queries of the **outbound-shipping** bounded context (WMS
+subdomain, ADR 0001): staging manifested packages at the door, planning
+and loading the outbound load for one cutoff, closing and ship-confirming
+it on the trailer's physical departure (ADR 0002), and issuing the bill
+of lading.
+
+**Routes.** Every route below is the domain model's `rest` list verbatim:
+dock operators drive package scans (`stagings`, `loadings`,
+`unloadings`), dock supervisors decide loads (`closures`, `reopenings`,
+`cancellations`, BOL `voids`), and a scheduler sweeps missed loads. The
+service is written through a transactional outbox: a REST command
+persists the aggregate AND its already-encoded CloudEvents in one
+transaction; a relay drains them to Kafka
+(`warehouse.outbound-shipping.events`, ADR 0005).
+
+**Idempotency.** Every POST takes an `Idempotency-Key` (fleet REST
+guideline R3): the first request executes, a replay returns the original
+response with `Idempotency-Replayed: true`, and a key reused with a
+DIFFERENT body is a `409 idempotency-key-reused` (R4).
+
+**Errors** are RFC 9457 problem+json with a fleet `code`. The domain
+refusals map 1:1 to the model's invariant errors, e.g.
+`409 packages-outstanding` (`ErrPackagesOutstanding`),
+`409 load-not-closed` (`ErrLoadNotClosed`),
+`422 not-staging-location` (`ErrNotStagingLocation`).
+  
+
+## Architecture diagram
+<NodeGraph />

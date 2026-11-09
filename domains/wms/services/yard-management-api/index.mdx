@@ -1,0 +1,136 @@
+---
+id: yard-management-api
+version: 1.0.0
+name: Yard Management API
+summary: >-
+  REST API of yard-management. Owns everything physically on site outside the
+  four walls: who passed the gate (visits), which trailer is where (spot, door
+  or an open move), its load, seal and hold state, the moves hostlers and
+  visiting drivers make, door work at the door, and yard checks.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Yard Management API
+badges:
+  - content: Visits
+    textColor: blue
+    backgroundColor: blue
+  - content: Trailers
+    textColor: blue
+    backgroundColor: blue
+  - content: Moves
+    textColor: blue
+    backgroundColor: blue
+  - content: Yard checks
+    textColor: blue
+    backgroundColor: blue
+  - content: Yard board
+    textColor: blue
+    backgroundColor: blue
+  - content: Yard policy
+    textColor: blue
+    backgroundColor: blue
+  - content: Sweeps
+    textColor: blue
+    backgroundColor: blue
+  - content: Reports
+    textColor: blue
+    backgroundColor: blue
+  - content: Health
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: yard-management-api-getHealthz
+    version: 1.0.0
+  - id: yard-management-api-getReadyz
+    version: 1.0.0
+  - id: yard-management-api-checkInVisit
+    version: 1.0.0
+  - id: yard-management-api-listVisits
+    version: 1.0.0
+  - id: yard-management-api-getVisit
+    version: 1.0.0
+  - id: yard-management-api-checkOutVisit
+    version: 1.0.0
+  - id: yard-management-api-rejectAtGate
+    version: 1.0.0
+  - id: yard-management-api-listTrailers
+    version: 1.0.0
+  - id: yard-management-api-getTrailer
+    version: 1.0.0
+  - id: yard-management-api-startDoorWork
+    version: 1.0.0
+  - id: yard-management-api-completeDoorWork
+    version: 1.0.0
+  - id: yard-management-api-placeHold
+    version: 1.0.0
+  - id: yard-management-api-releaseHold
+    version: 1.0.0
+  - id: yard-management-api-recordSeal
+    version: 1.0.0
+  - id: yard-management-api-requestMove
+    version: 1.0.0
+  - id: yard-management-api-listMoves
+    version: 1.0.0
+  - id: yard-management-api-claimNextMove
+    version: 1.0.0
+  - id: yard-management-api-completeMove
+    version: 1.0.0
+  - id: yard-management-api-cancelMove
+    version: 1.0.0
+  - id: yard-management-api-openYardCheck
+    version: 1.0.0
+  - id: yard-management-api-recordObservation
+    version: 1.0.0
+  - id: yard-management-api-closeYardCheck
+    version: 1.0.0
+  - id: yard-management-api-getYardBoard
+    version: 1.0.0
+  - id: yard-management-api-getYardPolicy
+    version: 1.0.0
+  - id: yard-management-api-declareYardPolicy
+    version: 1.0.0
+  - id: yard-management-api-sweepDwell
+    version: 1.0.0
+  - id: yard-management-api-sweepMoveLeases
+    version: 1.0.0
+  - id: yard-management-api-getYardDwellReport
+    version: 1.0.0
+  - id: yard-management-api-getDoorUtilisationReport
+    version: 1.0.0
+  - id: yard-management-api-getHostlerProductivityReport
+    version: 1.0.0
+  - id: yard-management-api-getReportsFreshness
+    version: 1.0.0
+---
+## Purpose
+Owns everything physically on site outside the four walls: who passed the gate (visits), which trailer is where (spot, door or an open move), its load, seal and hold state, the moves hostlers and visiting drivers make, door work at the door, and yard checks. The source of dwell, door occupancy and yard truck productivity facts.
+
+| | |
+|---|---|
+| Bounded context | `yard-management` |
+| Domain | WMS (`wms`) |
+| DDD classification | Supporting |
+| Tier | WMS |
+| Repository | [IQVO/yard-management](https://github.com/IQVO/yard-management) |
+| Events | [yard-management](/docs/services/yard-management) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+The WMS-tier owner of everything physically on site outside the four walls (ADR 0001, ADR 0002): visits through the gate (YardVisit), the trailers on site and where each is (Trailer), the moves hostlers and visiting drivers make (YardMove), yard checks (YardCheck) and the per-site yard rules (YardPolicy). It is the source of dwell, door occupancy and yard truck productivity facts.
+
+A trailer on site is at exactly one place: one yard spot, one door, or one open move. A spot or a door holds at most one trailer. Moves are pulled by hostlers (claim-next with a lease), never pushed. Appointments, door closures, locations and ASN contents come from event-fed local copies (ADR 0003); this API never calls a sibling context. Events are published as CloudEvents on `warehouse.yard-management.events` and `.analytics` through a transactional outbox (see `apis/asyncapi.yaml`).
+
+Sites are addressed by siteCode and doors and spots by their facility-layout locationCode (globally unique). Errors are RFC 7807 problem documents with `type = https://errors.yard-management.warehouse-systems.dev/<slug>`, the slug being the kebab-case of the domain error name (`ErrLocationOccupied` is `location-occupied`). There is no authentication layer (fleet decision 2026-09-11).  
+
+## Architecture diagram
+<NodeGraph />

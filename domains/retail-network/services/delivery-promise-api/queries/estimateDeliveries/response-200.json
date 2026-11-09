@@ -1,0 +1,133 @@
+{
+  "type": "object",
+  "description": "Advisory estimates; nothing was stored and no capacity is reserved.",
+  "required": [
+    "computedAt",
+    "destinationPostalPrefix",
+    "estimates"
+  ],
+  "properties": {
+    "computedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The instant every estimate of the response was computed at."
+    },
+    "destinationPostalPrefix": {
+      "type": "string"
+    },
+    "estimates": {
+      "type": "array",
+      "description": "One per requested item, in request order.",
+      "items": {
+        "type": "object",
+        "description": "The advisory estimate of one requested item.",
+        "required": [
+          "catalogItemId",
+          "quantity",
+          "options",
+          "constraints"
+        ],
+        "properties": {
+          "catalogItemId": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 999
+          },
+          "options": {
+            "type": "array",
+            "description": "The best option per requested tier that has one, ordered by tier.",
+            "items": {
+              "type": "object",
+              "description": "The best option of one tier, with the same fields and semantics as the quote's best offer of that tier for the same single line.",
+              "required": [
+                "tier",
+                "window",
+                "basis"
+              ],
+              "properties": {
+                "tier": {
+                  "type": "string",
+                  "description": "Service tier (promise.Tier).",
+                  "enum": [
+                    "SAME_DAY",
+                    "NEXT_DAY",
+                    "TWO_DAY",
+                    "STANDARD"
+                  ]
+                },
+                "window": {
+                  "type": "object",
+                  "description": "The option's delivery window as two instants (RFC 3339 UTC) and the local calendar they belong to: start and end are what a quote's offer calls window.earliest and window.latest (ADR 0011). Convert both into timeZone before taking their date.",
+                  "required": [
+                    "start",
+                    "end",
+                    "timeZone"
+                  ],
+                  "properties": {
+                    "start": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "end": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "timeZone": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "example": "America/Chicago",
+                      "description": "IANA time zone of the delivery station serving the destination."
+                    }
+                  }
+                },
+                "basis": {
+                  "type": "string",
+                  "description": "Promise basis: SCHEDULED from the timetable, MEASURED when a leg's measured transit pushed the arrival later (ADR 0014), NOMINAL from lane times (STANDARD only).",
+                  "enum": [
+                    "SCHEDULED",
+                    "MEASURED",
+                    "NOMINAL"
+                  ]
+                },
+                "orderByAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "The latest instant an order can be placed and still make this window's witness pickup cutoff, as on a quote's offer; omitted when unknown."
+                }
+              }
+            }
+          },
+          "constraints": {
+            "type": "array",
+            "description": "The item-wide constraints first (no tier), then one per blocked tier, ordered by tier.",
+            "items": {
+              "type": "object",
+              "description": "Why a tier has no option, in the quote's OfferConstraint vocabulary. tier is omitted when the constraint holds for the item on every tier alike (DESTINATION_NOT_SERVED, ITEM_QUANTITY_NOT_AVAILABLE, the two a quote reports without a groupNo); every other constraint names its tier.",
+              "required": [
+                "code"
+              ],
+              "properties": {
+                "tier": "[Circular]",
+                "code": {
+                  "type": "string",
+                  "description": "Why a tier has no offer. PAST_ORDER_DEADLINE: the tier's order deadline in the destination region has passed (G19).",
+                  "enum": [
+                    "DESTINATION_NOT_SERVED",
+                    "ITEM_QUANTITY_NOT_AVAILABLE",
+                    "DELIVERY_SLA_UNAVAILABLE",
+                    "NODE_CAPACITY_EXHAUSTED",
+                    "PAST_ORDER_DEADLINE"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "isSchema": true
+}

@@ -58,6 +58,30 @@ export const CONTEXTS = {
       "Everything before the first stow: advance ship notices (ASN), dock-door appointments, goods receipt and discrepancy capture. Hands received units to inventory-storage as events.",
     topics: ["warehouse.inbound-receiving.events", "warehouse.inbound-receiving.analytics"],
   },
+  'dock-scheduling': {
+    subdomain: 'wms',
+    classification: 'Supporting',
+    tier: 'WMS',
+    purpose:
+      "Owns the door calendar of every site: every booked time window on every dock door, inbound and outbound, from booking through arrival to door release, the no-double-booking rule, door opening hours and closures, ETA-driven risk and no-shows.",
+    topics: ["warehouse.dock-scheduling.events", "warehouse.dock-scheduling.analytics"],
+  },
+  'yard-management': {
+    subdomain: 'wms',
+    classification: 'Supporting',
+    tier: 'WMS',
+    purpose:
+      "Owns everything physically on site outside the four walls: who passed the gate (visits), which trailer is where (spot, door or an open move), its load, seal and hold state, the moves hostlers and visiting drivers make, door work at the door, and yard checks. The source of dwell, door occupancy and yard truck productivity facts.",
+    topics: ["warehouse.yard-management.events", "warehouse.yard-management.analytics"],
+  },
+  'outbound-shipping': {
+    subdomain: 'wms',
+    classification: 'Supporting',
+    tier: 'WMS',
+    purpose:
+      "Gets every manifested package onto the right load before its cutoff, proves what left on which trailer, and tells the fleet that an order has actually shipped: staging, the outbound load, ship-confirm on the trailer's physical departure, and the bill of lading.",
+    topics: ["warehouse.outbound-shipping.events", "warehouse.outbound-shipping.analytics"],
+  },
   'inventory-storage': {
     subdomain: 'wms',
     classification: 'Core',
