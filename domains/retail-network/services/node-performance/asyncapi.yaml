@@ -27,7 +27,8 @@ info:
     7-day and 30-day rolling windows and grades the node (ADR 0001, ADR 0002).
 
 
-    **Published.** Two events through a **transactional outbox**: the scorecard
+    **Published.** Three events through a **transactional outbox**: the
+    scorecard
 
     row and its already-encoded events are written in ONE database transaction
 
@@ -39,9 +40,14 @@ info:
 
     `retailnetwork.node-performance.events` (consumers: delivery-promise,
 
-    order-sourcing). `NodeThresholdBreached` is analytics-only and goes ONLY to
+    order-sourcing). `NodeTierEligibilityChanged` is an integration event on the
 
-    `retailnetwork.node-performance.analytics`. Both types are catalogued in
+    same topic: the fast-tier eligibility gate of the 7d scorecard (ADR 0013).
+
+    `NodeThresholdBreached` is analytics-only and goes ONLY to
+
+    `retailnetwork.node-performance.analytics`. All three types are catalogued
+    in
 
     ADR 0004.
 
@@ -124,8 +130,9 @@ channels:
           Recompute once the scorecard is saved, and not while a scorecard stays
           PROVISIONAL. `grade` is `PROVISIONAL` below minObservations (50) and
           also when a GRADED scorecard falls back below it. Consumers use the
-          30d window; PROVISIONAL adds no handicap (G20, E18). Metric
-          definitions are in ADR 0002 (A5-A10).
+          30d window; the 7d window gates the fast tiers through
+          NodeTierEligibilityChanged (ADR 0013); PROVISIONAL adds no handicap
+          (G20, E18). Metric definitions are in ADR 0002 (A5-A10).
         contentType: application/cloudevents+json
         tags:
           - name: scorecard
@@ -280,6 +287,154 @@ channels:
                 observations: 1874
                 computedAt: '2026-10-22T14:03:00Z'
         x-parser-unique-object-id: NodeScorecardUpdated
+      NodeTierEligibilityChanged:
+        name: NodeTierEligibilityChanged
+        title: Node tier eligibility changed
+        summary: >-
+          A node was suspended from, or reinstated to, the SAME_DAY and NEXT_DAY
+          tiers.
+        description: >-
+          `type` =
+          `com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged`;
+          subject and key = the scorecardId of the 7d scorecard (`nodeId:7d`).
+          Integration event: published to
+          `retailnetwork.node-performance.events`, dataschema stream `events`.
+          Raised by Recompute of the 7d scorecard (policy FastTierEligibility,
+          ADR 0013) only when the eligibility flag FLIPS, two events per flip
+          (one per tier, the same `changedAt`), in the same transaction as the
+          scorecard save. Every node starts ELIGIBLE and the initial state
+          publishes nothing. Suspension: the GRADED 7d `onTimeHandoverRate` fell
+          below 0.90 (`threshold` 0.90, `eligible` false). Reinstatement: the
+          GRADED 7d `onTimeHandoverRate` stood at or above 0.95 (`threshold`
+          0.95, `eligible` true) on three consecutive distinct UTC days of
+          recompute. `value` is the rate that caused the change. A consumer that
+          never saw an event treats the node as eligible.
+        contentType: application/cloudevents+json
+        tags:
+          - name: scorecard
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-1>
+                id:
+                  type: string
+                  description: The CloudEvents id; the idempotency key of every consumer.
+                  x-parser-schema-id: <anonymous-schema-2>
+                source:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-3>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-4>
+                subject:
+                  type: string
+                  description: The aggregate root id of the producer.
+                  x-parser-schema-id: <anonymous-schema-5>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-6>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-7>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-8>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                source:
+                  const: /retailnetwork/node-performance
+                  x-parser-schema-id: <anonymous-schema-22>
+                data:
+                  type: object
+                  required:
+                    - nodeId
+                    - tier
+                    - eligible
+                    - metric
+                    - value
+                    - threshold
+                    - window
+                    - changedAt
+                  properties:
+                    nodeId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-24>
+                    tier:
+                      type: string
+                      enum:
+                        - SAME_DAY
+                        - NEXT_DAY
+                      x-parser-schema-id: <anonymous-schema-25>
+                    eligible:
+                      type: boolean
+                      x-parser-schema-id: <anonymous-schema-26>
+                    metric:
+                      type: string
+                      const: onTimeHandoverRate
+                      x-parser-schema-id: <anonymous-schema-27>
+                    value:
+                      type: number
+                      minimum: 0
+                      maximum: 1
+                      x-parser-schema-id: <anonymous-schema-28>
+                    threshold:
+                      type: number
+                      enum:
+                        - 0.9
+                        - 0.95
+                      x-parser-schema-id: <anonymous-schema-29>
+                    window:
+                      type: string
+                      const: 7d
+                      x-parser-schema-id: <anonymous-schema-30>
+                    changedAt:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-31>
+                  x-parser-schema-id: <anonymous-schema-23>
+              x-parser-schema-id: <anonymous-schema-21>
+          x-parser-schema-id: NodeTierEligibilityChangedEvent
+        examples:
+          - name: nodeTierEligibilityChanged
+            summary: A node was suspended from the SAME_DAY tier.
+            payload:
+              specversion: '1.0'
+              id: 7d0c6a52-3f7e-4b8e-9a51-2a8f0c1d9e46
+              source: /retailnetwork/node-performance
+              type: >-
+                com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged
+              subject: node-0f3a91:7d
+              time: '2026-10-22T14:03:00Z'
+              datacontenttype: application/json
+              dataschema: >-
+                urn:retailnetwork:node-performance:events:NodeTierEligibilityChanged:v1
+              data:
+                nodeId: node-0f3a91
+                tier: SAME_DAY
+                eligible: false
+                metric: onTimeHandoverRate
+                value: 0.88
+                threshold: 0.9
+                window: 7d
+                changedAt: '2026-10-22T14:03:00Z'
+        x-parser-unique-object-id: NodeTierEligibilityChanged
     x-eventcatalog-channel-version: 1.0.0
     x-parser-unique-object-id: nodePerformanceEvents
   nodePerformanceAnalytics:
@@ -353,7 +508,7 @@ channels:
               properties:
                 source:
                   const: /retailnetwork/node-performance
-                  x-parser-schema-id: <anonymous-schema-22>
+                  x-parser-schema-id: <anonymous-schema-33>
                 data:
                   type: object
                   required:
@@ -365,7 +520,7 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-24>
+                      x-parser-schema-id: <anonymous-schema-35>
                     metric:
                       type: string
                       enum:
@@ -375,23 +530,23 @@ channels:
                         - expiryRate
                         - promiseKeptRate
                         - feedFreshnessP95Minutes
-                      x-parser-schema-id: <anonymous-schema-25>
+                      x-parser-schema-id: <anonymous-schema-36>
                     value:
                       type: number
                       minimum: 0
-                      x-parser-schema-id: <anonymous-schema-26>
+                      x-parser-schema-id: <anonymous-schema-37>
                     threshold:
                       type: number
                       minimum: 0
-                      x-parser-schema-id: <anonymous-schema-27>
+                      x-parser-schema-id: <anonymous-schema-38>
                     window:
                       type: string
                       enum:
                         - 7d
                         - 30d
                       x-parser-schema-id: ScorecardWindow
-                  x-parser-schema-id: <anonymous-schema-23>
-              x-parser-schema-id: <anonymous-schema-21>
+                  x-parser-schema-id: <anonymous-schema-34>
+              x-parser-schema-id: <anonymous-schema-32>
           x-parser-schema-id: NodeThresholdBreachedEvent
         examples:
           - name: nodeThresholdBreached
@@ -489,15 +644,15 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.vendoraccount.VendorOnboarded
-                  x-parser-schema-id: <anonymous-schema-29>
+                  x-parser-schema-id: <anonymous-schema-40>
                 data:
                   type: object
                   properties:
                     vendorId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-31>
-                  x-parser-schema-id: <anonymous-schema-30>
-              x-parser-schema-id: <anonymous-schema-28>
+                      x-parser-schema-id: <anonymous-schema-42>
+                  x-parser-schema-id: <anonymous-schema-41>
+              x-parser-schema-id: <anonymous-schema-39>
           x-parser-schema-id: VendorOnboardedEvent
         examples:
           - name: vendorOnboarded
@@ -581,7 +736,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderIssued
-                  x-parser-schema-id: <anonymous-schema-33>
+                  x-parser-schema-id: <anonymous-schema-44>
                 data:
                   type: object
                   required:
@@ -592,20 +747,20 @@ channels:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-35>
+                      x-parser-schema-id: <anonymous-schema-46>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-36>
+                      x-parser-schema-id: <anonymous-schema-47>
                     requiredShipBy:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-37>
+                      x-parser-schema-id: <anonymous-schema-48>
                     ackBy:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-38>
-                  x-parser-schema-id: <anonymous-schema-34>
-              x-parser-schema-id: <anonymous-schema-32>
+                      x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: <anonymous-schema-45>
+              x-parser-schema-id: <anonymous-schema-43>
           x-parser-schema-id: PurchaseOrderIssuedEvent
         examples:
           - name: purchaseOrderIssued
@@ -694,7 +849,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderAccepted
-                  x-parser-schema-id: <anonymous-schema-40>
+                  x-parser-schema-id: <anonymous-schema-51>
                 data:
                   type: object
                   required:
@@ -704,16 +859,16 @@ channels:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-42>
+                      x-parser-schema-id: <anonymous-schema-53>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-43>
+                      x-parser-schema-id: <anonymous-schema-54>
                     acceptedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-44>
-                  x-parser-schema-id: <anonymous-schema-41>
-              x-parser-schema-id: <anonymous-schema-39>
+                      x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-52>
+              x-parser-schema-id: <anonymous-schema-50>
           x-parser-schema-id: PurchaseOrderAcceptedEvent
         examples:
           - name: purchaseOrderAccepted
@@ -800,7 +955,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderRejected
-                  x-parser-schema-id: <anonymous-schema-46>
+                  x-parser-schema-id: <anonymous-schema-57>
                 data:
                   type: object
                   required:
@@ -810,19 +965,19 @@ channels:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-48>
+                      x-parser-schema-id: <anonymous-schema-59>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-49>
+                      x-parser-schema-id: <anonymous-schema-60>
                     rejectedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-50>
+                      x-parser-schema-id: <anonymous-schema-61>
                     reasonCode:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-51>
-                  x-parser-schema-id: <anonymous-schema-47>
-              x-parser-schema-id: <anonymous-schema-45>
+                      x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-58>
+              x-parser-schema-id: <anonymous-schema-56>
           x-parser-schema-id: PurchaseOrderRejectedEvent
         examples:
           - name: purchaseOrderRejected
@@ -908,7 +1063,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderExpired
-                  x-parser-schema-id: <anonymous-schema-53>
+                  x-parser-schema-id: <anonymous-schema-64>
                 data:
                   type: object
                   required:
@@ -918,16 +1073,16 @@ channels:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-55>
+                      x-parser-schema-id: <anonymous-schema-66>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-56>
+                      x-parser-schema-id: <anonymous-schema-67>
                     ackBy:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-57>
-                  x-parser-schema-id: <anonymous-schema-54>
-              x-parser-schema-id: <anonymous-schema-52>
+                      x-parser-schema-id: <anonymous-schema-68>
+                  x-parser-schema-id: <anonymous-schema-65>
+              x-parser-schema-id: <anonymous-schema-63>
           x-parser-schema-id: PurchaseOrderExpiredEvent
         examples:
           - name: purchaseOrderExpired
@@ -1014,7 +1169,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.VendorShipmentConfirmed
-                  x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-70>
                 data:
                   type: object
                   required:
@@ -1024,16 +1179,16 @@ channels:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-72>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-62>
+                      x-parser-schema-id: <anonymous-schema-73>
                     requiredShipBy:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-63>
-                  x-parser-schema-id: <anonymous-schema-60>
-              x-parser-schema-id: <anonymous-schema-58>
+                      x-parser-schema-id: <anonymous-schema-74>
+                  x-parser-schema-id: <anonymous-schema-71>
+              x-parser-schema-id: <anonymous-schema-69>
           x-parser-schema-id: VendorShipmentConfirmedEvent
         examples:
           - name: vendorShipmentConfirmed
@@ -1120,15 +1275,15 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.submission.SubmissionProcessed
-                  x-parser-schema-id: <anonymous-schema-65>
+                  x-parser-schema-id: <anonymous-schema-76>
                 data:
                   type: object
                   properties:
                     transactionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-67>
-                  x-parser-schema-id: <anonymous-schema-66>
-              x-parser-schema-id: <anonymous-schema-64>
+                      x-parser-schema-id: <anonymous-schema-78>
+                  x-parser-schema-id: <anonymous-schema-77>
+              x-parser-schema-id: <anonymous-schema-75>
           x-parser-schema-id: SubmissionProcessedEvent
         examples:
           - name: submissionProcessed
@@ -1216,7 +1371,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.inboundreceipt.InboundReceiptSubmitted
-                  x-parser-schema-id: <anonymous-schema-69>
+                  x-parser-schema-id: <anonymous-schema-80>
                 data:
                   type: object
                   required:
@@ -1227,14 +1382,14 @@ channels:
                   properties:
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-82>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-83>
                     receivedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-73>
+                      x-parser-schema-id: <anonymous-schema-84>
                     cartons:
                       type: array
                       items:
@@ -1249,11 +1404,11 @@ channels:
                               - MISSING
                               - UNEXPECTED
                               - DAMAGED
-                            x-parser-schema-id: <anonymous-schema-76>
-                        x-parser-schema-id: <anonymous-schema-75>
-                      x-parser-schema-id: <anonymous-schema-74>
-                  x-parser-schema-id: <anonymous-schema-70>
-              x-parser-schema-id: <anonymous-schema-68>
+                            x-parser-schema-id: <anonymous-schema-87>
+                        x-parser-schema-id: <anonymous-schema-86>
+                      x-parser-schema-id: <anonymous-schema-85>
+                  x-parser-schema-id: <anonymous-schema-81>
+              x-parser-schema-id: <anonymous-schema-79>
           x-parser-schema-id: InboundReceiptSubmittedEvent
         examples:
           - name: inboundReceiptSubmitted
@@ -1366,7 +1521,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.partner.seller-inbound.inboundshipment.InboundShipmentShipped
-                  x-parser-schema-id: <anonymous-schema-78>
+                  x-parser-schema-id: <anonymous-schema-89>
                 data:
                   type: object
                   required:
@@ -1376,16 +1531,16 @@ channels:
                   properties:
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-80>
+                      x-parser-schema-id: <anonymous-schema-91>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-81>
+                      x-parser-schema-id: <anonymous-schema-92>
                     shippedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-82>
-                  x-parser-schema-id: <anonymous-schema-79>
-              x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-93>
+                  x-parser-schema-id: <anonymous-schema-90>
+              x-parser-schema-id: <anonymous-schema-88>
           x-parser-schema-id: InboundShipmentShippedEvent
         examples:
           - name: inboundShipmentShipped
@@ -1488,7 +1643,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.logistics.shipping-and-tracking.journey.PackageHandedOver
-                  x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-95>
                 data:
                   type: object
                   required:
@@ -1498,16 +1653,16 @@ channels:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-86>
+                      x-parser-schema-id: <anonymous-schema-97>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-87>
+                      x-parser-schema-id: <anonymous-schema-98>
                     handedOverAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-88>
-                  x-parser-schema-id: <anonymous-schema-85>
-              x-parser-schema-id: <anonymous-schema-83>
+                      x-parser-schema-id: <anonymous-schema-99>
+                  x-parser-schema-id: <anonymous-schema-96>
+              x-parser-schema-id: <anonymous-schema-94>
           x-parser-schema-id: PackageHandedOverEvent
         examples:
           - name: packageHandedOver
@@ -1601,7 +1756,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.commerce.delivery-promise.promise.PromiseKept
-                  x-parser-schema-id: <anonymous-schema-90>
+                  x-parser-schema-id: <anonymous-schema-101>
                 data:
                   type: object
                   required:
@@ -1610,13 +1765,13 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-92>
+                      x-parser-schema-id: <anonymous-schema-103>
                     deliveredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-93>
-                  x-parser-schema-id: <anonymous-schema-91>
-              x-parser-schema-id: <anonymous-schema-89>
+                      x-parser-schema-id: <anonymous-schema-104>
+                  x-parser-schema-id: <anonymous-schema-102>
+              x-parser-schema-id: <anonymous-schema-100>
           x-parser-schema-id: PromiseKeptEvent
         examples:
           - name: promiseKept
@@ -1702,7 +1857,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.commerce.delivery-promise.promise.PromiseBroken
-                  x-parser-schema-id: <anonymous-schema-95>
+                  x-parser-schema-id: <anonymous-schema-106>
                 data:
                   type: object
                   required:
@@ -1711,16 +1866,16 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-97>
+                      x-parser-schema-id: <anonymous-schema-108>
                     deliveredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-98>
+                      x-parser-schema-id: <anonymous-schema-109>
                     cause:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-99>
-                  x-parser-schema-id: <anonymous-schema-96>
-              x-parser-schema-id: <anonymous-schema-94>
+                      x-parser-schema-id: <anonymous-schema-110>
+                  x-parser-schema-id: <anonymous-schema-107>
+              x-parser-schema-id: <anonymous-schema-105>
           x-parser-schema-id: PromiseBrokenEvent
         examples:
           - name: promiseBroken
@@ -1818,7 +1973,7 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.commerce.offer-availability.inventoryfeed.InventoryFeedApplied
-                  x-parser-schema-id: <anonymous-schema-101>
+                  x-parser-schema-id: <anonymous-schema-112>
                 data:
                   type: object
                   required:
@@ -1827,13 +1982,13 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-103>
+                      x-parser-schema-id: <anonymous-schema-114>
                     appliedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-104>
-                  x-parser-schema-id: <anonymous-schema-102>
-              x-parser-schema-id: <anonymous-schema-100>
+                      x-parser-schema-id: <anonymous-schema-115>
+                  x-parser-schema-id: <anonymous-schema-113>
+              x-parser-schema-id: <anonymous-schema-111>
           x-parser-schema-id: InventoryFeedAppliedEvent
         examples:
           - name: inventoryFeedApplied
@@ -1930,15 +2085,15 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.logistics.node-topology.node.NodeRegistered
-                  x-parser-schema-id: <anonymous-schema-106>
+                  x-parser-schema-id: <anonymous-schema-117>
                 data:
                   type: object
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-108>
-                  x-parser-schema-id: <anonymous-schema-107>
-              x-parser-schema-id: <anonymous-schema-105>
+                      x-parser-schema-id: <anonymous-schema-119>
+                  x-parser-schema-id: <anonymous-schema-118>
+              x-parser-schema-id: <anonymous-schema-116>
           x-parser-schema-id: NodeRegisteredEvent
         examples:
           - name: nodeRegistered
@@ -2027,15 +2182,15 @@ channels:
                 type:
                   const: >-
                     com.retailnetwork.logistics.node-topology.node.NodeOperationalProfileDeclared
-                  x-parser-schema-id: <anonymous-schema-110>
+                  x-parser-schema-id: <anonymous-schema-121>
                 data:
                   type: object
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-112>
-                  x-parser-schema-id: <anonymous-schema-111>
-              x-parser-schema-id: <anonymous-schema-109>
+                      x-parser-schema-id: <anonymous-schema-123>
+                  x-parser-schema-id: <anonymous-schema-122>
+              x-parser-schema-id: <anonymous-schema-120>
           x-parser-schema-id: NodeOperationalProfileDeclaredEvent
         examples:
           - name: nodeOperationalProfileDeclared
@@ -2074,7 +2229,9 @@ operations:
   publishNodePerformanceEvents:
     action: send
     title: Publish node-performance integration events
-    summary: Publish NodeScorecardUpdated through the transactional outbox.
+    summary: >-
+      Publish NodeScorecardUpdated and NodeTierEligibilityChanged through the
+      transactional outbox.
     description: >
       After a Recompute is saved with a changed grade, state or metrics (and
 
@@ -2085,7 +2242,14 @@ operations:
 
       delivery-promise and order-sourcing consume it; only the 30d window feeds
 
-      their decisions, the 7d window feeds alerts only (E18).
+      their decisions; the 7d window feeds alerts and gates the fast tiers (E18,
+
+      ADR 0013): when the fast-tier eligibility flag of a node flips, a
+      Recompute
+
+      of its 7d scorecard sends one NodeTierEligibilityChanged per tier
+
+      (SAME_DAY and NEXT_DAY) in the same transaction as the scorecard save.
     tags:
       - name: node-performance
     channel:
@@ -2110,8 +2274,9 @@ operations:
             Recompute once the scorecard is saved, and not while a scorecard
             stays PROVISIONAL. `grade` is `PROVISIONAL` below minObservations
             (50) and also when a GRADED scorecard falls back below it. Consumers
-            use the 30d window; PROVISIONAL adds no handicap (G20, E18). Metric
-            definitions are in ADR 0002 (A5-A10).
+            use the 30d window; the 7d window gates the fast tiers through
+            NodeTierEligibilityChanged (ADR 0013); PROVISIONAL adds no handicap
+            (G20, E18). Metric definitions are in ADR 0002 (A5-A10).
           contentType: application/cloudevents+json
           tags:
             - name: scorecard
@@ -2266,6 +2431,154 @@ operations:
                   observations: 1874
                   computedAt: '2026-10-22T14:03:00Z'
           x-parser-unique-object-id: NodeScorecardUpdated
+        NodeTierEligibilityChanged:
+          name: NodeTierEligibilityChanged
+          title: Node tier eligibility changed
+          summary: >-
+            A node was suspended from, or reinstated to, the SAME_DAY and
+            NEXT_DAY tiers.
+          description: >-
+            `type` =
+            `com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged`;
+            subject and key = the scorecardId of the 7d scorecard (`nodeId:7d`).
+            Integration event: published to
+            `retailnetwork.node-performance.events`, dataschema stream `events`.
+            Raised by Recompute of the 7d scorecard (policy FastTierEligibility,
+            ADR 0013) only when the eligibility flag FLIPS, two events per flip
+            (one per tier, the same `changedAt`), in the same transaction as the
+            scorecard save. Every node starts ELIGIBLE and the initial state
+            publishes nothing. Suspension: the GRADED 7d `onTimeHandoverRate`
+            fell below 0.90 (`threshold` 0.90, `eligible` false). Reinstatement:
+            the GRADED 7d `onTimeHandoverRate` stood at or above 0.95
+            (`threshold` 0.95, `eligible` true) on three consecutive distinct
+            UTC days of recompute. `value` is the rate that caused the change. A
+            consumer that never saw an event treats the node as eligible.
+          contentType: application/cloudevents+json
+          tags:
+            - name: scorecard
+          payload:
+            allOf:
+              - type: object
+                required:
+                  - specversion
+                  - id
+                  - source
+                  - type
+                  - subject
+                  - time
+                  - datacontenttype
+                  - dataschema
+                  - data
+                properties:
+                  specversion:
+                    type: string
+                    const: '1.0'
+                    x-parser-schema-id: <anonymous-schema-1>
+                  id:
+                    type: string
+                    description: The CloudEvents id; the idempotency key of every consumer.
+                    x-parser-schema-id: <anonymous-schema-2>
+                  source:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-3>
+                  type:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-4>
+                  subject:
+                    type: string
+                    description: The aggregate root id of the producer.
+                    x-parser-schema-id: <anonymous-schema-5>
+                  time:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-6>
+                  datacontenttype:
+                    type: string
+                    const: application/json
+                    x-parser-schema-id: <anonymous-schema-7>
+                  dataschema:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-8>
+                x-parser-schema-id: CloudEventEnvelope
+              - type: object
+                properties:
+                  source:
+                    const: /retailnetwork/node-performance
+                    x-parser-schema-id: <anonymous-schema-22>
+                  data:
+                    type: object
+                    required:
+                      - nodeId
+                      - tier
+                      - eligible
+                      - metric
+                      - value
+                      - threshold
+                      - window
+                      - changedAt
+                    properties:
+                      nodeId:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-24>
+                      tier:
+                        type: string
+                        enum:
+                          - SAME_DAY
+                          - NEXT_DAY
+                        x-parser-schema-id: <anonymous-schema-25>
+                      eligible:
+                        type: boolean
+                        x-parser-schema-id: <anonymous-schema-26>
+                      metric:
+                        type: string
+                        const: onTimeHandoverRate
+                        x-parser-schema-id: <anonymous-schema-27>
+                      value:
+                        type: number
+                        minimum: 0
+                        maximum: 1
+                        x-parser-schema-id: <anonymous-schema-28>
+                      threshold:
+                        type: number
+                        enum:
+                          - 0.9
+                          - 0.95
+                        x-parser-schema-id: <anonymous-schema-29>
+                      window:
+                        type: string
+                        const: 7d
+                        x-parser-schema-id: <anonymous-schema-30>
+                      changedAt:
+                        type: string
+                        format: date-time
+                        x-parser-schema-id: <anonymous-schema-31>
+                    x-parser-schema-id: <anonymous-schema-23>
+                x-parser-schema-id: <anonymous-schema-21>
+            x-parser-schema-id: NodeTierEligibilityChangedEvent
+          examples:
+            - name: nodeTierEligibilityChanged
+              summary: A node was suspended from the SAME_DAY tier.
+              payload:
+                specversion: '1.0'
+                id: 7d0c6a52-3f7e-4b8e-9a51-2a8f0c1d9e46
+                source: /retailnetwork/node-performance
+                type: >-
+                  com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged
+                subject: node-0f3a91:7d
+                time: '2026-10-22T14:03:00Z'
+                datacontenttype: application/json
+                dataschema: >-
+                  urn:retailnetwork:node-performance:events:NodeTierEligibilityChanged:v1
+                data:
+                  nodeId: node-0f3a91
+                  tier: SAME_DAY
+                  eligible: false
+                  metric: onTimeHandoverRate
+                  value: 0.88
+                  threshold: 0.9
+                  window: 7d
+                  changedAt: '2026-10-22T14:03:00Z'
+          x-parser-unique-object-id: NodeTierEligibilityChanged
       x-eventcatalog-channel-version: 1.0.0
       x-parser-unique-object-id: nodePerformanceEvents
     messages:
@@ -2281,8 +2594,9 @@ operations:
           Recompute once the scorecard is saved, and not while a scorecard stays
           PROVISIONAL. `grade` is `PROVISIONAL` below minObservations (50) and
           also when a GRADED scorecard falls back below it. Consumers use the
-          30d window; PROVISIONAL adds no handicap (G20, E18). Metric
-          definitions are in ADR 0002 (A5-A10).
+          30d window; the 7d window gates the fast tiers through
+          NodeTierEligibilityChanged (ADR 0013); PROVISIONAL adds no handicap
+          (G20, E18). Metric definitions are in ADR 0002 (A5-A10).
         contentType: application/cloudevents+json
         tags:
           - name: scorecard
@@ -2437,6 +2751,153 @@ operations:
                 observations: 1874
                 computedAt: '2026-10-22T14:03:00Z'
         x-parser-unique-object-id: NodeScorecardUpdated
+      - name: NodeTierEligibilityChanged
+        title: Node tier eligibility changed
+        summary: >-
+          A node was suspended from, or reinstated to, the SAME_DAY and NEXT_DAY
+          tiers.
+        description: >-
+          `type` =
+          `com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged`;
+          subject and key = the scorecardId of the 7d scorecard (`nodeId:7d`).
+          Integration event: published to
+          `retailnetwork.node-performance.events`, dataschema stream `events`.
+          Raised by Recompute of the 7d scorecard (policy FastTierEligibility,
+          ADR 0013) only when the eligibility flag FLIPS, two events per flip
+          (one per tier, the same `changedAt`), in the same transaction as the
+          scorecard save. Every node starts ELIGIBLE and the initial state
+          publishes nothing. Suspension: the GRADED 7d `onTimeHandoverRate` fell
+          below 0.90 (`threshold` 0.90, `eligible` false). Reinstatement: the
+          GRADED 7d `onTimeHandoverRate` stood at or above 0.95 (`threshold`
+          0.95, `eligible` true) on three consecutive distinct UTC days of
+          recompute. `value` is the rate that caused the change. A consumer that
+          never saw an event treats the node as eligible.
+        contentType: application/cloudevents+json
+        tags:
+          - name: scorecard
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-1>
+                id:
+                  type: string
+                  description: The CloudEvents id; the idempotency key of every consumer.
+                  x-parser-schema-id: <anonymous-schema-2>
+                source:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-3>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-4>
+                subject:
+                  type: string
+                  description: The aggregate root id of the producer.
+                  x-parser-schema-id: <anonymous-schema-5>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-6>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-7>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-8>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                source:
+                  const: /retailnetwork/node-performance
+                  x-parser-schema-id: <anonymous-schema-22>
+                data:
+                  type: object
+                  required:
+                    - nodeId
+                    - tier
+                    - eligible
+                    - metric
+                    - value
+                    - threshold
+                    - window
+                    - changedAt
+                  properties:
+                    nodeId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-24>
+                    tier:
+                      type: string
+                      enum:
+                        - SAME_DAY
+                        - NEXT_DAY
+                      x-parser-schema-id: <anonymous-schema-25>
+                    eligible:
+                      type: boolean
+                      x-parser-schema-id: <anonymous-schema-26>
+                    metric:
+                      type: string
+                      const: onTimeHandoverRate
+                      x-parser-schema-id: <anonymous-schema-27>
+                    value:
+                      type: number
+                      minimum: 0
+                      maximum: 1
+                      x-parser-schema-id: <anonymous-schema-28>
+                    threshold:
+                      type: number
+                      enum:
+                        - 0.9
+                        - 0.95
+                      x-parser-schema-id: <anonymous-schema-29>
+                    window:
+                      type: string
+                      const: 7d
+                      x-parser-schema-id: <anonymous-schema-30>
+                    changedAt:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-31>
+                  x-parser-schema-id: <anonymous-schema-23>
+              x-parser-schema-id: <anonymous-schema-21>
+          x-parser-schema-id: NodeTierEligibilityChangedEvent
+        examples:
+          - name: nodeTierEligibilityChanged
+            summary: A node was suspended from the SAME_DAY tier.
+            payload:
+              specversion: '1.0'
+              id: 7d0c6a52-3f7e-4b8e-9a51-2a8f0c1d9e46
+              source: /retailnetwork/node-performance
+              type: >-
+                com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged
+              subject: node-0f3a91:7d
+              time: '2026-10-22T14:03:00Z'
+              datacontenttype: application/json
+              dataschema: >-
+                urn:retailnetwork:node-performance:events:NodeTierEligibilityChanged:v1
+              data:
+                nodeId: node-0f3a91
+                tier: SAME_DAY
+                eligible: false
+                metric: onTimeHandoverRate
+                value: 0.88
+                threshold: 0.9
+                window: 7d
+                changedAt: '2026-10-22T14:03:00Z'
+        x-parser-unique-object-id: NodeTierEligibilityChanged
     x-parser-unique-object-id: publishNodePerformanceEvents
   publishNodePerformanceAnalytics:
     action: send
@@ -2520,7 +2981,7 @@ operations:
                 properties:
                   source:
                     const: /retailnetwork/node-performance
-                    x-parser-schema-id: <anonymous-schema-22>
+                    x-parser-schema-id: <anonymous-schema-33>
                   data:
                     type: object
                     required:
@@ -2532,7 +2993,7 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-24>
+                        x-parser-schema-id: <anonymous-schema-35>
                       metric:
                         type: string
                         enum:
@@ -2542,23 +3003,23 @@ operations:
                           - expiryRate
                           - promiseKeptRate
                           - feedFreshnessP95Minutes
-                        x-parser-schema-id: <anonymous-schema-25>
+                        x-parser-schema-id: <anonymous-schema-36>
                       value:
                         type: number
                         minimum: 0
-                        x-parser-schema-id: <anonymous-schema-26>
+                        x-parser-schema-id: <anonymous-schema-37>
                       threshold:
                         type: number
                         minimum: 0
-                        x-parser-schema-id: <anonymous-schema-27>
+                        x-parser-schema-id: <anonymous-schema-38>
                       window:
                         type: string
                         enum:
                           - 7d
                           - 30d
                         x-parser-schema-id: ScorecardWindow
-                    x-parser-schema-id: <anonymous-schema-23>
-                x-parser-schema-id: <anonymous-schema-21>
+                    x-parser-schema-id: <anonymous-schema-34>
+                x-parser-schema-id: <anonymous-schema-32>
             x-parser-schema-id: NodeThresholdBreachedEvent
           examples:
             - name: nodeThresholdBreached
@@ -2649,7 +3110,7 @@ operations:
               properties:
                 source:
                   const: /retailnetwork/node-performance
-                  x-parser-schema-id: <anonymous-schema-22>
+                  x-parser-schema-id: <anonymous-schema-33>
                 data:
                   type: object
                   required:
@@ -2661,7 +3122,7 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-24>
+                      x-parser-schema-id: <anonymous-schema-35>
                     metric:
                       type: string
                       enum:
@@ -2671,23 +3132,23 @@ operations:
                         - expiryRate
                         - promiseKeptRate
                         - feedFreshnessP95Minutes
-                      x-parser-schema-id: <anonymous-schema-25>
+                      x-parser-schema-id: <anonymous-schema-36>
                     value:
                       type: number
                       minimum: 0
-                      x-parser-schema-id: <anonymous-schema-26>
+                      x-parser-schema-id: <anonymous-schema-37>
                     threshold:
                       type: number
                       minimum: 0
-                      x-parser-schema-id: <anonymous-schema-27>
+                      x-parser-schema-id: <anonymous-schema-38>
                     window:
                       type: string
                       enum:
                         - 7d
                         - 30d
                       x-parser-schema-id: ScorecardWindow
-                  x-parser-schema-id: <anonymous-schema-23>
-              x-parser-schema-id: <anonymous-schema-21>
+                  x-parser-schema-id: <anonymous-schema-34>
+              x-parser-schema-id: <anonymous-schema-32>
           x-parser-schema-id: NodeThresholdBreachedEvent
         examples:
           - name: nodeThresholdBreached
@@ -2802,15 +3263,15 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.partner.vendor-connectivity.vendoraccount.VendorOnboarded
-                    x-parser-schema-id: <anonymous-schema-29>
+                    x-parser-schema-id: <anonymous-schema-40>
                   data:
                     type: object
                     properties:
                       vendorId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-31>
-                    x-parser-schema-id: <anonymous-schema-30>
-                x-parser-schema-id: <anonymous-schema-28>
+                        x-parser-schema-id: <anonymous-schema-42>
+                    x-parser-schema-id: <anonymous-schema-41>
+                x-parser-schema-id: <anonymous-schema-39>
             x-parser-schema-id: VendorOnboardedEvent
           examples:
             - name: vendorOnboarded
@@ -2895,7 +3356,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderIssued
-                    x-parser-schema-id: <anonymous-schema-33>
+                    x-parser-schema-id: <anonymous-schema-44>
                   data:
                     type: object
                     required:
@@ -2906,20 +3367,20 @@ operations:
                     properties:
                       poNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-35>
+                        x-parser-schema-id: <anonymous-schema-46>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-36>
+                        x-parser-schema-id: <anonymous-schema-47>
                       requiredShipBy:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-37>
+                        x-parser-schema-id: <anonymous-schema-48>
                       ackBy:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-38>
-                    x-parser-schema-id: <anonymous-schema-34>
-                x-parser-schema-id: <anonymous-schema-32>
+                        x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: <anonymous-schema-45>
+                x-parser-schema-id: <anonymous-schema-43>
             x-parser-schema-id: PurchaseOrderIssuedEvent
           examples:
             - name: purchaseOrderIssued
@@ -3008,7 +3469,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderAccepted
-                    x-parser-schema-id: <anonymous-schema-40>
+                    x-parser-schema-id: <anonymous-schema-51>
                   data:
                     type: object
                     required:
@@ -3018,16 +3479,16 @@ operations:
                     properties:
                       poNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-42>
+                        x-parser-schema-id: <anonymous-schema-53>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-43>
+                        x-parser-schema-id: <anonymous-schema-54>
                       acceptedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-44>
-                    x-parser-schema-id: <anonymous-schema-41>
-                x-parser-schema-id: <anonymous-schema-39>
+                        x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-52>
+                x-parser-schema-id: <anonymous-schema-50>
             x-parser-schema-id: PurchaseOrderAcceptedEvent
           examples:
             - name: purchaseOrderAccepted
@@ -3114,7 +3575,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderRejected
-                    x-parser-schema-id: <anonymous-schema-46>
+                    x-parser-schema-id: <anonymous-schema-57>
                   data:
                     type: object
                     required:
@@ -3124,19 +3585,19 @@ operations:
                     properties:
                       poNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-48>
+                        x-parser-schema-id: <anonymous-schema-59>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-49>
+                        x-parser-schema-id: <anonymous-schema-60>
                       rejectedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-50>
+                        x-parser-schema-id: <anonymous-schema-61>
                       reasonCode:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-51>
-                    x-parser-schema-id: <anonymous-schema-47>
-                x-parser-schema-id: <anonymous-schema-45>
+                        x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-58>
+                x-parser-schema-id: <anonymous-schema-56>
             x-parser-schema-id: PurchaseOrderRejectedEvent
           examples:
             - name: purchaseOrderRejected
@@ -3222,7 +3683,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderExpired
-                    x-parser-schema-id: <anonymous-schema-53>
+                    x-parser-schema-id: <anonymous-schema-64>
                   data:
                     type: object
                     required:
@@ -3232,16 +3693,16 @@ operations:
                     properties:
                       poNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-55>
+                        x-parser-schema-id: <anonymous-schema-66>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-56>
+                        x-parser-schema-id: <anonymous-schema-67>
                       ackBy:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-57>
-                    x-parser-schema-id: <anonymous-schema-54>
-                x-parser-schema-id: <anonymous-schema-52>
+                        x-parser-schema-id: <anonymous-schema-68>
+                    x-parser-schema-id: <anonymous-schema-65>
+                x-parser-schema-id: <anonymous-schema-63>
             x-parser-schema-id: PurchaseOrderExpiredEvent
           examples:
             - name: purchaseOrderExpired
@@ -3328,7 +3789,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.partner.vendor-connectivity.purchaseorder.VendorShipmentConfirmed
-                    x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-70>
                   data:
                     type: object
                     required:
@@ -3338,16 +3799,16 @@ operations:
                     properties:
                       poNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-61>
+                        x-parser-schema-id: <anonymous-schema-72>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-62>
+                        x-parser-schema-id: <anonymous-schema-73>
                       requiredShipBy:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-63>
-                    x-parser-schema-id: <anonymous-schema-60>
-                x-parser-schema-id: <anonymous-schema-58>
+                        x-parser-schema-id: <anonymous-schema-74>
+                    x-parser-schema-id: <anonymous-schema-71>
+                x-parser-schema-id: <anonymous-schema-69>
             x-parser-schema-id: VendorShipmentConfirmedEvent
           examples:
             - name: vendorShipmentConfirmed
@@ -3434,15 +3895,15 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.partner.vendor-connectivity.submission.SubmissionProcessed
-                    x-parser-schema-id: <anonymous-schema-65>
+                    x-parser-schema-id: <anonymous-schema-76>
                   data:
                     type: object
                     properties:
                       transactionId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-67>
-                    x-parser-schema-id: <anonymous-schema-66>
-                x-parser-schema-id: <anonymous-schema-64>
+                        x-parser-schema-id: <anonymous-schema-78>
+                    x-parser-schema-id: <anonymous-schema-77>
+                x-parser-schema-id: <anonymous-schema-75>
             x-parser-schema-id: SubmissionProcessedEvent
           examples:
             - name: submissionProcessed
@@ -3532,7 +3993,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.partner.vendor-connectivity.inboundreceipt.InboundReceiptSubmitted
-                    x-parser-schema-id: <anonymous-schema-69>
+                    x-parser-schema-id: <anonymous-schema-80>
                   data:
                     type: object
                     required:
@@ -3543,14 +4004,14 @@ operations:
                     properties:
                       shipmentId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-71>
+                        x-parser-schema-id: <anonymous-schema-82>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-72>
+                        x-parser-schema-id: <anonymous-schema-83>
                       receivedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-73>
+                        x-parser-schema-id: <anonymous-schema-84>
                       cartons:
                         type: array
                         items:
@@ -3565,11 +4026,11 @@ operations:
                                 - MISSING
                                 - UNEXPECTED
                                 - DAMAGED
-                              x-parser-schema-id: <anonymous-schema-76>
-                          x-parser-schema-id: <anonymous-schema-75>
-                        x-parser-schema-id: <anonymous-schema-74>
-                    x-parser-schema-id: <anonymous-schema-70>
-                x-parser-schema-id: <anonymous-schema-68>
+                              x-parser-schema-id: <anonymous-schema-87>
+                          x-parser-schema-id: <anonymous-schema-86>
+                        x-parser-schema-id: <anonymous-schema-85>
+                    x-parser-schema-id: <anonymous-schema-81>
+                x-parser-schema-id: <anonymous-schema-79>
             x-parser-schema-id: InboundReceiptSubmittedEvent
           examples:
             - name: inboundReceiptSubmitted
@@ -3669,15 +4130,15 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.vendoraccount.VendorOnboarded
-                  x-parser-schema-id: <anonymous-schema-29>
+                  x-parser-schema-id: <anonymous-schema-40>
                 data:
                   type: object
                   properties:
                     vendorId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-31>
-                  x-parser-schema-id: <anonymous-schema-30>
-              x-parser-schema-id: <anonymous-schema-28>
+                      x-parser-schema-id: <anonymous-schema-42>
+                  x-parser-schema-id: <anonymous-schema-41>
+              x-parser-schema-id: <anonymous-schema-39>
           x-parser-schema-id: VendorOnboardedEvent
         examples:
           - name: vendorOnboarded
@@ -3760,7 +4221,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderIssued
-                  x-parser-schema-id: <anonymous-schema-33>
+                  x-parser-schema-id: <anonymous-schema-44>
                 data:
                   type: object
                   required:
@@ -3771,20 +4232,20 @@ operations:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-35>
+                      x-parser-schema-id: <anonymous-schema-46>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-36>
+                      x-parser-schema-id: <anonymous-schema-47>
                     requiredShipBy:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-37>
+                      x-parser-schema-id: <anonymous-schema-48>
                     ackBy:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-38>
-                  x-parser-schema-id: <anonymous-schema-34>
-              x-parser-schema-id: <anonymous-schema-32>
+                      x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: <anonymous-schema-45>
+              x-parser-schema-id: <anonymous-schema-43>
           x-parser-schema-id: PurchaseOrderIssuedEvent
         examples:
           - name: purchaseOrderIssued
@@ -3872,7 +4333,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderAccepted
-                  x-parser-schema-id: <anonymous-schema-40>
+                  x-parser-schema-id: <anonymous-schema-51>
                 data:
                   type: object
                   required:
@@ -3882,16 +4343,16 @@ operations:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-42>
+                      x-parser-schema-id: <anonymous-schema-53>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-43>
+                      x-parser-schema-id: <anonymous-schema-54>
                     acceptedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-44>
-                  x-parser-schema-id: <anonymous-schema-41>
-              x-parser-schema-id: <anonymous-schema-39>
+                      x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-52>
+              x-parser-schema-id: <anonymous-schema-50>
           x-parser-schema-id: PurchaseOrderAcceptedEvent
         examples:
           - name: purchaseOrderAccepted
@@ -3977,7 +4438,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderRejected
-                  x-parser-schema-id: <anonymous-schema-46>
+                  x-parser-schema-id: <anonymous-schema-57>
                 data:
                   type: object
                   required:
@@ -3987,19 +4448,19 @@ operations:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-48>
+                      x-parser-schema-id: <anonymous-schema-59>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-49>
+                      x-parser-schema-id: <anonymous-schema-60>
                     rejectedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-50>
+                      x-parser-schema-id: <anonymous-schema-61>
                     reasonCode:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-51>
-                  x-parser-schema-id: <anonymous-schema-47>
-              x-parser-schema-id: <anonymous-schema-45>
+                      x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-58>
+              x-parser-schema-id: <anonymous-schema-56>
           x-parser-schema-id: PurchaseOrderRejectedEvent
         examples:
           - name: purchaseOrderRejected
@@ -4084,7 +4545,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderExpired
-                  x-parser-schema-id: <anonymous-schema-53>
+                  x-parser-schema-id: <anonymous-schema-64>
                 data:
                   type: object
                   required:
@@ -4094,16 +4555,16 @@ operations:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-55>
+                      x-parser-schema-id: <anonymous-schema-66>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-56>
+                      x-parser-schema-id: <anonymous-schema-67>
                     ackBy:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-57>
-                  x-parser-schema-id: <anonymous-schema-54>
-              x-parser-schema-id: <anonymous-schema-52>
+                      x-parser-schema-id: <anonymous-schema-68>
+                  x-parser-schema-id: <anonymous-schema-65>
+              x-parser-schema-id: <anonymous-schema-63>
           x-parser-schema-id: PurchaseOrderExpiredEvent
         examples:
           - name: purchaseOrderExpired
@@ -4189,7 +4650,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.purchaseorder.VendorShipmentConfirmed
-                  x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-70>
                 data:
                   type: object
                   required:
@@ -4199,16 +4660,16 @@ operations:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-72>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-62>
+                      x-parser-schema-id: <anonymous-schema-73>
                     requiredShipBy:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-63>
-                  x-parser-schema-id: <anonymous-schema-60>
-              x-parser-schema-id: <anonymous-schema-58>
+                      x-parser-schema-id: <anonymous-schema-74>
+                  x-parser-schema-id: <anonymous-schema-71>
+              x-parser-schema-id: <anonymous-schema-69>
           x-parser-schema-id: VendorShipmentConfirmedEvent
         examples:
           - name: vendorShipmentConfirmed
@@ -4294,15 +4755,15 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.submission.SubmissionProcessed
-                  x-parser-schema-id: <anonymous-schema-65>
+                  x-parser-schema-id: <anonymous-schema-76>
                 data:
                   type: object
                   properties:
                     transactionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-67>
-                  x-parser-schema-id: <anonymous-schema-66>
-              x-parser-schema-id: <anonymous-schema-64>
+                      x-parser-schema-id: <anonymous-schema-78>
+                  x-parser-schema-id: <anonymous-schema-77>
+              x-parser-schema-id: <anonymous-schema-75>
           x-parser-schema-id: SubmissionProcessedEvent
         examples:
           - name: submissionProcessed
@@ -4389,7 +4850,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.partner.vendor-connectivity.inboundreceipt.InboundReceiptSubmitted
-                  x-parser-schema-id: <anonymous-schema-69>
+                  x-parser-schema-id: <anonymous-schema-80>
                 data:
                   type: object
                   required:
@@ -4400,14 +4861,14 @@ operations:
                   properties:
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-82>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-83>
                     receivedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-73>
+                      x-parser-schema-id: <anonymous-schema-84>
                     cartons:
                       type: array
                       items:
@@ -4422,11 +4883,11 @@ operations:
                               - MISSING
                               - UNEXPECTED
                               - DAMAGED
-                            x-parser-schema-id: <anonymous-schema-76>
-                        x-parser-schema-id: <anonymous-schema-75>
-                      x-parser-schema-id: <anonymous-schema-74>
-                  x-parser-schema-id: <anonymous-schema-70>
-              x-parser-schema-id: <anonymous-schema-68>
+                            x-parser-schema-id: <anonymous-schema-87>
+                        x-parser-schema-id: <anonymous-schema-86>
+                      x-parser-schema-id: <anonymous-schema-85>
+                  x-parser-schema-id: <anonymous-schema-81>
+              x-parser-schema-id: <anonymous-schema-79>
           x-parser-schema-id: InboundReceiptSubmittedEvent
         examples:
           - name: inboundReceiptSubmitted
@@ -4556,7 +5017,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.logistics.shipping-and-tracking.journey.PackageHandedOver
-                    x-parser-schema-id: <anonymous-schema-84>
+                    x-parser-schema-id: <anonymous-schema-95>
                   data:
                     type: object
                     required:
@@ -4566,16 +5027,16 @@ operations:
                     properties:
                       poNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-86>
+                        x-parser-schema-id: <anonymous-schema-97>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-87>
+                        x-parser-schema-id: <anonymous-schema-98>
                       handedOverAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-88>
-                    x-parser-schema-id: <anonymous-schema-85>
-                x-parser-schema-id: <anonymous-schema-83>
+                        x-parser-schema-id: <anonymous-schema-99>
+                    x-parser-schema-id: <anonymous-schema-96>
+                x-parser-schema-id: <anonymous-schema-94>
             x-parser-schema-id: PackageHandedOverEvent
           examples:
             - name: packageHandedOver
@@ -4663,7 +5124,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.logistics.shipping-and-tracking.journey.PackageHandedOver
-                  x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-95>
                 data:
                   type: object
                   required:
@@ -4673,16 +5134,16 @@ operations:
                   properties:
                     poNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-86>
+                      x-parser-schema-id: <anonymous-schema-97>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-87>
+                      x-parser-schema-id: <anonymous-schema-98>
                     handedOverAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-88>
-                  x-parser-schema-id: <anonymous-schema-85>
-              x-parser-schema-id: <anonymous-schema-83>
+                      x-parser-schema-id: <anonymous-schema-99>
+                  x-parser-schema-id: <anonymous-schema-96>
+              x-parser-schema-id: <anonymous-schema-94>
           x-parser-schema-id: PackageHandedOverEvent
         examples:
           - name: packageHandedOver
@@ -4790,7 +5251,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.commerce.delivery-promise.promise.PromiseKept
-                    x-parser-schema-id: <anonymous-schema-90>
+                    x-parser-schema-id: <anonymous-schema-101>
                   data:
                     type: object
                     required:
@@ -4799,13 +5260,13 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-92>
+                        x-parser-schema-id: <anonymous-schema-103>
                       deliveredAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-93>
-                    x-parser-schema-id: <anonymous-schema-91>
-                x-parser-schema-id: <anonymous-schema-89>
+                        x-parser-schema-id: <anonymous-schema-104>
+                    x-parser-schema-id: <anonymous-schema-102>
+                x-parser-schema-id: <anonymous-schema-100>
             x-parser-schema-id: PromiseKeptEvent
           examples:
             - name: promiseKept
@@ -4892,7 +5353,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.commerce.delivery-promise.promise.PromiseBroken
-                    x-parser-schema-id: <anonymous-schema-95>
+                    x-parser-schema-id: <anonymous-schema-106>
                   data:
                     type: object
                     required:
@@ -4901,16 +5362,16 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-97>
+                        x-parser-schema-id: <anonymous-schema-108>
                       deliveredAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-98>
+                        x-parser-schema-id: <anonymous-schema-109>
                       cause:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-99>
-                    x-parser-schema-id: <anonymous-schema-96>
-                x-parser-schema-id: <anonymous-schema-94>
+                        x-parser-schema-id: <anonymous-schema-110>
+                    x-parser-schema-id: <anonymous-schema-107>
+                x-parser-schema-id: <anonymous-schema-105>
             x-parser-schema-id: PromiseBrokenEvent
           examples:
             - name: promiseBroken
@@ -4998,7 +5459,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.commerce.delivery-promise.promise.PromiseKept
-                  x-parser-schema-id: <anonymous-schema-90>
+                  x-parser-schema-id: <anonymous-schema-101>
                 data:
                   type: object
                   required:
@@ -5007,13 +5468,13 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-92>
+                      x-parser-schema-id: <anonymous-schema-103>
                     deliveredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-93>
-                  x-parser-schema-id: <anonymous-schema-91>
-              x-parser-schema-id: <anonymous-schema-89>
+                      x-parser-schema-id: <anonymous-schema-104>
+                  x-parser-schema-id: <anonymous-schema-102>
+              x-parser-schema-id: <anonymous-schema-100>
           x-parser-schema-id: PromiseKeptEvent
         examples:
           - name: promiseKept
@@ -5098,7 +5559,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.commerce.delivery-promise.promise.PromiseBroken
-                  x-parser-schema-id: <anonymous-schema-95>
+                  x-parser-schema-id: <anonymous-schema-106>
                 data:
                   type: object
                   required:
@@ -5107,16 +5568,16 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-97>
+                      x-parser-schema-id: <anonymous-schema-108>
                     deliveredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-98>
+                      x-parser-schema-id: <anonymous-schema-109>
                     cause:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-99>
-                  x-parser-schema-id: <anonymous-schema-96>
-              x-parser-schema-id: <anonymous-schema-94>
+                      x-parser-schema-id: <anonymous-schema-110>
+                  x-parser-schema-id: <anonymous-schema-107>
+              x-parser-schema-id: <anonymous-schema-105>
           x-parser-schema-id: PromiseBrokenEvent
         examples:
           - name: promiseBroken
@@ -5228,7 +5689,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.commerce.offer-availability.inventoryfeed.InventoryFeedApplied
-                    x-parser-schema-id: <anonymous-schema-101>
+                    x-parser-schema-id: <anonymous-schema-112>
                   data:
                     type: object
                     required:
@@ -5237,13 +5698,13 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-103>
+                        x-parser-schema-id: <anonymous-schema-114>
                       appliedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-104>
-                    x-parser-schema-id: <anonymous-schema-102>
-                x-parser-schema-id: <anonymous-schema-100>
+                        x-parser-schema-id: <anonymous-schema-115>
+                    x-parser-schema-id: <anonymous-schema-113>
+                x-parser-schema-id: <anonymous-schema-111>
             x-parser-schema-id: InventoryFeedAppliedEvent
           examples:
             - name: inventoryFeedApplied
@@ -5331,7 +5792,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.commerce.offer-availability.inventoryfeed.InventoryFeedApplied
-                  x-parser-schema-id: <anonymous-schema-101>
+                  x-parser-schema-id: <anonymous-schema-112>
                 data:
                   type: object
                   required:
@@ -5340,13 +5801,13 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-103>
+                      x-parser-schema-id: <anonymous-schema-114>
                     appliedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-104>
-                  x-parser-schema-id: <anonymous-schema-102>
-              x-parser-schema-id: <anonymous-schema-100>
+                      x-parser-schema-id: <anonymous-schema-115>
+                  x-parser-schema-id: <anonymous-schema-113>
+              x-parser-schema-id: <anonymous-schema-111>
           x-parser-schema-id: InventoryFeedAppliedEvent
         examples:
           - name: inventoryFeedApplied
@@ -5464,7 +5925,7 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.partner.seller-inbound.inboundshipment.InboundShipmentShipped
-                    x-parser-schema-id: <anonymous-schema-78>
+                    x-parser-schema-id: <anonymous-schema-89>
                   data:
                     type: object
                     required:
@@ -5474,16 +5935,16 @@ operations:
                     properties:
                       shipmentId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-80>
+                        x-parser-schema-id: <anonymous-schema-91>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-81>
+                        x-parser-schema-id: <anonymous-schema-92>
                       shippedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-82>
-                    x-parser-schema-id: <anonymous-schema-79>
-                x-parser-schema-id: <anonymous-schema-77>
+                        x-parser-schema-id: <anonymous-schema-93>
+                    x-parser-schema-id: <anonymous-schema-90>
+                x-parser-schema-id: <anonymous-schema-88>
             x-parser-schema-id: InboundShipmentShippedEvent
           examples:
             - name: inboundShipmentShipped
@@ -5573,7 +6034,7 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.partner.seller-inbound.inboundshipment.InboundShipmentShipped
-                  x-parser-schema-id: <anonymous-schema-78>
+                  x-parser-schema-id: <anonymous-schema-89>
                 data:
                   type: object
                   required:
@@ -5583,16 +6044,16 @@ operations:
                   properties:
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-80>
+                      x-parser-schema-id: <anonymous-schema-91>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-81>
+                      x-parser-schema-id: <anonymous-schema-92>
                     shippedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-82>
-                  x-parser-schema-id: <anonymous-schema-79>
-              x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-93>
+                  x-parser-schema-id: <anonymous-schema-90>
+              x-parser-schema-id: <anonymous-schema-88>
           x-parser-schema-id: InboundShipmentShippedEvent
         examples:
           - name: inboundShipmentShipped
@@ -5707,15 +6168,15 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.logistics.node-topology.node.NodeRegistered
-                    x-parser-schema-id: <anonymous-schema-106>
+                    x-parser-schema-id: <anonymous-schema-117>
                   data:
                     type: object
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-108>
-                    x-parser-schema-id: <anonymous-schema-107>
-                x-parser-schema-id: <anonymous-schema-105>
+                        x-parser-schema-id: <anonymous-schema-119>
+                    x-parser-schema-id: <anonymous-schema-118>
+                x-parser-schema-id: <anonymous-schema-116>
             x-parser-schema-id: NodeRegisteredEvent
           examples:
             - name: nodeRegistered
@@ -5804,15 +6265,15 @@ operations:
                   type:
                     const: >-
                       com.retailnetwork.logistics.node-topology.node.NodeOperationalProfileDeclared
-                    x-parser-schema-id: <anonymous-schema-110>
+                    x-parser-schema-id: <anonymous-schema-121>
                   data:
                     type: object
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-112>
-                    x-parser-schema-id: <anonymous-schema-111>
-                x-parser-schema-id: <anonymous-schema-109>
+                        x-parser-schema-id: <anonymous-schema-123>
+                    x-parser-schema-id: <anonymous-schema-122>
+                x-parser-schema-id: <anonymous-schema-120>
             x-parser-schema-id: NodeOperationalProfileDeclaredEvent
           examples:
             - name: nodeOperationalProfileDeclared
@@ -5910,15 +6371,15 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.logistics.node-topology.node.NodeRegistered
-                  x-parser-schema-id: <anonymous-schema-106>
+                  x-parser-schema-id: <anonymous-schema-117>
                 data:
                   type: object
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-108>
-                  x-parser-schema-id: <anonymous-schema-107>
-              x-parser-schema-id: <anonymous-schema-105>
+                      x-parser-schema-id: <anonymous-schema-119>
+                  x-parser-schema-id: <anonymous-schema-118>
+              x-parser-schema-id: <anonymous-schema-116>
           x-parser-schema-id: NodeRegisteredEvent
         examples:
           - name: nodeRegistered
@@ -6006,15 +6467,15 @@ operations:
                 type:
                   const: >-
                     com.retailnetwork.logistics.node-topology.node.NodeOperationalProfileDeclared
-                  x-parser-schema-id: <anonymous-schema-110>
+                  x-parser-schema-id: <anonymous-schema-121>
                 data:
                   type: object
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-112>
-                  x-parser-schema-id: <anonymous-schema-111>
-              x-parser-schema-id: <anonymous-schema-109>
+                      x-parser-schema-id: <anonymous-schema-123>
+                  x-parser-schema-id: <anonymous-schema-122>
+              x-parser-schema-id: <anonymous-schema-120>
           x-parser-schema-id: NodeOperationalProfileDeclaredEvent
         examples:
           - name: nodeOperationalProfileDeclared
@@ -6061,8 +6522,9 @@ components:
         once the scorecard is saved, and not while a scorecard stays
         PROVISIONAL. `grade` is `PROVISIONAL` below minObservations (50) and
         also when a GRADED scorecard falls back below it. Consumers use the 30d
-        window; PROVISIONAL adds no handicap (G20, E18). Metric definitions are
-        in ADR 0002 (A5-A10).
+        window; the 7d window gates the fast tiers through
+        NodeTierEligibilityChanged (ADR 0013); PROVISIONAL adds no handicap
+        (G20, E18). Metric definitions are in ADR 0002 (A5-A10).
       contentType: application/cloudevents+json
       tags:
         - name: scorecard
@@ -6280,7 +6742,7 @@ components:
             properties:
               source:
                 const: /retailnetwork/node-performance
-                x-parser-schema-id: <anonymous-schema-22>
+                x-parser-schema-id: <anonymous-schema-33>
               data:
                 type: object
                 required:
@@ -6292,7 +6754,7 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-24>
+                    x-parser-schema-id: <anonymous-schema-35>
                   metric:
                     type: string
                     enum:
@@ -6302,23 +6764,23 @@ components:
                       - expiryRate
                       - promiseKeptRate
                       - feedFreshnessP95Minutes
-                    x-parser-schema-id: <anonymous-schema-25>
+                    x-parser-schema-id: <anonymous-schema-36>
                   value:
                     type: number
                     minimum: 0
-                    x-parser-schema-id: <anonymous-schema-26>
+                    x-parser-schema-id: <anonymous-schema-37>
                   threshold:
                     type: number
                     minimum: 0
-                    x-parser-schema-id: <anonymous-schema-27>
+                    x-parser-schema-id: <anonymous-schema-38>
                   window:
                     type: string
                     enum:
                       - 7d
                       - 30d
                     x-parser-schema-id: ScorecardWindow
-                x-parser-schema-id: <anonymous-schema-23>
-            x-parser-schema-id: <anonymous-schema-21>
+                x-parser-schema-id: <anonymous-schema-34>
+            x-parser-schema-id: <anonymous-schema-32>
         x-parser-schema-id: NodeThresholdBreachedEvent
       examples:
         - name: nodeThresholdBreached
@@ -6341,6 +6803,153 @@ components:
               threshold: 0.9
               window: 7d
       x-parser-unique-object-id: NodeThresholdBreached
+    NodeTierEligibilityChanged:
+      name: NodeTierEligibilityChanged
+      title: Node tier eligibility changed
+      summary: >-
+        A node was suspended from, or reinstated to, the SAME_DAY and NEXT_DAY
+        tiers.
+      description: >-
+        `type` =
+        `com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged`;
+        subject and key = the scorecardId of the 7d scorecard (`nodeId:7d`).
+        Integration event: published to `retailnetwork.node-performance.events`,
+        dataschema stream `events`. Raised by Recompute of the 7d scorecard
+        (policy FastTierEligibility, ADR 0013) only when the eligibility flag
+        FLIPS, two events per flip (one per tier, the same `changedAt`), in the
+        same transaction as the scorecard save. Every node starts ELIGIBLE and
+        the initial state publishes nothing. Suspension: the GRADED 7d
+        `onTimeHandoverRate` fell below 0.90 (`threshold` 0.90, `eligible`
+        false). Reinstatement: the GRADED 7d `onTimeHandoverRate` stood at or
+        above 0.95 (`threshold` 0.95, `eligible` true) on three consecutive
+        distinct UTC days of recompute. `value` is the rate that caused the
+        change. A consumer that never saw an event treats the node as eligible.
+      contentType: application/cloudevents+json
+      tags:
+        - name: scorecard
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: The CloudEvents id; the idempotency key of every consumer.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate root id of the producer.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              source:
+                const: /retailnetwork/node-performance
+                x-parser-schema-id: <anonymous-schema-22>
+              data:
+                type: object
+                required:
+                  - nodeId
+                  - tier
+                  - eligible
+                  - metric
+                  - value
+                  - threshold
+                  - window
+                  - changedAt
+                properties:
+                  nodeId:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-24>
+                  tier:
+                    type: string
+                    enum:
+                      - SAME_DAY
+                      - NEXT_DAY
+                    x-parser-schema-id: <anonymous-schema-25>
+                  eligible:
+                    type: boolean
+                    x-parser-schema-id: <anonymous-schema-26>
+                  metric:
+                    type: string
+                    const: onTimeHandoverRate
+                    x-parser-schema-id: <anonymous-schema-27>
+                  value:
+                    type: number
+                    minimum: 0
+                    maximum: 1
+                    x-parser-schema-id: <anonymous-schema-28>
+                  threshold:
+                    type: number
+                    enum:
+                      - 0.9
+                      - 0.95
+                    x-parser-schema-id: <anonymous-schema-29>
+                  window:
+                    type: string
+                    const: 7d
+                    x-parser-schema-id: <anonymous-schema-30>
+                  changedAt:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-31>
+                x-parser-schema-id: <anonymous-schema-23>
+            x-parser-schema-id: <anonymous-schema-21>
+        x-parser-schema-id: NodeTierEligibilityChangedEvent
+      examples:
+        - name: nodeTierEligibilityChanged
+          summary: A node was suspended from the SAME_DAY tier.
+          payload:
+            specversion: '1.0'
+            id: 7d0c6a52-3f7e-4b8e-9a51-2a8f0c1d9e46
+            source: /retailnetwork/node-performance
+            type: >-
+              com.retailnetwork.partner.node-performance.scorecard.NodeTierEligibilityChanged
+            subject: node-0f3a91:7d
+            time: '2026-10-22T14:03:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:retailnetwork:node-performance:events:NodeTierEligibilityChanged:v1
+            data:
+              nodeId: node-0f3a91
+              tier: SAME_DAY
+              eligible: false
+              metric: onTimeHandoverRate
+              value: 0.88
+              threshold: 0.9
+              window: 7d
+              changedAt: '2026-10-22T14:03:00Z'
+      x-parser-unique-object-id: NodeTierEligibilityChanged
     VendorOnboarded:
       name: VendorOnboarded
       title: Vendor onboarded
@@ -6404,15 +7013,15 @@ components:
               type:
                 const: >-
                   com.retailnetwork.partner.vendor-connectivity.vendoraccount.VendorOnboarded
-                x-parser-schema-id: <anonymous-schema-29>
+                x-parser-schema-id: <anonymous-schema-40>
               data:
                 type: object
                 properties:
                   vendorId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-31>
-                x-parser-schema-id: <anonymous-schema-30>
-            x-parser-schema-id: <anonymous-schema-28>
+                    x-parser-schema-id: <anonymous-schema-42>
+                x-parser-schema-id: <anonymous-schema-41>
+            x-parser-schema-id: <anonymous-schema-39>
         x-parser-schema-id: VendorOnboardedEvent
       examples:
         - name: vendorOnboarded
@@ -6495,7 +7104,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderIssued
-                x-parser-schema-id: <anonymous-schema-33>
+                x-parser-schema-id: <anonymous-schema-44>
               data:
                 type: object
                 required:
@@ -6506,20 +7115,20 @@ components:
                 properties:
                   poNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-35>
+                    x-parser-schema-id: <anonymous-schema-46>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-36>
+                    x-parser-schema-id: <anonymous-schema-47>
                   requiredShipBy:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-37>
+                    x-parser-schema-id: <anonymous-schema-48>
                   ackBy:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-38>
-                x-parser-schema-id: <anonymous-schema-34>
-            x-parser-schema-id: <anonymous-schema-32>
+                    x-parser-schema-id: <anonymous-schema-49>
+                x-parser-schema-id: <anonymous-schema-45>
+            x-parser-schema-id: <anonymous-schema-43>
         x-parser-schema-id: PurchaseOrderIssuedEvent
       examples:
         - name: purchaseOrderIssued
@@ -6608,7 +7217,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderAccepted
-                x-parser-schema-id: <anonymous-schema-40>
+                x-parser-schema-id: <anonymous-schema-51>
               data:
                 type: object
                 required:
@@ -6618,16 +7227,16 @@ components:
                 properties:
                   poNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-42>
+                    x-parser-schema-id: <anonymous-schema-53>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-43>
+                    x-parser-schema-id: <anonymous-schema-54>
                   acceptedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-44>
-                x-parser-schema-id: <anonymous-schema-41>
-            x-parser-schema-id: <anonymous-schema-39>
+                    x-parser-schema-id: <anonymous-schema-55>
+                x-parser-schema-id: <anonymous-schema-52>
+            x-parser-schema-id: <anonymous-schema-50>
         x-parser-schema-id: PurchaseOrderAcceptedEvent
       examples:
         - name: purchaseOrderAccepted
@@ -6714,7 +7323,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderRejected
-                x-parser-schema-id: <anonymous-schema-46>
+                x-parser-schema-id: <anonymous-schema-57>
               data:
                 type: object
                 required:
@@ -6724,19 +7333,19 @@ components:
                 properties:
                   poNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-48>
+                    x-parser-schema-id: <anonymous-schema-59>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: <anonymous-schema-60>
                   rejectedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-50>
+                    x-parser-schema-id: <anonymous-schema-61>
                   reasonCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-51>
-                x-parser-schema-id: <anonymous-schema-47>
-            x-parser-schema-id: <anonymous-schema-45>
+                    x-parser-schema-id: <anonymous-schema-62>
+                x-parser-schema-id: <anonymous-schema-58>
+            x-parser-schema-id: <anonymous-schema-56>
         x-parser-schema-id: PurchaseOrderRejectedEvent
       examples:
         - name: purchaseOrderRejected
@@ -6822,7 +7431,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderExpired
-                x-parser-schema-id: <anonymous-schema-53>
+                x-parser-schema-id: <anonymous-schema-64>
               data:
                 type: object
                 required:
@@ -6832,16 +7441,16 @@ components:
                 properties:
                   poNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-66>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-56>
+                    x-parser-schema-id: <anonymous-schema-67>
                   ackBy:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-57>
-                x-parser-schema-id: <anonymous-schema-54>
-            x-parser-schema-id: <anonymous-schema-52>
+                    x-parser-schema-id: <anonymous-schema-68>
+                x-parser-schema-id: <anonymous-schema-65>
+            x-parser-schema-id: <anonymous-schema-63>
         x-parser-schema-id: PurchaseOrderExpiredEvent
       examples:
         - name: purchaseOrderExpired
@@ -6928,7 +7537,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.partner.vendor-connectivity.purchaseorder.VendorShipmentConfirmed
-                x-parser-schema-id: <anonymous-schema-59>
+                x-parser-schema-id: <anonymous-schema-70>
               data:
                 type: object
                 required:
@@ -6938,16 +7547,16 @@ components:
                 properties:
                   poNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-61>
+                    x-parser-schema-id: <anonymous-schema-72>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-73>
                   requiredShipBy:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-63>
-                x-parser-schema-id: <anonymous-schema-60>
-            x-parser-schema-id: <anonymous-schema-58>
+                    x-parser-schema-id: <anonymous-schema-74>
+                x-parser-schema-id: <anonymous-schema-71>
+            x-parser-schema-id: <anonymous-schema-69>
         x-parser-schema-id: VendorShipmentConfirmedEvent
       examples:
         - name: vendorShipmentConfirmed
@@ -7037,7 +7646,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.partner.vendor-connectivity.inboundreceipt.InboundReceiptSubmitted
-                x-parser-schema-id: <anonymous-schema-69>
+                x-parser-schema-id: <anonymous-schema-80>
               data:
                 type: object
                 required:
@@ -7048,14 +7657,14 @@ components:
                 properties:
                   shipmentId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-71>
+                    x-parser-schema-id: <anonymous-schema-82>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-72>
+                    x-parser-schema-id: <anonymous-schema-83>
                   receivedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-73>
+                    x-parser-schema-id: <anonymous-schema-84>
                   cartons:
                     type: array
                     items:
@@ -7070,11 +7679,11 @@ components:
                             - MISSING
                             - UNEXPECTED
                             - DAMAGED
-                          x-parser-schema-id: <anonymous-schema-76>
-                      x-parser-schema-id: <anonymous-schema-75>
-                    x-parser-schema-id: <anonymous-schema-74>
-                x-parser-schema-id: <anonymous-schema-70>
-            x-parser-schema-id: <anonymous-schema-68>
+                          x-parser-schema-id: <anonymous-schema-87>
+                      x-parser-schema-id: <anonymous-schema-86>
+                    x-parser-schema-id: <anonymous-schema-85>
+                x-parser-schema-id: <anonymous-schema-81>
+            x-parser-schema-id: <anonymous-schema-79>
         x-parser-schema-id: InboundReceiptSubmittedEvent
       examples:
         - name: inboundReceiptSubmitted
@@ -7174,7 +7783,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.partner.seller-inbound.inboundshipment.InboundShipmentShipped
-                x-parser-schema-id: <anonymous-schema-78>
+                x-parser-schema-id: <anonymous-schema-89>
               data:
                 type: object
                 required:
@@ -7184,16 +7793,16 @@ components:
                 properties:
                   shipmentId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-80>
+                    x-parser-schema-id: <anonymous-schema-91>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-81>
+                    x-parser-schema-id: <anonymous-schema-92>
                   shippedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-82>
-                x-parser-schema-id: <anonymous-schema-79>
-            x-parser-schema-id: <anonymous-schema-77>
+                    x-parser-schema-id: <anonymous-schema-93>
+                x-parser-schema-id: <anonymous-schema-90>
+            x-parser-schema-id: <anonymous-schema-88>
         x-parser-schema-id: InboundShipmentShippedEvent
       examples:
         - name: inboundShipmentShipped
@@ -7277,15 +7886,15 @@ components:
               type:
                 const: >-
                   com.retailnetwork.partner.vendor-connectivity.submission.SubmissionProcessed
-                x-parser-schema-id: <anonymous-schema-65>
+                x-parser-schema-id: <anonymous-schema-76>
               data:
                 type: object
                 properties:
                   transactionId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-67>
-                x-parser-schema-id: <anonymous-schema-66>
-            x-parser-schema-id: <anonymous-schema-64>
+                    x-parser-schema-id: <anonymous-schema-78>
+                x-parser-schema-id: <anonymous-schema-77>
+            x-parser-schema-id: <anonymous-schema-75>
         x-parser-schema-id: SubmissionProcessedEvent
       examples:
         - name: submissionProcessed
@@ -7372,7 +7981,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.logistics.shipping-and-tracking.journey.PackageHandedOver
-                x-parser-schema-id: <anonymous-schema-84>
+                x-parser-schema-id: <anonymous-schema-95>
               data:
                 type: object
                 required:
@@ -7382,16 +7991,16 @@ components:
                 properties:
                   poNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-86>
+                    x-parser-schema-id: <anonymous-schema-97>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-87>
+                    x-parser-schema-id: <anonymous-schema-98>
                   handedOverAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-88>
-                x-parser-schema-id: <anonymous-schema-85>
-            x-parser-schema-id: <anonymous-schema-83>
+                    x-parser-schema-id: <anonymous-schema-99>
+                x-parser-schema-id: <anonymous-schema-96>
+            x-parser-schema-id: <anonymous-schema-94>
         x-parser-schema-id: PackageHandedOverEvent
       examples:
         - name: packageHandedOver
@@ -7475,7 +8084,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.commerce.delivery-promise.promise.PromiseKept
-                x-parser-schema-id: <anonymous-schema-90>
+                x-parser-schema-id: <anonymous-schema-101>
               data:
                 type: object
                 required:
@@ -7484,13 +8093,13 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-92>
+                    x-parser-schema-id: <anonymous-schema-103>
                   deliveredAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-93>
-                x-parser-schema-id: <anonymous-schema-91>
-            x-parser-schema-id: <anonymous-schema-89>
+                    x-parser-schema-id: <anonymous-schema-104>
+                x-parser-schema-id: <anonymous-schema-102>
+            x-parser-schema-id: <anonymous-schema-100>
         x-parser-schema-id: PromiseKeptEvent
       examples:
         - name: promiseKept
@@ -7576,7 +8185,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.commerce.delivery-promise.promise.PromiseBroken
-                x-parser-schema-id: <anonymous-schema-95>
+                x-parser-schema-id: <anonymous-schema-106>
               data:
                 type: object
                 required:
@@ -7585,16 +8194,16 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-97>
+                    x-parser-schema-id: <anonymous-schema-108>
                   deliveredAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-98>
+                    x-parser-schema-id: <anonymous-schema-109>
                   cause:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-99>
-                x-parser-schema-id: <anonymous-schema-96>
-            x-parser-schema-id: <anonymous-schema-94>
+                    x-parser-schema-id: <anonymous-schema-110>
+                x-parser-schema-id: <anonymous-schema-107>
+            x-parser-schema-id: <anonymous-schema-105>
         x-parser-schema-id: PromiseBrokenEvent
       examples:
         - name: promiseBroken
@@ -7680,7 +8289,7 @@ components:
               type:
                 const: >-
                   com.retailnetwork.commerce.offer-availability.inventoryfeed.InventoryFeedApplied
-                x-parser-schema-id: <anonymous-schema-101>
+                x-parser-schema-id: <anonymous-schema-112>
               data:
                 type: object
                 required:
@@ -7689,13 +8298,13 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-103>
+                    x-parser-schema-id: <anonymous-schema-114>
                   appliedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-104>
-                x-parser-schema-id: <anonymous-schema-102>
-            x-parser-schema-id: <anonymous-schema-100>
+                    x-parser-schema-id: <anonymous-schema-115>
+                x-parser-schema-id: <anonymous-schema-113>
+            x-parser-schema-id: <anonymous-schema-111>
         x-parser-schema-id: InventoryFeedAppliedEvent
       examples:
         - name: inventoryFeedApplied
@@ -7780,15 +8389,15 @@ components:
             properties:
               type:
                 const: com.retailnetwork.logistics.node-topology.node.NodeRegistered
-                x-parser-schema-id: <anonymous-schema-106>
+                x-parser-schema-id: <anonymous-schema-117>
               data:
                 type: object
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-108>
-                x-parser-schema-id: <anonymous-schema-107>
-            x-parser-schema-id: <anonymous-schema-105>
+                    x-parser-schema-id: <anonymous-schema-119>
+                x-parser-schema-id: <anonymous-schema-118>
+            x-parser-schema-id: <anonymous-schema-116>
         x-parser-schema-id: NodeRegisteredEvent
       examples:
         - name: nodeRegistered
@@ -7877,15 +8486,15 @@ components:
               type:
                 const: >-
                   com.retailnetwork.logistics.node-topology.node.NodeOperationalProfileDeclared
-                x-parser-schema-id: <anonymous-schema-110>
+                x-parser-schema-id: <anonymous-schema-121>
               data:
                 type: object
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-112>
-                x-parser-schema-id: <anonymous-schema-111>
-            x-parser-schema-id: <anonymous-schema-109>
+                    x-parser-schema-id: <anonymous-schema-123>
+                x-parser-schema-id: <anonymous-schema-122>
+            x-parser-schema-id: <anonymous-schema-120>
         x-parser-schema-id: NodeOperationalProfileDeclaredEvent
       examples:
         - name: nodeOperationalProfileDeclared
@@ -8147,7 +8756,7 @@ components:
           properties:
             source:
               const: /retailnetwork/node-performance
-              x-parser-schema-id: <anonymous-schema-22>
+              x-parser-schema-id: <anonymous-schema-33>
             data:
               type: object
               required:
@@ -8159,7 +8768,7 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-24>
+                  x-parser-schema-id: <anonymous-schema-35>
                 metric:
                   type: string
                   enum:
@@ -8169,24 +8778,123 @@ components:
                     - expiryRate
                     - promiseKeptRate
                     - feedFreshnessP95Minutes
-                  x-parser-schema-id: <anonymous-schema-25>
+                  x-parser-schema-id: <anonymous-schema-36>
                 value:
                   type: number
                   minimum: 0
-                  x-parser-schema-id: <anonymous-schema-26>
+                  x-parser-schema-id: <anonymous-schema-37>
                 threshold:
                   type: number
                   minimum: 0
-                  x-parser-schema-id: <anonymous-schema-27>
+                  x-parser-schema-id: <anonymous-schema-38>
                 window:
                   type: string
                   enum:
                     - 7d
                     - 30d
                   x-parser-schema-id: ScorecardWindow
+              x-parser-schema-id: <anonymous-schema-34>
+          x-parser-schema-id: <anonymous-schema-32>
+      x-parser-schema-id: NodeThresholdBreachedEvent
+    NodeTierEligibilityChangedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              description: The CloudEvents id; the idempotency key of every consumer.
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The aggregate root id of the producer.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            source:
+              const: /retailnetwork/node-performance
+              x-parser-schema-id: <anonymous-schema-22>
+            data:
+              type: object
+              required:
+                - nodeId
+                - tier
+                - eligible
+                - metric
+                - value
+                - threshold
+                - window
+                - changedAt
+              properties:
+                nodeId:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-24>
+                tier:
+                  type: string
+                  enum:
+                    - SAME_DAY
+                    - NEXT_DAY
+                  x-parser-schema-id: <anonymous-schema-25>
+                eligible:
+                  type: boolean
+                  x-parser-schema-id: <anonymous-schema-26>
+                metric:
+                  type: string
+                  const: onTimeHandoverRate
+                  x-parser-schema-id: <anonymous-schema-27>
+                value:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  x-parser-schema-id: <anonymous-schema-28>
+                threshold:
+                  type: number
+                  enum:
+                    - 0.9
+                    - 0.95
+                  x-parser-schema-id: <anonymous-schema-29>
+                window:
+                  type: string
+                  const: 7d
+                  x-parser-schema-id: <anonymous-schema-30>
+                changedAt:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-31>
               x-parser-schema-id: <anonymous-schema-23>
           x-parser-schema-id: <anonymous-schema-21>
-      x-parser-schema-id: NodeThresholdBreachedEvent
+      x-parser-schema-id: NodeTierEligibilityChangedEvent
     VendorOnboardedEvent:
       allOf:
         - type: object
@@ -8236,15 +8944,15 @@ components:
             type:
               const: >-
                 com.retailnetwork.partner.vendor-connectivity.vendoraccount.VendorOnboarded
-              x-parser-schema-id: <anonymous-schema-29>
+              x-parser-schema-id: <anonymous-schema-40>
             data:
               type: object
               properties:
                 vendorId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-31>
-              x-parser-schema-id: <anonymous-schema-30>
-          x-parser-schema-id: <anonymous-schema-28>
+                  x-parser-schema-id: <anonymous-schema-42>
+              x-parser-schema-id: <anonymous-schema-41>
+          x-parser-schema-id: <anonymous-schema-39>
       x-parser-schema-id: VendorOnboardedEvent
     PurchaseOrderIssuedEvent:
       allOf:
@@ -8295,7 +9003,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderIssued
-              x-parser-schema-id: <anonymous-schema-33>
+              x-parser-schema-id: <anonymous-schema-44>
             data:
               type: object
               required:
@@ -8306,20 +9014,20 @@ components:
               properties:
                 poNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-35>
+                  x-parser-schema-id: <anonymous-schema-46>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-36>
+                  x-parser-schema-id: <anonymous-schema-47>
                 requiredShipBy:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-37>
+                  x-parser-schema-id: <anonymous-schema-48>
                 ackBy:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-38>
-              x-parser-schema-id: <anonymous-schema-34>
-          x-parser-schema-id: <anonymous-schema-32>
+                  x-parser-schema-id: <anonymous-schema-49>
+              x-parser-schema-id: <anonymous-schema-45>
+          x-parser-schema-id: <anonymous-schema-43>
       x-parser-schema-id: PurchaseOrderIssuedEvent
     PurchaseOrderAcceptedEvent:
       allOf:
@@ -8370,7 +9078,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderAccepted
-              x-parser-schema-id: <anonymous-schema-40>
+              x-parser-schema-id: <anonymous-schema-51>
             data:
               type: object
               required:
@@ -8380,16 +9088,16 @@ components:
               properties:
                 poNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-42>
+                  x-parser-schema-id: <anonymous-schema-53>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-43>
+                  x-parser-schema-id: <anonymous-schema-54>
                 acceptedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-44>
-              x-parser-schema-id: <anonymous-schema-41>
-          x-parser-schema-id: <anonymous-schema-39>
+                  x-parser-schema-id: <anonymous-schema-55>
+              x-parser-schema-id: <anonymous-schema-52>
+          x-parser-schema-id: <anonymous-schema-50>
       x-parser-schema-id: PurchaseOrderAcceptedEvent
     PurchaseOrderRejectedEvent:
       allOf:
@@ -8440,7 +9148,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderRejected
-              x-parser-schema-id: <anonymous-schema-46>
+              x-parser-schema-id: <anonymous-schema-57>
             data:
               type: object
               required:
@@ -8450,19 +9158,19 @@ components:
               properties:
                 poNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-48>
+                  x-parser-schema-id: <anonymous-schema-59>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: <anonymous-schema-60>
                 rejectedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-50>
+                  x-parser-schema-id: <anonymous-schema-61>
                 reasonCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-51>
-              x-parser-schema-id: <anonymous-schema-47>
-          x-parser-schema-id: <anonymous-schema-45>
+                  x-parser-schema-id: <anonymous-schema-62>
+              x-parser-schema-id: <anonymous-schema-58>
+          x-parser-schema-id: <anonymous-schema-56>
       x-parser-schema-id: PurchaseOrderRejectedEvent
     PurchaseOrderExpiredEvent:
       allOf:
@@ -8513,7 +9221,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.partner.vendor-connectivity.purchaseorder.PurchaseOrderExpired
-              x-parser-schema-id: <anonymous-schema-53>
+              x-parser-schema-id: <anonymous-schema-64>
             data:
               type: object
               required:
@@ -8523,16 +9231,16 @@ components:
               properties:
                 poNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-66>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-56>
+                  x-parser-schema-id: <anonymous-schema-67>
                 ackBy:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-57>
-              x-parser-schema-id: <anonymous-schema-54>
-          x-parser-schema-id: <anonymous-schema-52>
+                  x-parser-schema-id: <anonymous-schema-68>
+              x-parser-schema-id: <anonymous-schema-65>
+          x-parser-schema-id: <anonymous-schema-63>
       x-parser-schema-id: PurchaseOrderExpiredEvent
     VendorShipmentConfirmedEvent:
       allOf:
@@ -8583,7 +9291,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.partner.vendor-connectivity.purchaseorder.VendorShipmentConfirmed
-              x-parser-schema-id: <anonymous-schema-59>
+              x-parser-schema-id: <anonymous-schema-70>
             data:
               type: object
               required:
@@ -8593,16 +9301,16 @@ components:
               properties:
                 poNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-61>
+                  x-parser-schema-id: <anonymous-schema-72>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-73>
                 requiredShipBy:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-63>
-              x-parser-schema-id: <anonymous-schema-60>
-          x-parser-schema-id: <anonymous-schema-58>
+                  x-parser-schema-id: <anonymous-schema-74>
+              x-parser-schema-id: <anonymous-schema-71>
+          x-parser-schema-id: <anonymous-schema-69>
       x-parser-schema-id: VendorShipmentConfirmedEvent
     InboundReceiptSubmittedEvent:
       allOf:
@@ -8653,7 +9361,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.partner.vendor-connectivity.inboundreceipt.InboundReceiptSubmitted
-              x-parser-schema-id: <anonymous-schema-69>
+              x-parser-schema-id: <anonymous-schema-80>
             data:
               type: object
               required:
@@ -8664,14 +9372,14 @@ components:
               properties:
                 shipmentId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-71>
+                  x-parser-schema-id: <anonymous-schema-82>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-72>
+                  x-parser-schema-id: <anonymous-schema-83>
                 receivedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-73>
+                  x-parser-schema-id: <anonymous-schema-84>
                 cartons:
                   type: array
                   items:
@@ -8686,11 +9394,11 @@ components:
                           - MISSING
                           - UNEXPECTED
                           - DAMAGED
-                        x-parser-schema-id: <anonymous-schema-76>
-                    x-parser-schema-id: <anonymous-schema-75>
-                  x-parser-schema-id: <anonymous-schema-74>
-              x-parser-schema-id: <anonymous-schema-70>
-          x-parser-schema-id: <anonymous-schema-68>
+                        x-parser-schema-id: <anonymous-schema-87>
+                    x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-85>
+              x-parser-schema-id: <anonymous-schema-81>
+          x-parser-schema-id: <anonymous-schema-79>
       x-parser-schema-id: InboundReceiptSubmittedEvent
     InboundShipmentShippedEvent:
       allOf:
@@ -8741,7 +9449,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.partner.seller-inbound.inboundshipment.InboundShipmentShipped
-              x-parser-schema-id: <anonymous-schema-78>
+              x-parser-schema-id: <anonymous-schema-89>
             data:
               type: object
               required:
@@ -8751,16 +9459,16 @@ components:
               properties:
                 shipmentId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-80>
+                  x-parser-schema-id: <anonymous-schema-91>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-81>
+                  x-parser-schema-id: <anonymous-schema-92>
                 shippedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-82>
-              x-parser-schema-id: <anonymous-schema-79>
-          x-parser-schema-id: <anonymous-schema-77>
+                  x-parser-schema-id: <anonymous-schema-93>
+              x-parser-schema-id: <anonymous-schema-90>
+          x-parser-schema-id: <anonymous-schema-88>
       x-parser-schema-id: InboundShipmentShippedEvent
     SubmissionProcessedEvent:
       allOf:
@@ -8811,15 +9519,15 @@ components:
             type:
               const: >-
                 com.retailnetwork.partner.vendor-connectivity.submission.SubmissionProcessed
-              x-parser-schema-id: <anonymous-schema-65>
+              x-parser-schema-id: <anonymous-schema-76>
             data:
               type: object
               properties:
                 transactionId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-67>
-              x-parser-schema-id: <anonymous-schema-66>
-          x-parser-schema-id: <anonymous-schema-64>
+                  x-parser-schema-id: <anonymous-schema-78>
+              x-parser-schema-id: <anonymous-schema-77>
+          x-parser-schema-id: <anonymous-schema-75>
       x-parser-schema-id: SubmissionProcessedEvent
     PackageHandedOverEvent:
       allOf:
@@ -8870,7 +9578,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.logistics.shipping-and-tracking.journey.PackageHandedOver
-              x-parser-schema-id: <anonymous-schema-84>
+              x-parser-schema-id: <anonymous-schema-95>
             data:
               type: object
               required:
@@ -8880,16 +9588,16 @@ components:
               properties:
                 poNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-97>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-87>
+                  x-parser-schema-id: <anonymous-schema-98>
                 handedOverAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-88>
-              x-parser-schema-id: <anonymous-schema-85>
-          x-parser-schema-id: <anonymous-schema-83>
+                  x-parser-schema-id: <anonymous-schema-99>
+              x-parser-schema-id: <anonymous-schema-96>
+          x-parser-schema-id: <anonymous-schema-94>
       x-parser-schema-id: PackageHandedOverEvent
     PromiseKeptEvent:
       allOf:
@@ -8939,7 +9647,7 @@ components:
           properties:
             type:
               const: com.retailnetwork.commerce.delivery-promise.promise.PromiseKept
-              x-parser-schema-id: <anonymous-schema-90>
+              x-parser-schema-id: <anonymous-schema-101>
             data:
               type: object
               required:
@@ -8948,13 +9656,13 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-92>
+                  x-parser-schema-id: <anonymous-schema-103>
                 deliveredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-93>
-              x-parser-schema-id: <anonymous-schema-91>
-          x-parser-schema-id: <anonymous-schema-89>
+                  x-parser-schema-id: <anonymous-schema-104>
+              x-parser-schema-id: <anonymous-schema-102>
+          x-parser-schema-id: <anonymous-schema-100>
       x-parser-schema-id: PromiseKeptEvent
     PromiseBrokenEvent:
       allOf:
@@ -9005,7 +9713,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.commerce.delivery-promise.promise.PromiseBroken
-              x-parser-schema-id: <anonymous-schema-95>
+              x-parser-schema-id: <anonymous-schema-106>
             data:
               type: object
               required:
@@ -9014,16 +9722,16 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-108>
                 deliveredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-98>
+                  x-parser-schema-id: <anonymous-schema-109>
                 cause:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-99>
-              x-parser-schema-id: <anonymous-schema-96>
-          x-parser-schema-id: <anonymous-schema-94>
+                  x-parser-schema-id: <anonymous-schema-110>
+              x-parser-schema-id: <anonymous-schema-107>
+          x-parser-schema-id: <anonymous-schema-105>
       x-parser-schema-id: PromiseBrokenEvent
     InventoryFeedAppliedEvent:
       allOf:
@@ -9074,7 +9782,7 @@ components:
             type:
               const: >-
                 com.retailnetwork.commerce.offer-availability.inventoryfeed.InventoryFeedApplied
-              x-parser-schema-id: <anonymous-schema-101>
+              x-parser-schema-id: <anonymous-schema-112>
             data:
               type: object
               required:
@@ -9083,13 +9791,13 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-103>
+                  x-parser-schema-id: <anonymous-schema-114>
                 appliedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-104>
-              x-parser-schema-id: <anonymous-schema-102>
-          x-parser-schema-id: <anonymous-schema-100>
+                  x-parser-schema-id: <anonymous-schema-115>
+              x-parser-schema-id: <anonymous-schema-113>
+          x-parser-schema-id: <anonymous-schema-111>
       x-parser-schema-id: InventoryFeedAppliedEvent
     NodeRegisteredEvent:
       allOf:
@@ -9139,15 +9847,15 @@ components:
           properties:
             type:
               const: com.retailnetwork.logistics.node-topology.node.NodeRegistered
-              x-parser-schema-id: <anonymous-schema-106>
+              x-parser-schema-id: <anonymous-schema-117>
             data:
               type: object
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-108>
-              x-parser-schema-id: <anonymous-schema-107>
-          x-parser-schema-id: <anonymous-schema-105>
+                  x-parser-schema-id: <anonymous-schema-119>
+              x-parser-schema-id: <anonymous-schema-118>
+          x-parser-schema-id: <anonymous-schema-116>
       x-parser-schema-id: NodeRegisteredEvent
     NodeOperationalProfileDeclaredEvent:
       allOf:
@@ -9198,15 +9906,15 @@ components:
             type:
               const: >-
                 com.retailnetwork.logistics.node-topology.node.NodeOperationalProfileDeclared
-              x-parser-schema-id: <anonymous-schema-110>
+              x-parser-schema-id: <anonymous-schema-121>
             data:
               type: object
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-112>
-              x-parser-schema-id: <anonymous-schema-111>
-          x-parser-schema-id: <anonymous-schema-109>
+                  x-parser-schema-id: <anonymous-schema-123>
+              x-parser-schema-id: <anonymous-schema-122>
+          x-parser-schema-id: <anonymous-schema-120>
       x-parser-schema-id: NodeOperationalProfileDeclaredEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3
