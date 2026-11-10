@@ -1,0 +1,71 @@
+---
+id: yard-management-api-checkInVisit
+version: 1.0.0
+name: checkInVisit
+summary: Check a visit in at the gate (CheckInVisit)
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Visits'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /visits
+  statusCodes:
+    - '201'
+    - '400'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Records a tractor and driver passing the gate and the trailers they bring. DirectOnCheckIn creates, per trailer, a move created already CLAIMED by the VISITING_DRIVER (no lease): to the appointment door when it is free, open and flow-compatible, otherwise to the first free spot of the site's parking zones, and a walk-in or an arrival earlier than the appointment tolerance goes to a holding spot (TO_HOLDING). SealCheckAtGate compares each recorded seal with the appointment's expected seal; a mismatch raises SealExceptionRaised and, under the REJECT policy, records a REJECTED visit instead (reason SEAL_MISMATCH). A refused check-in persists nothing: 409 `appointment-required`, `visit-already-open`, `trailer-already-on-site`, `door-closed`, `door-flow-mismatch`, `no-free-spot`; 422 `invalid-carrier`, `unknown-appointment` (also when the visit names an appointment but does not carry exactly one trailer), `validation`. The gate clerk may then record the refusal with `POST /visit-rejections`.
+
+
+
+
+## POST `(/visits)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Caller-generated unique key (a UUID per logical submit, 1-128 printable ASCII characters) that makes a retried request safe. Required on every POST and PUT (400 `idempotency-key-required`; `idempotency-key-invalid` when malformed). A replay with the same key, method, path and body returns the original response with `Idempotency-Replayed: true`; the same key with a different method, path or body is 409 `idempotency-key-reused`.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+The visit, the trailers it brought and the moves DirectOnCheckIn created (one per trailer, created CLAIMED by the VISITING_DRIVER). A seal mismatch under the REJECT policy answers 201 with a REJECTED visit, no trailers and no moves.
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

@@ -1,0 +1,73 @@
+---
+id: delivery-promise-api-estimateDeliveries
+version: 0.3.0
+name: estimateDeliveries
+summary: >-
+  Estimate delivery options for up to 50 items of a listing page (nothing is
+  stored)
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:DeliveryEstimates'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /delivery-estimates
+  statusCodes:
+    - '200'
+    - '400'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+A computation over the request body for product listing pages (search results, many items per view). Each item is searched as a single-line group with exactly the quote search of POST /delivery-quotes (the same local read models, OwnerChoice of ADR 0017, netting, scorecard handicap and the SCHEDULED, MEASURED or NOMINAL basis), and each estimate lists the best option per requested tier that a one-line quote would offer, or the OfferConstraint that blocks the tier. The shared inputs are loaded once per request, not per item. The operation is SAFE: it stores nothing (no offer, no outbox event, no hold, no Idempotency-Key row) and an estimate is ADVISORY: it carries no offer id, cannot back POST /promises and never reserves capacity; a quote on the product page or at checkout is what the shopper promises against. An unknown catalogItemId is not an error: it is the ITEM_QUANTITY_NOT_AVAILABLE constraint. The Idempotency-Key is not required and, if sent, it is ignored (a safe request is idempotent by effect, as the guideline treats PUT and DELETE). Makes no synchronous call.
+
+
+
+
+## POST `(/delivery-estimates)`
+
+### Parameters
+- **Idempotency-Key** (header): Not required. This operation stores nothing, so a key that is sent is ignored; it is never read, stored or replayed (ADR 0019).
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+Advisory estimates; nothing was stored and no capacity is reserved.
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

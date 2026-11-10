@@ -1,5 +1,6 @@
 {
   "type": "object",
+  "description": "One delivery offer. capacityBand (ADR 0023) is optional: it is omitted when the book of the offer's window has no finite capacity, and on an offer read back with GET /delivery-quotes/{quoteId}, because the band is a quote-time reading that is not stored. It changes no offer, window or order.",
   "required": [
     "offerId",
     "state",
@@ -12,7 +13,8 @@
     "basis",
     "policyVersion",
     "quotedAt",
-    "expiresAt"
+    "expiresAt",
+    "orderByAt"
   ],
   "properties": {
     "offerId": {
@@ -43,6 +45,7 @@
       "type": "array",
       "items": {
         "type": "object",
+        "description": "A line of a delivery offer or a promise, with the owner whose stock at the witness node covers it (ADR 0017). One owner covers the whole line; the units of several owners never add up.",
         "required": [
           "catalogItemId",
           "quantity"
@@ -59,6 +62,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 2147483647
+          },
+          "ownerRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "description": "The seller (sellerId) whose listing covers the line, chosen by the OwnerChoice rule. Optional and additive; omitted when the line is operator-owned."
           }
         }
       }
@@ -122,6 +132,11 @@
       "format": "date-time",
       "description": "min(quotedAt + offerTtl, the latest instant the witness pickup cutoff can still be met)."
     },
+    "orderByAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The latest instant the order can be placed and still make the quoted window's witness pickup cutoff (cutoff minus the effective handling, in business time). Unlike expiresAt it is not capped by the offer TTL; ordering before it keeps the quoted window even after a re-quote. Snapshots quoted before the field existed expose the zero time."
+    },
     "groupNo": {
       "type": "integer",
       "minimum": 1,
@@ -129,15 +144,25 @@
     },
     "basis": {
       "type": "string",
-      "description": "Promise basis; NOMINAL only for STANDARD.",
+      "description": "Promise basis: SCHEDULED from the timetable, MEASURED when a leg's measured transit pushed the arrival later (ADR 0014), NOMINAL from lane times (STANDARD only).",
       "enum": [
         "SCHEDULED",
+        "MEASURED",
         "NOMINAL"
       ]
     },
     "policyVersion": {
       "type": "string",
       "description": "The promise policy version the quote used (G8)."
+    },
+    "capacityBand": {
+      "type": "string",
+      "description": "The capacity pressure on the PromiseBook that the offer's chosen window would charge, read when the offer was quoted (ADR 0023): utilisation u = (provisional + confirmed holds) / capacity share. AMPLE: u < 0.60. TIGHT: 0.60 <= u < 0.85. SCARCE: u >= 0.85. The thresholds are constants of the service, not policy fields. A signal only: the network never computes a fee, and it reserves nothing (only POST /promises holds capacity).",
+      "enum": [
+        "AMPLE",
+        "TIGHT",
+        "SCARCE"
+      ]
     }
   },
   "isSchema": true

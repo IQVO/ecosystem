@@ -105,11 +105,13 @@ paths:
                     abcClass: A
                     picks: 80
                     units: 160
+                    pickUnit: EACH
                   - sku: SKU-2
                     slot: WH1-FWD-A01-01-02-A
                     abcClass: B
                     picks: 20
                     units: 40
+                    pickUnit: EACH
                 moves:
                   - sku: SKU-1
                     toSlot: WH1-FWD-A01-01-01-A
@@ -309,9 +311,11 @@ paths:
                   - sku: SKU-1
                     slot: WH1-FWD-A01-01-01-A
                     abcClass: A
+                    pickUnit: EACH
                   - sku: SKU-2
                     slot: WH1-FWD-A01-01-02-A
                     abcClass: B
+                    pickUnit: EACH
         '400':
           $ref: '#/components/responses/BadRequest'
         '500':
@@ -493,7 +497,7 @@ paths:
                       p95_seconds: null
                     supersessions: 0
         '400':
-          description: '`from` / `to` are not RFC 3339, empty or inverted, span more than 366 days, or `granularity` is not `day`.'
+          description: '`from` / `to` are not RFC 3339, empty or inverted or span more than 366 days (`invalid-report-range`), or `granularity` is not `day` (`invalid-report-granularity`).'
           content:
             application/problem+json:
               schema:
@@ -566,16 +570,18 @@ components:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
-      required: false
+      required: true
       description: |
         Caller-generated unique key (a UUID per logical submit) that makes a
-        retried request safe. Required whenever the service runs with Postgres,
-        that is in every deployment, and answered with 400
-        `idempotency-key-required` when absent; a replay with the same key and
-        the same body returns the original response, while the same key with a
-        different body is 409 `idempotency-key-reused`. The in-memory development
-        mode (no `DATABASE_URL`) does not enforce it, which is why the header is
-        not marked `required` here.
+        retried request safe: 1 to 128 printable ASCII characters. Every POST
+        needs it, in every deployment (the service always runs on Postgres; there
+        is no in-memory mode). An absent key is a 400 `idempotency-key-required`,
+        an invalid one (longer than 128 characters or
+        with a control or non-ASCII character) is a 400 `idempotency-key-invalid`.
+        A replay with the same key and the same method, path and body returns the
+        stored response (status, headers and body, including a stored 4xx) with
+        `Idempotency-Replayed: true`; the same key with a different request is
+        409 `idempotency-key-reused`. A 5xx outcome is never stored.
       schema:
         type: string
         minLength: 1
@@ -607,7 +613,7 @@ components:
           - 'true'
   responses:
     BadRequest:
-      description: Malformed JSON body, an unknown field, a NUL character (U+0000) in the body or the query (Postgres text cannot hold it), or an invalid path or query parameter.
+      description: Malformed JSON body (also a body over 64 KiB, which is cut off and fails to parse), an unknown or trailing JSON field, a NUL character (U+0000) in the body or the query (Postgres text cannot hold it), an invalid path or query parameter, an unknown query parameter on a list or lookup endpoint, or a missing or invalid Idempotency-Key on a POST.
       content:
         application/problem+json:
           schema:
@@ -677,6 +683,22 @@ components:
                 status: 400
                 detail: state must be one of Draft, Approved, Rejected, Superseded
                 instance: /slot-plans
+            unknownQueryParameter:
+              summary: Query parameter the operation does not define
+              value:
+                type: https://errors.slotting-optimization.warehouse-systems.dev/unknown-query-parameter
+                title: Unknown query parameter
+                status: 400
+                detail: 'unknown query parameter: "foo" is not a parameter of this operation'
+                instance: /slot-plans
+            idempotencyKeyInvalid:
+              summary: Idempotency-Key longer than 128 characters or not printable ASCII
+              value:
+                type: https://errors.slotting-optimization.warehouse-systems.dev/idempotency-key-invalid
+                title: Idempotency-Key header is invalid
+                status: 400
+                detail: the Idempotency-Key must be 1 to 128 printable ASCII characters
+                instance: /slot-plans
             idempotencyKeyRequired:
               summary: Missing Idempotency-Key
               value:
@@ -698,7 +720,7 @@ components:
             detail: the Idempotency-Key was used with a different request
             instance: /slot-plans
     PlanNotFound:
-      description: No plan has this id.
+      description: No plan has this id (also a path containing a NUL, answered with the `resource-not-found` problem).
       content:
         application/problem+json:
           schema:
@@ -770,7 +792,7 @@ components:
             title: The report could not be served
             status: 500
             detail: the analytical database query failed
-            instance: /slot-plans
+            instance: /reports/slot-plan-funnel
   schemas:
     PlanState:
       type: string
@@ -836,6 +858,7 @@ components:
         - abcClass
         - picks
         - units
+        - pickUnit
       properties:
         sku:
           type: string
@@ -861,7 +884,7 @@ components:
           enum:
             - EACH
             - CASE
-          description: The unit the SKU is picked in from this face. CASE only for a SKU with an active CASE pack level and a case-pick zone face; absent or EACH otherwise.
+          description: The unit the SKU is picked in from this face. CASE only for a SKU with an active CASE pack level and a case-pick zone face; EACH otherwise. Always present.
         casesCapacity:
           type: integer
           format: int64
@@ -1094,6 +1117,7 @@ components:
         - sku
         - slot
         - abcClass
+        - pickUnit
       properties:
         sku:
           type: string
@@ -1106,7 +1130,7 @@ components:
           enum:
             - EACH
             - CASE
-          description: The unit the SKU is picked in from this face. CASE only for a SKU with an active CASE pack level and a case-pick zone face; absent or EACH otherwise.
+          description: The unit the SKU is picked in from this face. CASE only for a SKU with an active CASE pack level and a case-pick zone face; EACH otherwise. Always present.
         casesCapacity:
           type: integer
           format: int64

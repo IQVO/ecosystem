@@ -1,0 +1,101 @@
+---
+id: network-inventory-planning-api-cancelTransfer
+version: 1.0.0
+name: cancelTransfer
+summary: >-
+  Cancel a transfer — synchronously pre-release, through RELEASING once
+  allocated.
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:transfers'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/v1/transfers/{transferId}/cancellation'
+  statusCodes:
+    - '200'
+    - '202'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '503'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+The operator cancel of the transfer saga (ADR 0022). Pre-release
+states (DRAFT/PROPOSED/APPROVED/ALLOCATING) cancel synchronously:
+200 with state CANCELLED, no hold exists. ALLOCATED answers 202
+with state RELEASING: the saga outboxes
+TransferAllocationReleaseRequested in the same transaction and
+inventory-storage resolves the origin reservation; its
+TransferStockAllocationReleased fact (outcome RELEASED or
+ALREADY_RESOLVED — both settle) completes the cancel to CANCELLED.
+A retried cancel is idempotent on the saga state: RELEASING
+answers 202 again, CANCELLED answers 200 again. PICKED onwards and
+UNFULFILLABLE refuse with 409 cancel-refused — the stock is
+physically in motion or the saga already closed. An unknown
+transfer is 404; a missing reason is 422 invalid-cancel. A body
+with an unknown field or malformed JSON is 400 invalid-request.
+Idempotent per the required Idempotency-Key header like every
+keyed write: same key and same request replays the stored answer
+(Idempotency-Replayed: true), a different request under the same
+key is 409 idempotency-key-reused. 2xx and 4xx answers are
+stored; a 5xx is never stored.
+
+
+
+
+
+## POST `(/v1/transfers/{transferId}/cancellation)`
+
+### Parameters
+- **transferId** (path) (required): The saga aggregate id being cancelled.
+- **Idempotency-Key** (header) (required): Client-generated key (1-128 printable ASCII characters, a UUID per
+logical submit). A retry reuses it; a new user action mints a new
+one. Same key and same request replays the stored answer with
+Idempotency-Replayed: true; the same key with a different request
+is 409 idempotency-key-reused.
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-green-500">202 Accepted</span>
+<SchemaViewer file="response-202.json" maxHeight="500" id="response-202" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">503 Service Unavailable</span>
+<SchemaViewer file="response-503.json" maxHeight="500" id="response-503" />
+
+
+
+## Architecture
+
+<NodeGraph />

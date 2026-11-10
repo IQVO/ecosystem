@@ -243,7 +243,7 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '409':
           description: |
-            The order is not `ACKNOWLEDGED`, so shipment cannot be confirmed yet (`confirm-before-acknowledge`). A shipment may not be confirmed for an order we never committed to. Also the answer when the `Idempotency-Key` was already used with a different request (method, path or body): problem type `idempotency-key-reused`, a client bug, not to be retried. Or a request with the same key is still in flight after the server waited 30 seconds for it (`idempotency-key-in-progress`): retry later with the same key.
+            The order is not `ACKNOWLEDGED`, so shipment cannot be confirmed yet (`confirm-before-acknowledge`). A shipment may not be confirmed for an order we never committed to. Also the answer when the `Idempotency-Key` was already used with a different request (method, path or body): problem type `idempotency-key-reused`, a client bug, not to be retried. Or a request with the same key is still in flight after the server waited 30 seconds for it (`idempotency-key-in-progress`): retry later with the same key. Finally `version-conflict`: another writer (the demand poller or a sweep) changed the order between this request's load and its save — retryable after a reload.
           content:
             application/problem+json:
               schema:
@@ -269,6 +269,13 @@ paths:
                     title: A request with this Idempotency-Key is still being processed
                     status: 409
                     detail: retry later with the same key
+                    instance: /network-orders/po-4711/shipment-confirmation
+                versionConflict:
+                  value:
+                    type: https://errors.network-fulfillment.warehouse-systems.dev/version-conflict
+                    title: The order was changed by another writer; reload and retry
+                    status: 409
+                    detail: the order row moved to a newer version while this request was in flight
                     instance: /network-orders/po-4711/shipment-confirmation
         '422':
           description: The `networkRef` is empty (`empty-network-ref`).
