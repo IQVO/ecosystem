@@ -1,9 +1,77 @@
-@AGENTS.md
+# CLAUDE.md — ecosystem
 
-## Secrets: the EventCatalog license must never reach GitHub
+harness-template: v4
 
-- `license.jwt` (offline EventCatalog license, IQVO, community plan) lives in the catalog root and is **git-ignored** (`license.jwt` and `*.jwt` in `.gitignore`). Never commit, stage, copy into the repo history, paste into a PR, issue or chat, or print its contents.
-- Never remove or loosen those `.gitignore` entries, never `git add -f license.jwt`, and never run `git add -A` / `git commit -a` without first checking `git status` shows no `*.jwt`.
-- Before any commit or push, run `git ls-files | grep -i -E 'jwt|license'`; it must print nothing.
-- In CI, write the file during the job from a secret, or point `EC_LICENSE` at a path outside the checkout. Do not bake it into an image or a build artifact (`build/`, `dist/`, `Dockerfile` layers).
-- If it is ever committed or pushed: stop, tell the user, request a new license from hello@eventcatalog.dev, and scrub history (`git filter-repo`) before anything else.
+`ecosystem` is the [EventCatalog](https://github.com/event-catalog/eventcatalog) (core 5.2.1) of the
+`warehouse-systems` fleet (GitHub org `IQVO`): the architecture map of every bounded context, its REST
+API and the CloudEvents 1.0 messages it publishes and consumes on Kafka, across the `wms`, `wes`,
+`retail-network` and `storefront` domains plus the hand-written `operator-experience` domain. It is
+not a bounded context and owns no contract: it renders committed copies of the producers' contracts
+(`specs/`). It ships a static site (`npm run build`), a digest-pinned `Dockerfile`
+(node build, `nginx-unprivileged` on 8080, served under `/catalog` on the cluster web gateway) and the
+`charts/ecosystem` Helm chart.
+
+<!-- BEGIN:eventcatalog-agent-rules -->
+# EventCatalog: ALWAYS read docs before coding
+
+Before any EventCatalog work, find and read the relevant doc in `node_modules/@eventcatalog/core/dist/docs/`. Your training data may be outdated. The bundled docs are the source of truth.
+
+<!-- END:eventcatalog-agent-rules -->
+
+## Hard rules
+
+1. **The EventCatalog license must never reach GitHub.**
+   - `license.jwt` (offline EventCatalog license, IQVO, community plan) lives in the catalog root and is **git-ignored** (`license.jwt` and `*.jwt` in `.gitignore`). Never commit, stage, copy into the repo history, paste into a PR, issue or chat, or print its contents.
+   - Never remove or loosen those `.gitignore` entries, never `git add -f license.jwt`, and never run `git add -A` / `git commit -a` without first checking `git status` shows no `*.jwt`.
+   - Before any commit or push, run `git ls-files | grep -i -E 'jwt|license'`; it must print nothing.
+   - In CI, write the file during the job from a secret, or point `EC_LICENSE` at a path outside the checkout. Do not bake it into an image or a build artifact (`build/`, `dist/`, `Dockerfile` layers).
+   - If it is ever committed or pushed: stop, tell the user, request a new license from hello@eventcatalog.dev, and scrub history (`git filter-repo`) before anything else.
+2. **`specs/` is a byte copy of each producer's `apis/*.yaml` on its `origin/develop`.** Refresh it
+   with `npm run sync`, never by hand; a wrong contract is fixed in the producer repo. The
+   `specs-fresh` workflow fails when a copy drifts. Detail: `.claude/rules/specs-and-generation.md`.
+3. **Never delete `domains/` wholesale**: `domains/operator-experience/` is hand-written. Regenerate in
+   place with `npm run generate` and let it finish (a killed run leaves a tree the build cannot read).
+4. **Every integration event has a consumer or a written reason** (`npm run check:events`, CI workflow
+   `orphan-events`). Reasons go native in the producer contract as `x-no-consumer-reason`.
+5. **CloudEvents 1.0 is the only envelope** the catalog documents; no auth scheme is documented
+   (the fleet is unauthenticated by decision).
+
+## Commands
+
+```bash
+make install       # npm ci
+make lint          # eventcatalog-linter (CI job lint)
+make build         # eventcatalog build -> dist/ (runs prepare-specs first; CI job build)
+make check         # lint + build
+make check-all     # = check (no deeper test layer here)
+make chart-lint    # helm lint charts/ecosystem (CI job helm)
+make image / run   # docker build (license as a BuildKit secret if present) / serve on :3001
+make check-fast    # lint: the agent Stop-hook gate
+make guide-lint    # these guides: skills load, references resolve, context budget
+make harness-test  # unit-test the agent hooks
+npm run sync       # specs/ <- each repo's origin/develop (WAREHOUSE_ROOT, default ..)
+npm run generate   # specs/ -> .generated-specs/ -> domains/ + channels/ (minutes; let it finish)
+npm run check:events                       # orphan-event sensor; run it unpiped
+python3 scripts/check-specs-fresh.py       # spec copies equal the producers' develop
+```
+
+## Where things are written down
+
+- `README.md`: layout, workflow, adding a context, packaging and release.
+- `catalog.contexts.mjs`: every registered context (subdomain, tier, purpose, topics it publishes).
+  `catalog.markdown.mjs`: page bodies. `scripts/prepare-specs.mjs`: each spec rewrite, in its header.
+- `specs/no-consumer-reasons.yaml`: the orphan allowlist (empty by design).
+- `.claude/rules/specs-and-generation.md` (scoped), `.claude/rules/fleet/readme-standard.md`.
+- `HARNESS.md`: every sensor and hook this repo runs, and when. `INCIDENTS.md`: the fleet incident log.
+
+<!-- harness:scoped-rules:start (generated by tools/migrate_v3.py in warehouse-harness-template; do not hand-edit) -->
+## Scoped rules and harness
+
+Claude Code loads each rule below automatically when you touch the matching paths. OpenCode and Codex do NOT: read the rule BEFORE editing matching files.
+
+| When touching | Read |
+|---|---|
+| `specs/**`, `scripts/**`, `domains/**` ... | `.claude/rules/specs-and-generation.md` |
+
+Hooks (`scripts/harness/hook.py`, wired for Claude Code, Codex and OpenCode) block pushes to develop/main, `--no-verify`, bare `rm -rf`, and edits to generated files, and feed gofmt/vet findings back after each edit. Before saying "done" run `make check-fast`; the full gate is `make check-all`. `HARNESS_OFF=1` disables the hooks when debugging the harness itself.
+<!-- harness:scoped-rules:end -->
