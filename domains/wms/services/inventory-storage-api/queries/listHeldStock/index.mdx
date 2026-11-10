@@ -1,0 +1,67 @@
+---
+id: inventory-storage-api-listHeldStock
+version: 1.0.0
+name: listHeldStock
+summary: List the units held out of usable stock
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:HeldStock'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: /held-stock
+  statusCodes:
+    - '200'
+    - '400'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+The units still HELD (ADR 0052), oldest first (ties by id), filtered by `reason`, `sku` and age (`olderThanHours`: held for MORE than that many hours). A removed unit (released, returned, scrapped) is not listed; read it by id for its audit trail. Keyset-paginated (REST guideline section 3): `{items, nextCursor}`, `limit` (1-500, default 100) and the opaque `cursor`. Any other query parameter is 400 `unknown-query-parameter`. Side-effect-free.
+
+
+
+
+## GET `(/held-stock)`
+
+### Parameters
+- **reason** (query): Only units held for this reason.
+- **sku** (query): Only units of this SKU.
+- **olderThanHours** (query): Only units held for more than this many hours (the ageing filter).
+- **limit** (query): Page size of a collection GET (REST guideline 3.2): an integer from 1 to 500, default 100. Anything else is 400 `invalid-limit`.
+
+- **cursor** (query): Opaque page token: the previous page's `nextCursor`, passed back unchanged together with the same filters. Absent on the first page. A value this API did not issue is 400 `invalid-cursor`.
+
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+One keyset page of held units (REST guideline section 3.3), oldest first.
+
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 (Problem Details for HTTP APIs) error shape, used for every non-2xx response across this service. `type` is `https://errors.inventory-storage.warehouse-systems.dev/<slug>`; every slug is documented as a response example on the operation(s) that can return it, and the mapping from typed domain error to (status, slug, title) lives in one lookup table (`problemCatalog` in internal/adapters/inbound/http/errors.go, ADR 0005).
+
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />
