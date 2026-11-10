@@ -1,0 +1,151 @@
+name: specs-refresh
+
+# Self-healing for the specs-fresh gate. specs/ is a committed copy of every producer's contract and specs-fresh
+# fails EVERY open PR the moment any producer merges a spec change. This job runs the sanctioned refresh
+# (scripts/specs-refresh.sh: sync, orphan sensor, generate, lint, build, re-sync) against fresh clones of the
+# producers' develop and opens or updates ONE bot PR `chore/specs-refresh` when the copies differ. It never pushes
+# develop and never relaxes specs-fresh: the gate stays the sensor, this job is the fix it asks for.
+#
+# Checks on the bot PR: commits and PRs made with GITHUB_TOKEN trigger no workflows, so without a token secret the
+# job dispatches ci.yml, specs-fresh.yml and orphan-events.yml on the bot branch itself (workflow_dispatch is the
+# one event GITHUB_TOKEN may trigger); their check runs land on the PR head and satisfy branch protection. With a
+# `SPECS_REFRESH_TOKEN` secret (fine-grained PAT or GitHub App token: contents + pull requests write on this repo)
+# the push and the PR trigger the normal pull_request runs and no dispatch is needed.
+# Opening the PR with GITHUB_TOKEN needs the repository setting "Allow GitHub Actions to create and approve pull
+# requests" (Settings > Actions > General); without it the job still pushes the branch and fails loudly.
+on:
+  schedule:
+    - cron: "41 2,8,14,20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: specs-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write       # push the bot branch
+      pull-requests: write  # open / update the bot PR
+      actions: write        # dispatch the PR's checks when no token secret exists
+    env:
+      BRANCH: chore/specs-refresh
+      BASE: develop
+      HAS_PAT: ${{ secrets.SPECS_REFRESH_TOKEN != '' }}
+      GH_TOKEN: ${{ secrets.SPECS_REFRESH_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: develop
+          fetch-depth: 0
+          token: ${{ secrets.SPECS_REFRESH_TOKEN || github.token }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Clone every registered producer's develop (public repos, shallow)
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/fleet"; mkdir -p "$root"
+          node --input-type=module -e "import('./catalog.contexts.mjs').then(m => console.log(Object.keys(m.CONTEXTS).join('\n')))" |
+          while read -r ctx; do
+            git clone --quiet --depth 1 --single-branch --branch develop --no-checkout \
+              "https://github.com/${GITHUB_REPOSITORY_OWNER}/${ctx}.git" "$root/$ctx"
+          done
+          echo "WAREHOUSE_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Sanctioned refresh (sync, sensor, generate, lint, build, re-sync)
+        id: refresh
+        env:
+          EVENTCATALOG_LICENSE_JWT: ${{ secrets.EVENTCATALOG_LICENSE_JWT }}
+          SPECS_REFRESH_LOG: ${{ runner.temp }}/specs-refresh-logs
+        run: |
+          set -uo pipefail
+          # license outside the checkout (CLAUDE.md rule 1); the catalog also builds without one
+          if [ -n "$EVENTCATALOG_LICENSE_JWT" ]; then
+            printf '%s' "$EVENTCATALOG_LICENSE_JWT" > "$RUNNER_TEMP/license.jwt"
+            echo "EC_LICENSE=$RUNNER_TEMP/license.jwt" >> "$GITHUB_ENV"; export EC_LICENSE="$RUNNER_TEMP/license.jwt"
+          fi
+          for pass in 1 2 3; do
+            rc=0; bash scripts/specs-refresh.sh | tee "$RUNNER_TEMP/refresh.out" || rc=$?
+            [ "$rc" = 3 ] || break
+            echo "pass $pass: a producer moved mid-run, refreshing again"
+          done
+          [ "$rc" = 0 ] || exit "$rc"
+          if grep -q 'NO-DRIFT' "$RUNNER_TEMP/refresh.out"; then echo "drift=false" >> "$GITHUB_OUTPUT"
+          else echo "drift=true" >> "$GITHUB_OUTPUT"; fi
+      - name: No drift, so close a leftover bot PR
+        if: steps.refresh.outputs.drift == 'false'
+        run: |
+          set -euo pipefail
+          n=$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number -q '.[0].number')
+          if [ -n "$n" ]; then
+            gh pr close "$n" --delete-branch --comment "develop already carries every producer's current contract; nothing left to refresh."
+          fi
+          echo "spec copies equal every producer's develop"
+      - name: Commit, push the bot branch, open or update the bot PR
+        if: steps.refresh.outputs.drift == 'true'
+        run: |
+          set -euo pipefail
+          if git ls-files --others --exclude-standard | grep -i -E 'jwt|license'; then echo "::error::license file in the tree"; exit 1; fi
+          changed=$(git status --porcelain -- specs | sed 's/^...//' | sort)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add -A -- specs domains channels
+          {
+            echo "chore(specs): refresh drifted spec copies and regenerate the catalog (bot)"
+            echo
+            echo "scripts/specs-refresh.sh against each producer's develop (run $GITHUB_RUN_ID):"
+            while read -r f; do echo "- $f"; done <<<"$changed"
+          } > "$RUNNER_TEMP/msg.txt"
+          git commit -q -F "$RUNNER_TEMP/msg.txt"
+          old=""; push=true
+          if git fetch -q origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null; then
+            old=$(git rev-parse "origin/$BRANCH")
+            if git diff --quiet "origin/$BRANCH" HEAD; then
+              echo "bot branch already carries these bytes on the current develop; nothing to push"
+              push=false
+            fi
+          fi
+          if [ "$push" = true ]; then
+            # the bot branch is owned by this job and rebuilt from develop on every run: humans never push to it
+            git push --force-with-lease="refs/heads/$BRANCH:$old" origin "HEAD:refs/heads/$BRANCH"
+          fi
+          echo "PUSHED=$push" >> "$GITHUB_ENV"
+          {
+            echo "Automated by \`.github/workflows/specs-refresh.yml\` (run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            echo
+            echo "A producer merged a contract change, so specs-fresh is red on every PR here. This branch is"
+            echo "\`develop\` plus the sanctioned refresh (\`scripts/specs-refresh.sh\`: sync, orphan sensor, generate,"
+            echo "lint, build, re-sync with identical bytes). Spec copies refreshed:"
+            echo
+            while read -r f; do echo "- \`$f\`"; done <<<"$changed"
+            echo
+            echo "Review the contract diff under \`specs/\`, merge on green (squash), then \`update-branch\` the PRs"
+            echo "that were red on specs-fresh. Do not push to this branch: every run rebuilds it from develop."
+            [ "$HAS_PAT" = true ] || echo "Checks were dispatched on the branch (GITHUB_TOKEN events trigger no pull_request runs)."
+          } > "$RUNNER_TEMP/body.md"
+          n=$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number -q '.[0].number')
+          if [ -n "$n" ]; then
+            gh pr edit "$n" --body-file "$RUNNER_TEMP/body.md"
+          elif ! gh pr create --base "$BASE" --head "$BRANCH" \
+                 --title "chore(specs): refresh drifted spec copies (bot)" --body-file "$RUNNER_TEMP/body.md"; then
+            echo "::error::branch $BRANCH is pushed but the PR could not be opened: enable 'Allow GitHub Actions to create and approve pull requests' (Settings > Actions > General) or add the SPECS_REFRESH_TOKEN secret"
+            echo "PR_FAILED=true" >> "$GITHUB_ENV"
+          fi
+      - name: Run the PR's checks on the bot branch (GITHUB_TOKEN pushes trigger none)
+        if: steps.refresh.outputs.drift == 'true' && env.HAS_PAT != 'true' && env.PUSHED == 'true'
+        run: |
+          set -euo pipefail
+          for wf in ci.yml specs-fresh.yml orphan-events.yml; do
+            gh workflow run "$wf" --ref "$BRANCH"
+          done
+      - name: Fail when the PR could not be opened
+        if: env.PR_FAILED == 'true'
+        run: exit 1

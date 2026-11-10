@@ -24,6 +24,27 @@ paths:
   message ids, per-channel clones, direction rewritten from topic ownership, MDX escaping. Its header
   documents each rewrite. Payload schemas are never modified.
 
+## Self-healing refresh (`specs-refresh` workflow, bot PR `chore/specs-refresh`)
+
+- `scripts/specs-refresh.sh` is the whole sanctioned refresh as one command: `npm run sync`, the orphan
+  sensor, `npm run generate` (fails on any `Failed to parse` line and on empty directories), `rm -rf .astro`,
+  `npm run lint`, `npm run build`, re-sync, and the re-sync must find the bytes generate used. Exit 0
+  (prints `NO-DRIFT` when there was nothing to do), 1 a step failed, 3 a producer moved mid-run (run again).
+  Run it locally instead of chaining the steps by hand (`WAREHOUSE_ROOT` as for sync).
+- `.github/workflows/specs-refresh.yml` runs it four times a day and on `workflow_dispatch`, against shallow
+  clones of every registered producer's develop. Drift: it commits `specs/`, `domains/`, `channels/` on top of
+  develop as `chore/specs-refresh` (force-with-lease; the branch belongs to the job, never push to it), and
+  opens or updates ONE PR into develop. No drift: it closes a leftover bot PR. A failed step leaves no PR.
+- GITHUB_TOKEN pushes and PRs trigger no workflows, so without a `SPECS_REFRESH_TOKEN` secret the job
+  dispatches `ci.yml`, `specs-fresh.yml` and `orphan-events.yml` on the bot branch; their check runs land on
+  the PR head and satisfy branch protection. With the secret (fine-grained PAT or GitHub App token,
+  contents + pull requests write) the normal `pull_request` runs fire instead. Opening the PR with
+  GITHUB_TOKEN needs the repository setting "Allow GitHub Actions to create and approve pull requests";
+  without it the job pushes the branch and fails with an error naming that setting.
+- Merging stays a human/agent decision: review the contract diff, squash-merge on green, then
+  `update-branch` the PRs that were red on specs-fresh. `specs-fresh` itself is unchanged and blocking:
+  the bot is the fix it asks for, never a reason to make it advisory.
+
 ## Generation
 
 - `npm run generate` regenerates `domains/` and `channels/` from `.generated-specs/`. It takes

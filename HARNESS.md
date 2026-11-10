@@ -31,12 +31,16 @@ harness-template: v4
 | `helm` | ci.yml | `helm lint charts/ecosystem` | PR + push | yes |
 | `orphan-events` | `.github/workflows/orphan-events.yml` | `npm run check:events`: every integration event type has a consumer or a written reason | PRs/pushes touching `specs/**`, the sensor, `catalog.contexts.mjs` | yes |
 | `specs-fresh` | `.github/workflows/specs-fresh.yml` | `scripts/test_check_specs_fresh.py`, then `scripts/check-specs-fresh.py`: every `specs/` copy equals its producer's develop | every PR, push to develop, nightly | yes |
+| `specs-refresh` (healer) | `.github/workflows/specs-refresh.yml` | `scripts/specs-refresh.sh` (sync, orphan sensor, generate, lint, build, re-sync) against the producers' develop; on drift opens/updates the bot PR `chore/specs-refresh` and dispatches its checks | 4x a day + manual | no (it fixes what specs-fresh reports) |
 | CodeQL | `.github/workflows/codeql.yml` | JavaScript analysis | PR, push, weekly | yes |
 | AI review | `.github/workflows/ai-review.yml` | needs `ANTHROPIC_API_KEY`; path filter `internal/domain`, `apis`, `charts` (fires on `charts/**` here) | PR into develop | no (advisory) |
 
 `docker-publish` (push to main or a `v*` tag: GHCR, cosign, SBOM) and the manual `license-debug` job are
 delivery/diagnostics, not sensors. `specs-fresh` can go red on a PR that did not touch `specs/` when a
-producer merges a contract change meanwhile: re-sync, never weaken the check.
+producer merges a contract change meanwhile: never weaken the check. The `specs-refresh` workflow
+answers it within hours with the bot PR `chore/specs-refresh` (merge it on green, then `update-branch`
+the red PRs); `scripts/specs-refresh.sh` is the same refresh by hand. Flow and the token/setting it
+needs: `.claude/rules/specs-and-generation.md`.
 
 Local gates: `make check-fast` (lint; the agent Stop hook runs it), `make check` / `make check-all`
 (lint + build), `make chart-lint`, `make guide-lint`, `make harness-test`, `npm run check:events`.
