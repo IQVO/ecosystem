@@ -17,64 +17,122 @@ info:
       description: Events raised by the Route aggregate.
     - name: packageattempthistory
       description: Events raised by the PackageAttemptHistory aggregate.
-  description: |
+    - name: deliverypointprofile
+      description: Events raised by the DeliveryPointProfile aggregate (ADR 0014).
+  description: >
     Event catalog for the **last-mile-delivery** bounded context of the retail
+
     network (logistics tier): the delivery stations' waves (induct cutoff,
+
     delivery window, stop capacity), the routes of delivery service partners
+
     and every delivery attempt (ADR 0001, ADR 0002).
 
-    **Published.** Eight events. Seven go to the integration topic
+
+    **Published.** Ten events. Nine go to the integration topic
+
     `retailnetwork.last-mile-delivery.events`; `RoutePlanned` is analytics only
+
     and goes ONLY to `retailnetwork.last-mile-delivery.analytics`. Every event
+
     leaves through a **transactional outbox**: the aggregates and their
+
     already-encoded events are written in ONE database transaction and an
+
     always-on relay drains them to Kafka (at-least-once; the CloudEvents `id` is
-    stored with the outbox row, so a retry republishes the same `id`). The eight
+
+    stored with the outbox row, so a retry republishes the same `id`). The ten
+
     types are catalogued in ADR 0004.
 
+
     **Consumed.** Four events (ADR 0003): `LoadArrived` from
+
     linehaul-transportation, `NodeRegistered` and `ServiceAreaAssigned` from
+
     node-topology, `LabelIssued` from shipping-and-tracking. Each consumer
+
     dedupes on the CloudEvents `id` (inbox table `processed_events`), dispatches
+
     on the full `type`, ignores unknown types and unknown fields. The consumed
+
     messages below list only the fields this service relies on; the producers'
+
     own AsyncAPI files are the authority.
 
+
     **Own events, read back for analytics (ADR 0012).** The analytics projector
+
     (`cmd/lm-projector`) reads this context's OWN two topics with one reader in
+
     the fixed group `last-mile-delivery-analytics` and projects
+
     DeliveryWaveScheduled, DeliveryWaveCapacityChanged, DeliveryWaveCancelled,
+
     WaveCostDeclared, PackageOutForDelivery, DeliveryAttempted,
-    PackageReturnInitiated (events topic) and RoutePlanned (analytics topic)
-    into a separate analytical database. It dedupes on the CloudEvents `id` in
+
+    StopEtaWindowAssigned (ADR 0013), PackageReturnInitiated (events topic) and
+
+    RoutePlanned (analytics topic)
+
+    into a separate analytical database; it acknowledges DeliveryPointFlagged
+
+    and PackageInductionDeferred without projecting them. It dedupes on the
+    CloudEvents `id` in
+
     the same transaction as the projection, dead-letters only deterministic
+
     poison to `retailnetwork.last-mile-delivery.analytics.dlq` and retries
+
     transient failures without a bound. It reads no sibling's topic.
 
+
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+
     header `content-type: application/cloudevents+json; charset=UTF-8`.
+
     `specversion`, `id`, `source` (`/retailnetwork/last-mile-delivery`), `type`,
+
     `subject` (the aggregate root id), `time`, `datacontenttype`
+
     (`application/json`) and `dataschema`
+
     (`urn:retailnetwork:last-mile-delivery:<stream>:<EventName>:v1`, stream
+
     `events` or `analytics`) are all required. Kafka key = the subject, so one
+
     aggregate's events stay ordered on one partition. Type =
+
     `com.retailnetwork.logistics.last-mile-delivery.<entity>.<EventName>` with
+
     entity `wave`, `route` or `packageattempthistory`. A breaking payload change
+
     is a new `.v2` type, never a mutation.
 
+
     **Conventions.** `data` is camelCase; ids are strings; instants are RFC 3339
+
     UTC strings; the service date is `YYYY-MM-DD`; counts are integers;
+
     optional fields are omitted when absent (never null); evolution is additive
+
     only. No address and no other PII appears in any event.
 
+
     **Consumer behaviour.** One consumer per consumed topic, each under the
+
     consumer group named by a mandatory environment variable
+
     (`LINEHAUL_CONSUMER_GROUP`, `NODE_TOPOLOGY_CONSUMER_GROUP`,
+
     `SHIPPING_CONSUMER_GROUP`). A message that is not a valid CloudEvents 1.0
+
     event, or whose `data` cannot be decoded or breaks a value rule, goes to
+
     `<topic>.dlq` at once; a transient failure is retried with backoff and goes
+
     to `<topic>.dlq` after five attempts. The offset is committed only after
+
     the effect and its inbox row (`processed_events`) committed.
 servers:
   production:
@@ -726,9 +784,11 @@ channels:
           subject = the routeId, key = the routeId. Raised by RecordAttempt, per
           package (Gap Register G17: outcomes are per package, the stop outcome
           is derived). `outcome` is DELIVERED or FAILED; `failureReason` is
-          present only when FAILED. A FAILED attempt re-inducts the package onto
-          the next wave, or after the third failure raises
-          PackageReturnInitiated.
+          present only when FAILED; `outcomeDetail` (NOT_HOME, ACCESS_PROBLEM or
+          OTHER on FAILED, SAFE_PLACE_USED on DELIVERED) is present only when
+          the driver client reported one (additive and optional, same v1
+          dataschema). A FAILED attempt re-inducts the package onto the next
+          wave, or after the third failure raises PackageReturnInitiated.
         contentType: application/cloudevents+json
         headers:
           type: object
@@ -814,17 +874,30 @@ channels:
                         - DELIVERED
                         - FAILED
                       x-parser-schema-id: Outcome
+                    outcomeDetail:
+                      type: string
+                      enum:
+                        - NOT_HOME
+                        - ACCESS_PROBLEM
+                        - OTHER
+                        - SAFE_PLACE_USED
+                      description: >-
+                        Optional category reported by the driver client; omitted
+                        when not reported. FAILED carries NOT_HOME,
+                        ACCESS_PROBLEM or OTHER; DELIVERED carries
+                        SAFE_PLACE_USED.
+                      x-parser-schema-id: <anonymous-schema-44>
                     failureReason:
                       type: string
                       description: Present only when outcome is FAILED.
-                      x-parser-schema-id: <anonymous-schema-44>
+                      x-parser-schema-id: <anonymous-schema-45>
                     at:
                       type: string
                       format: date-time
                       description: >-
                         The instant of the attempt as reported by the driver
                         app.
-                      x-parser-schema-id: <anonymous-schema-45>
+                      x-parser-schema-id: <anonymous-schema-46>
                   x-parser-schema-id: <anonymous-schema-41>
               x-parser-schema-id: <anonymous-schema-40>
           x-parser-schema-id: DeliveryAttemptedEvent
@@ -848,6 +921,167 @@ channels:
                 failureReason: recipient absent
                 at: '2026-10-24T14:19:30Z'
         x-parser-unique-object-id: DeliveryAttempted
+      StopEtaWindowAssigned:
+        name: StopEtaWindowAssigned
+        title: Stop ETA window assigned
+        summary: A two-hour ETA window for one stop of a started route.
+        description: >-
+          `type` =
+          `com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned`;
+          subject = the routeId, key = the routeId (the key of
+          PackageOutForDelivery, so the two stay ordered). Raised by StartRoute
+          in the same transaction, AFTER every PackageOutForDelivery, one per
+          stop in stop order (ADR 0013). The CloudEvents `time` is the route
+          start instant (the assignment time). The window is a deterministic
+          spread of the route's stops over what is left of the wave's delivery
+          window, at most two hours wide; it is not a prediction. No event is
+          raised when less than 30 minutes of the wave window is left at the
+          start instant. An ETA is never retracted and never re-raised for the
+          same start; a re-inducted package gets a new one from its next
+          StartRoute. `stopKey` is the opaque stop key (`pkg:<trackingNumber>`
+          when the package has no label data); no address, name or phone is
+          carried. A window may fall after the promised delivery window; it is
+          published as computed.
+        contentType: application/cloudevents+json
+        headers:
+          type: object
+          description: >-
+            Kafka record headers of every published message (the record key is
+            the CloudEvents subject, partitioned with kafka-go Hash).
+          required:
+            - content-type
+          properties:
+            content-type:
+              type: string
+              const: application/cloudevents+json; charset=UTF-8
+              x-parser-schema-id: <anonymous-schema-1>
+          x-parser-schema-id: KafkaHeaders
+        tags:
+          - name: route
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-2>
+                id:
+                  type: string
+                  description: >-
+                    UUID minted once per occurrence and stored with the outbox
+                    row.
+                  x-parser-schema-id: <anonymous-schema-3>
+                source:
+                  type: string
+                  const: /retailnetwork/last-mile-delivery
+                  x-parser-schema-id: <anonymous-schema-4>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-5>
+                subject:
+                  type: string
+                  description: The aggregate root id; also the Kafka key.
+                  x-parser-schema-id: <anonymous-schema-6>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-7>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-8>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - routeId
+                    - stopNo
+                    - stopKey
+                    - trackingNumbers
+                    - etaStart
+                    - etaEnd
+                  properties:
+                    routeId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-49>
+                    stopNo:
+                      type: integer
+                      minimum: 1
+                      description: >-
+                        The 1-based stop number on the route; a route may hold
+                        two stops with one stopKey.
+                      x-parser-schema-id: <anonymous-schema-50>
+                    stopKey:
+                      type: string
+                      description: >-
+                        The opaque stop key; pkg:<trackingNumber> when the
+                        package has no label data.
+                      x-parser-schema-id: <anonymous-schema-51>
+                    trackingNumbers:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-53>
+                      description: The packages of the stop in stop order.
+                      x-parser-schema-id: <anonymous-schema-52>
+                    etaStart:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-54>
+                    etaEnd:
+                      type: string
+                      format: date-time
+                      description: >-
+                        Later than etaStart; the window is at most two hours
+                        wide.
+                      x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-48>
+              x-parser-schema-id: <anonymous-schema-47>
+          x-parser-schema-id: StopEtaWindowAssignedEvent
+        examples:
+          - name: stopEtaWindowAssigned
+            summary: >-
+              The second stop of a route started at 12:02 in a wave window of
+              12:00 to 20:00.
+            payload:
+              specversion: '1.0'
+              id: 7c2d9e41-5b83-4a6f-9e10-d4a8b3f6c299
+              source: /retailnetwork/last-mile-delivery
+              type: >-
+                com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned
+              subject: route-81c2
+              time: '2026-10-24T12:02:00Z'
+              datacontenttype: application/json
+              dataschema: >-
+                urn:retailnetwork:last-mile-delivery:events:StopEtaWindowAssigned:v1
+              data:
+                routeId: route-81c2
+                stopNo: 2
+                stopKey: >-
+                  7d1f0c5a9e3b4a2c8f6d0e1b3a5c7e9f2b4d6a8c0e1f3a5b7c9d1e3f5a7b9c0d
+                trackingNumbers:
+                  - TRK-000124
+                  - TRK-000125
+                etaStart: '2026-10-24T17:00:00Z'
+                etaEnd: '2026-10-24T19:00:00Z'
+        x-parser-unique-object-id: StopEtaWindowAssigned
       PackageInductionDeferred:
         name: PackageInductionDeferred
         title: Package induction deferred
@@ -934,15 +1168,15 @@ channels:
                   properties:
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-48>
+                      x-parser-schema-id: <anonymous-schema-58>
                     assignmentId:
                       type: string
                       description: >-
                         From LabelIssued; omitted only when no label data was
                         received.
-                      x-parser-schema-id: <anonymous-schema-49>
-                  x-parser-schema-id: <anonymous-schema-47>
-              x-parser-schema-id: <anonymous-schema-46>
+                      x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-57>
+              x-parser-schema-id: <anonymous-schema-56>
           x-parser-schema-id: PackageInductionDeferredEvent
         examples:
           - name: packageInductionDeferred
@@ -1045,9 +1279,9 @@ channels:
                   properties:
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-52>
-                  x-parser-schema-id: <anonymous-schema-51>
-              x-parser-schema-id: <anonymous-schema-50>
+                      x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-61>
+              x-parser-schema-id: <anonymous-schema-60>
           x-parser-schema-id: PackageReturnInitiatedEvent
         examples:
           - name: packageReturnInitiated
@@ -1066,6 +1300,160 @@ channels:
               data:
                 trackingNumber: TRK-000123
         x-parser-unique-object-id: PackageReturnInitiated
+      DeliveryPointFlagged:
+        name: DeliveryPointFlagged
+        title: Delivery point flagged
+        summary: >-
+          A drop-off point reached two counted failed visits; these packages are
+          newly affected.
+        description: >-
+          `type` =
+          `com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged`;
+          subject and key = the stopKey (opaque; no address, name or free text
+          anywhere in the event). Raised by RecordAttempt, in the same
+          transaction as the attempt, while a DeliveryPointProfile holds at
+          least two open strikes (a strike is one failed visit reported as
+          NOT_HOME or ACCESS_PROBLEM; one strike per route; strikes older than
+          60 days from the newest attempt do not count) and the attempt reached
+          packages that were not told yet. `trackingNumbers` holds only the
+          newly affected packages (1 to 5); `failures` is the number of strikes
+          open at that moment; `reason` is ACCESS_PROBLEM when any open strike
+          has it, else NOT_HOME; `flaggedAt` is the attempt instant that
+          triggered it. No optional fields. No event means no new package was
+          affected; there is no cleared event. Consumers are idempotent per
+          tracking number. Dormant until the driver client sends an
+          outcomeDetail on the attempt (ADR 0014).
+        contentType: application/cloudevents+json
+        headers:
+          type: object
+          description: >-
+            Kafka record headers of every published message (the record key is
+            the CloudEvents subject, partitioned with kafka-go Hash).
+          required:
+            - content-type
+          properties:
+            content-type:
+              type: string
+              const: application/cloudevents+json; charset=UTF-8
+              x-parser-schema-id: <anonymous-schema-1>
+          x-parser-schema-id: KafkaHeaders
+        tags:
+          - name: deliverypointprofile
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-2>
+                id:
+                  type: string
+                  description: >-
+                    UUID minted once per occurrence and stored with the outbox
+                    row.
+                  x-parser-schema-id: <anonymous-schema-3>
+                source:
+                  type: string
+                  const: /retailnetwork/last-mile-delivery
+                  x-parser-schema-id: <anonymous-schema-4>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-5>
+                subject:
+                  type: string
+                  description: The aggregate root id; also the Kafka key.
+                  x-parser-schema-id: <anonymous-schema-6>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-7>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-8>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - stopKey
+                    - reason
+                    - failures
+                    - trackingNumbers
+                    - flaggedAt
+                  properties:
+                    stopKey:
+                      type: string
+                      description: Opaque keyed hash of the address; never an address.
+                      x-parser-schema-id: <anonymous-schema-65>
+                    reason:
+                      type: string
+                      enum:
+                        - NOT_HOME
+                        - ACCESS_PROBLEM
+                      x-parser-schema-id: <anonymous-schema-66>
+                    failures:
+                      type: integer
+                      minimum: 2
+                      maximum: 5
+                      description: Strikes open at that moment.
+                      x-parser-schema-id: <anonymous-schema-67>
+                    trackingNumbers:
+                      type: array
+                      minItems: 1
+                      maxItems: 5
+                      items:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-69>
+                      description: Only the packages newly affected by this event.
+                      x-parser-schema-id: <anonymous-schema-68>
+                    flaggedAt:
+                      type: string
+                      format: date-time
+                      description: The attempt instant that triggered the event.
+                      x-parser-schema-id: <anonymous-schema-70>
+                  x-parser-schema-id: <anonymous-schema-64>
+              x-parser-schema-id: <anonymous-schema-63>
+          x-parser-schema-id: DeliveryPointFlaggedEvent
+        examples:
+          - name: deliveryPointFlagged
+            summary: A second NOT_HOME visit at one point.
+            payload:
+              specversion: '1.0'
+              id: 6a1d3c5e-8b2f-4d70-9e14-2c4f6a8b0d22
+              source: /retailnetwork/last-mile-delivery
+              type: >-
+                com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged
+              subject: 9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+              time: '2026-11-11T14:21:00Z'
+              datacontenttype: application/json
+              dataschema: >-
+                urn:retailnetwork:last-mile-delivery:events:DeliveryPointFlagged:v1
+              data:
+                stopKey: >-
+                  9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+                reason: NOT_HOME
+                failures: 2
+                trackingNumbers:
+                  - TRK-000123
+                  - TRK-000124
+                flaggedAt: '2026-11-11T14:20:30Z'
+        x-parser-unique-object-id: DeliveryPointFlagged
     x-eventcatalog-channel-version: 1.0.0
     x-parser-unique-object-id: lastMileEvents
   lastMileAnalytics:
@@ -1160,19 +1548,19 @@ channels:
                   properties:
                     routeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-55>
+                      x-parser-schema-id: <anonymous-schema-73>
                     waveId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-56>
+                      x-parser-schema-id: <anonymous-schema-74>
                     dspId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-57>
+                      x-parser-schema-id: <anonymous-schema-75>
                     stopCount:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-58>
-                  x-parser-schema-id: <anonymous-schema-54>
-              x-parser-schema-id: <anonymous-schema-53>
+                      x-parser-schema-id: <anonymous-schema-76>
+                  x-parser-schema-id: <anonymous-schema-72>
+              x-parser-schema-id: <anonymous-schema-71>
           x-parser-schema-id: RoutePlannedEvent
         examples:
           - name: routePlanned
@@ -1278,32 +1666,32 @@ channels:
                   properties:
                     loadId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-79>
                     departureId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-62>
+                      x-parser-schema-id: <anonymous-schema-80>
                     destinationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-63>
+                      x-parser-schema-id: <anonymous-schema-81>
                     nodeType:
                       type: string
                       description: >-
                         Type of the node where the arrival happened
                         (contracts-delta E3).
-                      x-parser-schema-id: <anonymous-schema-64>
+                      x-parser-schema-id: <anonymous-schema-82>
                     trackingNumbers:
                       type: array
                       items:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-66>
-                      x-parser-schema-id: <anonymous-schema-65>
+                        x-parser-schema-id: <anonymous-schema-84>
+                      x-parser-schema-id: <anonymous-schema-83>
                     arrivedAt:
                       type: string
                       format: date-time
                       description: Optional; the processing time is used when absent.
-                      x-parser-schema-id: <anonymous-schema-67>
-                  x-parser-schema-id: <anonymous-schema-60>
-              x-parser-schema-id: <anonymous-schema-59>
+                      x-parser-schema-id: <anonymous-schema-85>
+                  x-parser-schema-id: <anonymous-schema-78>
+              x-parser-schema-id: <anonymous-schema-77>
           x-parser-schema-id: LoadArrivedEvent
         examples:
           - name: loadArrived
@@ -1407,18 +1795,18 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-70>
+                      x-parser-schema-id: <anonymous-schema-88>
                     nodeType:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-89>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-90>
                     timezone:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-73>
-                  x-parser-schema-id: <anonymous-schema-69>
-              x-parser-schema-id: <anonymous-schema-68>
+                      x-parser-schema-id: <anonymous-schema-91>
+                  x-parser-schema-id: <anonymous-schema-87>
+              x-parser-schema-id: <anonymous-schema-86>
           x-parser-schema-id: NodeRegisteredEvent
         examples:
           - name: nodeRegistered
@@ -1507,19 +1895,19 @@ channels:
                   properties:
                     postalPrefix:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-76>
+                      x-parser-schema-id: <anonymous-schema-94>
                     deliveryStationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-95>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-78>
+                      x-parser-schema-id: <anonymous-schema-96>
                     assignmentVersion:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-79>
-                  x-parser-schema-id: <anonymous-schema-75>
-              x-parser-schema-id: <anonymous-schema-74>
+                      x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-93>
+              x-parser-schema-id: <anonymous-schema-92>
           x-parser-schema-id: ServiceAreaAssignedEvent
         examples:
           - name: serviceAreaAssigned
@@ -1626,19 +2014,19 @@ channels:
                   properties:
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-82>
+                      x-parser-schema-id: <anonymous-schema-100>
                     assignmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-83>
+                      x-parser-schema-id: <anonymous-schema-101>
                     stopKey:
                       type: string
                       description: Opaque keyed hash of the normalized address.
-                      x-parser-schema-id: <anonymous-schema-84>
+                      x-parser-schema-id: <anonymous-schema-102>
                     destinationPostalPrefix:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-85>
-                  x-parser-schema-id: <anonymous-schema-81>
-              x-parser-schema-id: <anonymous-schema-80>
+                      x-parser-schema-id: <anonymous-schema-103>
+                  x-parser-schema-id: <anonymous-schema-99>
+              x-parser-schema-id: <anonymous-schema-98>
           x-parser-schema-id: LabelIssuedEvent
         examples:
           - name: labelIssued
@@ -1665,16 +2053,28 @@ operations:
   publishLastMileEvents:
     action: send
     title: Publish last-mile-delivery integration events
-    summary: Publish the eight integration events through the transactional outbox.
-    description: |
-      The service sends the events of its three event-raising aggregates
-      (DeliveryWave, Route, PackageAttemptHistory) to
+    summary: Publish the nine integration events through the transactional outbox.
+    description: >
+      The service sends the events of its four event-raising aggregates
+
+      (DeliveryWave, Route, PackageAttemptHistory, DeliveryPointProfile) to
+
       `retailnetwork.last-mile-delivery.events`. Consumers route on the full
+
       `type`: delivery-promise and order-sourcing read the wave events,
-      shipping-and-tracking reads PackageOutForDelivery, DeliveryAttempted and
-      PackageReturnInitiated, delivery-promise reads PackageInductionDeferred.
+
+      shipping-and-tracking reads PackageOutForDelivery, DeliveryAttempted,
+
+      StopEtaWindowAssigned and PackageReturnInitiated, delivery-promise reads
+
+      PackageInductionDeferred.
+
       order-sourcing also reads WaveCostDeclared into its money-denominated
-      AssignmentCost (roadmap F7).
+
+      AssignmentCost (roadmap F7). shipping-and-tracking reads
+
+      DeliveryPointFlagged, per tracking number, to warn the shopper (roadmap
+      C5).
     tags:
       - name: last-mile-delivery
     channel:
@@ -2317,7 +2717,10 @@ operations:
             subject = the routeId, key = the routeId. Raised by RecordAttempt,
             per package (Gap Register G17: outcomes are per package, the stop
             outcome is derived). `outcome` is DELIVERED or FAILED;
-            `failureReason` is present only when FAILED. A FAILED attempt
+            `failureReason` is present only when FAILED; `outcomeDetail`
+            (NOT_HOME, ACCESS_PROBLEM or OTHER on FAILED, SAFE_PLACE_USED on
+            DELIVERED) is present only when the driver client reported one
+            (additive and optional, same v1 dataschema). A FAILED attempt
             re-inducts the package onto the next wave, or after the third
             failure raises PackageReturnInitiated.
           contentType: application/cloudevents+json
@@ -2405,17 +2808,30 @@ operations:
                           - DELIVERED
                           - FAILED
                         x-parser-schema-id: Outcome
+                      outcomeDetail:
+                        type: string
+                        enum:
+                          - NOT_HOME
+                          - ACCESS_PROBLEM
+                          - OTHER
+                          - SAFE_PLACE_USED
+                        description: >-
+                          Optional category reported by the driver client;
+                          omitted when not reported. FAILED carries NOT_HOME,
+                          ACCESS_PROBLEM or OTHER; DELIVERED carries
+                          SAFE_PLACE_USED.
+                        x-parser-schema-id: <anonymous-schema-44>
                       failureReason:
                         type: string
                         description: Present only when outcome is FAILED.
-                        x-parser-schema-id: <anonymous-schema-44>
+                        x-parser-schema-id: <anonymous-schema-45>
                       at:
                         type: string
                         format: date-time
                         description: >-
                           The instant of the attempt as reported by the driver
                           app.
-                        x-parser-schema-id: <anonymous-schema-45>
+                        x-parser-schema-id: <anonymous-schema-46>
                     x-parser-schema-id: <anonymous-schema-41>
                 x-parser-schema-id: <anonymous-schema-40>
             x-parser-schema-id: DeliveryAttemptedEvent
@@ -2440,6 +2856,167 @@ operations:
                   failureReason: recipient absent
                   at: '2026-10-24T14:19:30Z'
           x-parser-unique-object-id: DeliveryAttempted
+        StopEtaWindowAssigned:
+          name: StopEtaWindowAssigned
+          title: Stop ETA window assigned
+          summary: A two-hour ETA window for one stop of a started route.
+          description: >-
+            `type` =
+            `com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned`;
+            subject = the routeId, key = the routeId (the key of
+            PackageOutForDelivery, so the two stay ordered). Raised by
+            StartRoute in the same transaction, AFTER every
+            PackageOutForDelivery, one per stop in stop order (ADR 0013). The
+            CloudEvents `time` is the route start instant (the assignment time).
+            The window is a deterministic spread of the route's stops over what
+            is left of the wave's delivery window, at most two hours wide; it is
+            not a prediction. No event is raised when less than 30 minutes of
+            the wave window is left at the start instant. An ETA is never
+            retracted and never re-raised for the same start; a re-inducted
+            package gets a new one from its next StartRoute. `stopKey` is the
+            opaque stop key (`pkg:<trackingNumber>` when the package has no
+            label data); no address, name or phone is carried. A window may fall
+            after the promised delivery window; it is published as computed.
+          contentType: application/cloudevents+json
+          headers:
+            type: object
+            description: >-
+              Kafka record headers of every published message (the record key is
+              the CloudEvents subject, partitioned with kafka-go Hash).
+            required:
+              - content-type
+            properties:
+              content-type:
+                type: string
+                const: application/cloudevents+json; charset=UTF-8
+                x-parser-schema-id: <anonymous-schema-1>
+            x-parser-schema-id: KafkaHeaders
+          tags:
+            - name: route
+          payload:
+            allOf:
+              - type: object
+                required:
+                  - specversion
+                  - id
+                  - source
+                  - type
+                  - subject
+                  - time
+                  - datacontenttype
+                  - dataschema
+                  - data
+                properties:
+                  specversion:
+                    type: string
+                    const: '1.0'
+                    x-parser-schema-id: <anonymous-schema-2>
+                  id:
+                    type: string
+                    description: >-
+                      UUID minted once per occurrence and stored with the outbox
+                      row.
+                    x-parser-schema-id: <anonymous-schema-3>
+                  source:
+                    type: string
+                    const: /retailnetwork/last-mile-delivery
+                    x-parser-schema-id: <anonymous-schema-4>
+                  type:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-5>
+                  subject:
+                    type: string
+                    description: The aggregate root id; also the Kafka key.
+                    x-parser-schema-id: <anonymous-schema-6>
+                  time:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-7>
+                  datacontenttype:
+                    type: string
+                    const: application/json
+                    x-parser-schema-id: <anonymous-schema-8>
+                  dataschema:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-9>
+                x-parser-schema-id: CloudEventEnvelope
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - routeId
+                      - stopNo
+                      - stopKey
+                      - trackingNumbers
+                      - etaStart
+                      - etaEnd
+                    properties:
+                      routeId:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-49>
+                      stopNo:
+                        type: integer
+                        minimum: 1
+                        description: >-
+                          The 1-based stop number on the route; a route may hold
+                          two stops with one stopKey.
+                        x-parser-schema-id: <anonymous-schema-50>
+                      stopKey:
+                        type: string
+                        description: >-
+                          The opaque stop key; pkg:<trackingNumber> when the
+                          package has no label data.
+                        x-parser-schema-id: <anonymous-schema-51>
+                      trackingNumbers:
+                        type: array
+                        minItems: 1
+                        items:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-53>
+                        description: The packages of the stop in stop order.
+                        x-parser-schema-id: <anonymous-schema-52>
+                      etaStart:
+                        type: string
+                        format: date-time
+                        x-parser-schema-id: <anonymous-schema-54>
+                      etaEnd:
+                        type: string
+                        format: date-time
+                        description: >-
+                          Later than etaStart; the window is at most two hours
+                          wide.
+                        x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-48>
+                x-parser-schema-id: <anonymous-schema-47>
+            x-parser-schema-id: StopEtaWindowAssignedEvent
+          examples:
+            - name: stopEtaWindowAssigned
+              summary: >-
+                The second stop of a route started at 12:02 in a wave window of
+                12:00 to 20:00.
+              payload:
+                specversion: '1.0'
+                id: 7c2d9e41-5b83-4a6f-9e10-d4a8b3f6c299
+                source: /retailnetwork/last-mile-delivery
+                type: >-
+                  com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned
+                subject: route-81c2
+                time: '2026-10-24T12:02:00Z'
+                datacontenttype: application/json
+                dataschema: >-
+                  urn:retailnetwork:last-mile-delivery:events:StopEtaWindowAssigned:v1
+                data:
+                  routeId: route-81c2
+                  stopNo: 2
+                  stopKey: >-
+                    7d1f0c5a9e3b4a2c8f6d0e1b3a5c7e9f2b4d6a8c0e1f3a5b7c9d1e3f5a7b9c0d
+                  trackingNumbers:
+                    - TRK-000124
+                    - TRK-000125
+                  etaStart: '2026-10-24T17:00:00Z'
+                  etaEnd: '2026-10-24T19:00:00Z'
+          x-parser-unique-object-id: StopEtaWindowAssigned
         PackageInductionDeferred:
           name: PackageInductionDeferred
           title: Package induction deferred
@@ -2526,15 +3103,15 @@ operations:
                     properties:
                       trackingNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-48>
+                        x-parser-schema-id: <anonymous-schema-58>
                       assignmentId:
                         type: string
                         description: >-
                           From LabelIssued; omitted only when no label data was
                           received.
-                        x-parser-schema-id: <anonymous-schema-49>
-                    x-parser-schema-id: <anonymous-schema-47>
-                x-parser-schema-id: <anonymous-schema-46>
+                        x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-57>
+                x-parser-schema-id: <anonymous-schema-56>
             x-parser-schema-id: PackageInductionDeferredEvent
           examples:
             - name: packageInductionDeferred
@@ -2637,9 +3214,9 @@ operations:
                     properties:
                       trackingNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-52>
-                    x-parser-schema-id: <anonymous-schema-51>
-                x-parser-schema-id: <anonymous-schema-50>
+                        x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-61>
+                x-parser-schema-id: <anonymous-schema-60>
             x-parser-schema-id: PackageReturnInitiatedEvent
           examples:
             - name: packageReturnInitiated
@@ -2658,6 +3235,161 @@ operations:
                 data:
                   trackingNumber: TRK-000123
           x-parser-unique-object-id: PackageReturnInitiated
+        DeliveryPointFlagged:
+          name: DeliveryPointFlagged
+          title: Delivery point flagged
+          summary: >-
+            A drop-off point reached two counted failed visits; these packages
+            are newly affected.
+          description: >-
+            `type` =
+            `com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged`;
+            subject and key = the stopKey (opaque; no address, name or free text
+            anywhere in the event). Raised by RecordAttempt, in the same
+            transaction as the attempt, while a DeliveryPointProfile holds at
+            least two open strikes (a strike is one failed visit reported as
+            NOT_HOME or ACCESS_PROBLEM; one strike per route; strikes older than
+            60 days from the newest attempt do not count) and the attempt
+            reached packages that were not told yet. `trackingNumbers` holds
+            only the newly affected packages (1 to 5); `failures` is the number
+            of strikes open at that moment; `reason` is ACCESS_PROBLEM when any
+            open strike has it, else NOT_HOME; `flaggedAt` is the attempt
+            instant that triggered it. No optional fields. No event means no new
+            package was affected; there is no cleared event. Consumers are
+            idempotent per tracking number. Dormant until the driver client
+            sends an outcomeDetail on the attempt (ADR 0014).
+          contentType: application/cloudevents+json
+          headers:
+            type: object
+            description: >-
+              Kafka record headers of every published message (the record key is
+              the CloudEvents subject, partitioned with kafka-go Hash).
+            required:
+              - content-type
+            properties:
+              content-type:
+                type: string
+                const: application/cloudevents+json; charset=UTF-8
+                x-parser-schema-id: <anonymous-schema-1>
+            x-parser-schema-id: KafkaHeaders
+          tags:
+            - name: deliverypointprofile
+          payload:
+            allOf:
+              - type: object
+                required:
+                  - specversion
+                  - id
+                  - source
+                  - type
+                  - subject
+                  - time
+                  - datacontenttype
+                  - dataschema
+                  - data
+                properties:
+                  specversion:
+                    type: string
+                    const: '1.0'
+                    x-parser-schema-id: <anonymous-schema-2>
+                  id:
+                    type: string
+                    description: >-
+                      UUID minted once per occurrence and stored with the outbox
+                      row.
+                    x-parser-schema-id: <anonymous-schema-3>
+                  source:
+                    type: string
+                    const: /retailnetwork/last-mile-delivery
+                    x-parser-schema-id: <anonymous-schema-4>
+                  type:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-5>
+                  subject:
+                    type: string
+                    description: The aggregate root id; also the Kafka key.
+                    x-parser-schema-id: <anonymous-schema-6>
+                  time:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-7>
+                  datacontenttype:
+                    type: string
+                    const: application/json
+                    x-parser-schema-id: <anonymous-schema-8>
+                  dataschema:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-9>
+                x-parser-schema-id: CloudEventEnvelope
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - stopKey
+                      - reason
+                      - failures
+                      - trackingNumbers
+                      - flaggedAt
+                    properties:
+                      stopKey:
+                        type: string
+                        description: Opaque keyed hash of the address; never an address.
+                        x-parser-schema-id: <anonymous-schema-65>
+                      reason:
+                        type: string
+                        enum:
+                          - NOT_HOME
+                          - ACCESS_PROBLEM
+                        x-parser-schema-id: <anonymous-schema-66>
+                      failures:
+                        type: integer
+                        minimum: 2
+                        maximum: 5
+                        description: Strikes open at that moment.
+                        x-parser-schema-id: <anonymous-schema-67>
+                      trackingNumbers:
+                        type: array
+                        minItems: 1
+                        maxItems: 5
+                        items:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-69>
+                        description: Only the packages newly affected by this event.
+                        x-parser-schema-id: <anonymous-schema-68>
+                      flaggedAt:
+                        type: string
+                        format: date-time
+                        description: The attempt instant that triggered the event.
+                        x-parser-schema-id: <anonymous-schema-70>
+                    x-parser-schema-id: <anonymous-schema-64>
+                x-parser-schema-id: <anonymous-schema-63>
+            x-parser-schema-id: DeliveryPointFlaggedEvent
+          examples:
+            - name: deliveryPointFlagged
+              summary: A second NOT_HOME visit at one point.
+              payload:
+                specversion: '1.0'
+                id: 6a1d3c5e-8b2f-4d70-9e14-2c4f6a8b0d22
+                source: /retailnetwork/last-mile-delivery
+                type: >-
+                  com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged
+                subject: >-
+                  9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+                time: '2026-11-11T14:21:00Z'
+                datacontenttype: application/json
+                dataschema: >-
+                  urn:retailnetwork:last-mile-delivery:events:DeliveryPointFlagged:v1
+                data:
+                  stopKey: >-
+                    9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+                  reason: NOT_HOME
+                  failures: 2
+                  trackingNumbers:
+                    - TRK-000123
+                    - TRK-000124
+                  flaggedAt: '2026-11-11T14:20:30Z'
+          x-parser-unique-object-id: DeliveryPointFlagged
       x-eventcatalog-channel-version: 1.0.0
       x-parser-unique-object-id: lastMileEvents
     messages:
@@ -3284,9 +4016,11 @@ operations:
           subject = the routeId, key = the routeId. Raised by RecordAttempt, per
           package (Gap Register G17: outcomes are per package, the stop outcome
           is derived). `outcome` is DELIVERED or FAILED; `failureReason` is
-          present only when FAILED. A FAILED attempt re-inducts the package onto
-          the next wave, or after the third failure raises
-          PackageReturnInitiated.
+          present only when FAILED; `outcomeDetail` (NOT_HOME, ACCESS_PROBLEM or
+          OTHER on FAILED, SAFE_PLACE_USED on DELIVERED) is present only when
+          the driver client reported one (additive and optional, same v1
+          dataschema). A FAILED attempt re-inducts the package onto the next
+          wave, or after the third failure raises PackageReturnInitiated.
         contentType: application/cloudevents+json
         headers:
           type: object
@@ -3372,17 +4106,30 @@ operations:
                         - DELIVERED
                         - FAILED
                       x-parser-schema-id: Outcome
+                    outcomeDetail:
+                      type: string
+                      enum:
+                        - NOT_HOME
+                        - ACCESS_PROBLEM
+                        - OTHER
+                        - SAFE_PLACE_USED
+                      description: >-
+                        Optional category reported by the driver client; omitted
+                        when not reported. FAILED carries NOT_HOME,
+                        ACCESS_PROBLEM or OTHER; DELIVERED carries
+                        SAFE_PLACE_USED.
+                      x-parser-schema-id: <anonymous-schema-44>
                     failureReason:
                       type: string
                       description: Present only when outcome is FAILED.
-                      x-parser-schema-id: <anonymous-schema-44>
+                      x-parser-schema-id: <anonymous-schema-45>
                     at:
                       type: string
                       format: date-time
                       description: >-
                         The instant of the attempt as reported by the driver
                         app.
-                      x-parser-schema-id: <anonymous-schema-45>
+                      x-parser-schema-id: <anonymous-schema-46>
                   x-parser-schema-id: <anonymous-schema-41>
               x-parser-schema-id: <anonymous-schema-40>
           x-parser-schema-id: DeliveryAttemptedEvent
@@ -3406,6 +4153,166 @@ operations:
                 failureReason: recipient absent
                 at: '2026-10-24T14:19:30Z'
         x-parser-unique-object-id: DeliveryAttempted
+      - name: StopEtaWindowAssigned
+        title: Stop ETA window assigned
+        summary: A two-hour ETA window for one stop of a started route.
+        description: >-
+          `type` =
+          `com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned`;
+          subject = the routeId, key = the routeId (the key of
+          PackageOutForDelivery, so the two stay ordered). Raised by StartRoute
+          in the same transaction, AFTER every PackageOutForDelivery, one per
+          stop in stop order (ADR 0013). The CloudEvents `time` is the route
+          start instant (the assignment time). The window is a deterministic
+          spread of the route's stops over what is left of the wave's delivery
+          window, at most two hours wide; it is not a prediction. No event is
+          raised when less than 30 minutes of the wave window is left at the
+          start instant. An ETA is never retracted and never re-raised for the
+          same start; a re-inducted package gets a new one from its next
+          StartRoute. `stopKey` is the opaque stop key (`pkg:<trackingNumber>`
+          when the package has no label data); no address, name or phone is
+          carried. A window may fall after the promised delivery window; it is
+          published as computed.
+        contentType: application/cloudevents+json
+        headers:
+          type: object
+          description: >-
+            Kafka record headers of every published message (the record key is
+            the CloudEvents subject, partitioned with kafka-go Hash).
+          required:
+            - content-type
+          properties:
+            content-type:
+              type: string
+              const: application/cloudevents+json; charset=UTF-8
+              x-parser-schema-id: <anonymous-schema-1>
+          x-parser-schema-id: KafkaHeaders
+        tags:
+          - name: route
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-2>
+                id:
+                  type: string
+                  description: >-
+                    UUID minted once per occurrence and stored with the outbox
+                    row.
+                  x-parser-schema-id: <anonymous-schema-3>
+                source:
+                  type: string
+                  const: /retailnetwork/last-mile-delivery
+                  x-parser-schema-id: <anonymous-schema-4>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-5>
+                subject:
+                  type: string
+                  description: The aggregate root id; also the Kafka key.
+                  x-parser-schema-id: <anonymous-schema-6>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-7>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-8>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - routeId
+                    - stopNo
+                    - stopKey
+                    - trackingNumbers
+                    - etaStart
+                    - etaEnd
+                  properties:
+                    routeId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-49>
+                    stopNo:
+                      type: integer
+                      minimum: 1
+                      description: >-
+                        The 1-based stop number on the route; a route may hold
+                        two stops with one stopKey.
+                      x-parser-schema-id: <anonymous-schema-50>
+                    stopKey:
+                      type: string
+                      description: >-
+                        The opaque stop key; pkg:<trackingNumber> when the
+                        package has no label data.
+                      x-parser-schema-id: <anonymous-schema-51>
+                    trackingNumbers:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-53>
+                      description: The packages of the stop in stop order.
+                      x-parser-schema-id: <anonymous-schema-52>
+                    etaStart:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-54>
+                    etaEnd:
+                      type: string
+                      format: date-time
+                      description: >-
+                        Later than etaStart; the window is at most two hours
+                        wide.
+                      x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-48>
+              x-parser-schema-id: <anonymous-schema-47>
+          x-parser-schema-id: StopEtaWindowAssignedEvent
+        examples:
+          - name: stopEtaWindowAssigned
+            summary: >-
+              The second stop of a route started at 12:02 in a wave window of
+              12:00 to 20:00.
+            payload:
+              specversion: '1.0'
+              id: 7c2d9e41-5b83-4a6f-9e10-d4a8b3f6c299
+              source: /retailnetwork/last-mile-delivery
+              type: >-
+                com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned
+              subject: route-81c2
+              time: '2026-10-24T12:02:00Z'
+              datacontenttype: application/json
+              dataschema: >-
+                urn:retailnetwork:last-mile-delivery:events:StopEtaWindowAssigned:v1
+              data:
+                routeId: route-81c2
+                stopNo: 2
+                stopKey: >-
+                  7d1f0c5a9e3b4a2c8f6d0e1b3a5c7e9f2b4d6a8c0e1f3a5b7c9d1e3f5a7b9c0d
+                trackingNumbers:
+                  - TRK-000124
+                  - TRK-000125
+                etaStart: '2026-10-24T17:00:00Z'
+                etaEnd: '2026-10-24T19:00:00Z'
+        x-parser-unique-object-id: StopEtaWindowAssigned
       - name: PackageInductionDeferred
         title: Package induction deferred
         summary: A package at the station could not be inducted into any wave.
@@ -3491,15 +4398,15 @@ operations:
                   properties:
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-48>
+                      x-parser-schema-id: <anonymous-schema-58>
                     assignmentId:
                       type: string
                       description: >-
                         From LabelIssued; omitted only when no label data was
                         received.
-                      x-parser-schema-id: <anonymous-schema-49>
-                  x-parser-schema-id: <anonymous-schema-47>
-              x-parser-schema-id: <anonymous-schema-46>
+                      x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-57>
+              x-parser-schema-id: <anonymous-schema-56>
           x-parser-schema-id: PackageInductionDeferredEvent
         examples:
           - name: packageInductionDeferred
@@ -3601,9 +4508,9 @@ operations:
                   properties:
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-52>
-                  x-parser-schema-id: <anonymous-schema-51>
-              x-parser-schema-id: <anonymous-schema-50>
+                      x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-61>
+              x-parser-schema-id: <anonymous-schema-60>
           x-parser-schema-id: PackageReturnInitiatedEvent
         examples:
           - name: packageReturnInitiated
@@ -3622,6 +4529,159 @@ operations:
               data:
                 trackingNumber: TRK-000123
         x-parser-unique-object-id: PackageReturnInitiated
+      - name: DeliveryPointFlagged
+        title: Delivery point flagged
+        summary: >-
+          A drop-off point reached two counted failed visits; these packages are
+          newly affected.
+        description: >-
+          `type` =
+          `com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged`;
+          subject and key = the stopKey (opaque; no address, name or free text
+          anywhere in the event). Raised by RecordAttempt, in the same
+          transaction as the attempt, while a DeliveryPointProfile holds at
+          least two open strikes (a strike is one failed visit reported as
+          NOT_HOME or ACCESS_PROBLEM; one strike per route; strikes older than
+          60 days from the newest attempt do not count) and the attempt reached
+          packages that were not told yet. `trackingNumbers` holds only the
+          newly affected packages (1 to 5); `failures` is the number of strikes
+          open at that moment; `reason` is ACCESS_PROBLEM when any open strike
+          has it, else NOT_HOME; `flaggedAt` is the attempt instant that
+          triggered it. No optional fields. No event means no new package was
+          affected; there is no cleared event. Consumers are idempotent per
+          tracking number. Dormant until the driver client sends an
+          outcomeDetail on the attempt (ADR 0014).
+        contentType: application/cloudevents+json
+        headers:
+          type: object
+          description: >-
+            Kafka record headers of every published message (the record key is
+            the CloudEvents subject, partitioned with kafka-go Hash).
+          required:
+            - content-type
+          properties:
+            content-type:
+              type: string
+              const: application/cloudevents+json; charset=UTF-8
+              x-parser-schema-id: <anonymous-schema-1>
+          x-parser-schema-id: KafkaHeaders
+        tags:
+          - name: deliverypointprofile
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-2>
+                id:
+                  type: string
+                  description: >-
+                    UUID minted once per occurrence and stored with the outbox
+                    row.
+                  x-parser-schema-id: <anonymous-schema-3>
+                source:
+                  type: string
+                  const: /retailnetwork/last-mile-delivery
+                  x-parser-schema-id: <anonymous-schema-4>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-5>
+                subject:
+                  type: string
+                  description: The aggregate root id; also the Kafka key.
+                  x-parser-schema-id: <anonymous-schema-6>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-7>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-8>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - stopKey
+                    - reason
+                    - failures
+                    - trackingNumbers
+                    - flaggedAt
+                  properties:
+                    stopKey:
+                      type: string
+                      description: Opaque keyed hash of the address; never an address.
+                      x-parser-schema-id: <anonymous-schema-65>
+                    reason:
+                      type: string
+                      enum:
+                        - NOT_HOME
+                        - ACCESS_PROBLEM
+                      x-parser-schema-id: <anonymous-schema-66>
+                    failures:
+                      type: integer
+                      minimum: 2
+                      maximum: 5
+                      description: Strikes open at that moment.
+                      x-parser-schema-id: <anonymous-schema-67>
+                    trackingNumbers:
+                      type: array
+                      minItems: 1
+                      maxItems: 5
+                      items:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-69>
+                      description: Only the packages newly affected by this event.
+                      x-parser-schema-id: <anonymous-schema-68>
+                    flaggedAt:
+                      type: string
+                      format: date-time
+                      description: The attempt instant that triggered the event.
+                      x-parser-schema-id: <anonymous-schema-70>
+                  x-parser-schema-id: <anonymous-schema-64>
+              x-parser-schema-id: <anonymous-schema-63>
+          x-parser-schema-id: DeliveryPointFlaggedEvent
+        examples:
+          - name: deliveryPointFlagged
+            summary: A second NOT_HOME visit at one point.
+            payload:
+              specversion: '1.0'
+              id: 6a1d3c5e-8b2f-4d70-9e14-2c4f6a8b0d22
+              source: /retailnetwork/last-mile-delivery
+              type: >-
+                com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged
+              subject: 9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+              time: '2026-11-11T14:21:00Z'
+              datacontenttype: application/json
+              dataschema: >-
+                urn:retailnetwork:last-mile-delivery:events:DeliveryPointFlagged:v1
+              data:
+                stopKey: >-
+                  9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+                reason: NOT_HOME
+                failures: 2
+                trackingNumbers:
+                  - TRK-000123
+                  - TRK-000124
+                flaggedAt: '2026-11-11T14:20:30Z'
+        x-parser-unique-object-id: DeliveryPointFlagged
     x-parser-unique-object-id: publishLastMileEvents
   publishLastMileAnalytics:
     action: send
@@ -3724,19 +4784,19 @@ operations:
                     properties:
                       routeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-55>
+                        x-parser-schema-id: <anonymous-schema-73>
                       waveId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-56>
+                        x-parser-schema-id: <anonymous-schema-74>
                       dspId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-57>
+                        x-parser-schema-id: <anonymous-schema-75>
                       stopCount:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-58>
-                    x-parser-schema-id: <anonymous-schema-54>
-                x-parser-schema-id: <anonymous-schema-53>
+                        x-parser-schema-id: <anonymous-schema-76>
+                    x-parser-schema-id: <anonymous-schema-72>
+                x-parser-schema-id: <anonymous-schema-71>
             x-parser-schema-id: RoutePlannedEvent
           examples:
             - name: routePlanned
@@ -3844,19 +4904,19 @@ operations:
                   properties:
                     routeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-55>
+                      x-parser-schema-id: <anonymous-schema-73>
                     waveId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-56>
+                      x-parser-schema-id: <anonymous-schema-74>
                     dspId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-57>
+                      x-parser-schema-id: <anonymous-schema-75>
                     stopCount:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-58>
-                  x-parser-schema-id: <anonymous-schema-54>
-              x-parser-schema-id: <anonymous-schema-53>
+                      x-parser-schema-id: <anonymous-schema-76>
+                  x-parser-schema-id: <anonymous-schema-72>
+              x-parser-schema-id: <anonymous-schema-71>
           x-parser-schema-id: RoutePlannedEvent
         examples:
           - name: routePlanned
@@ -3882,8 +4942,8 @@ operations:
     action: receive
     title: Project this context's own integration events into the analytical database
     summary: >-
-      The analytics projector reads back seven of the events this service
-      publishes (ADR 0012).
+      The analytics projector reads back eight of the events this service
+      publishes (ADR 0012, ADR 0013).
     description: >
       Inbound adapter internal/adapters/inbound/kafka/analytics_consumer.go, run
       by
@@ -3893,10 +4953,10 @@ operations:
       last-mile-delivery-analytics), one reader over this topic and the
       analytics
 
-      topic. Dispatches on the full `type`; PackageInductionDeferred is
-      acknowledged
+      topic. Dispatches on the full `type`; PackageInductionDeferred and
 
-      without projection; any other type or a non-CloudEvents message is skipped
+      DeliveryPointFlagged are acknowledged without projection; any other type
+      or a non-CloudEvents message is skipped
 
       with a sampled warning; poison goes to
 
@@ -4543,7 +5603,10 @@ operations:
             subject = the routeId, key = the routeId. Raised by RecordAttempt,
             per package (Gap Register G17: outcomes are per package, the stop
             outcome is derived). `outcome` is DELIVERED or FAILED;
-            `failureReason` is present only when FAILED. A FAILED attempt
+            `failureReason` is present only when FAILED; `outcomeDetail`
+            (NOT_HOME, ACCESS_PROBLEM or OTHER on FAILED, SAFE_PLACE_USED on
+            DELIVERED) is present only when the driver client reported one
+            (additive and optional, same v1 dataschema). A FAILED attempt
             re-inducts the package onto the next wave, or after the third
             failure raises PackageReturnInitiated.
           contentType: application/cloudevents+json
@@ -4631,17 +5694,30 @@ operations:
                           - DELIVERED
                           - FAILED
                         x-parser-schema-id: Outcome
+                      outcomeDetail:
+                        type: string
+                        enum:
+                          - NOT_HOME
+                          - ACCESS_PROBLEM
+                          - OTHER
+                          - SAFE_PLACE_USED
+                        description: >-
+                          Optional category reported by the driver client;
+                          omitted when not reported. FAILED carries NOT_HOME,
+                          ACCESS_PROBLEM or OTHER; DELIVERED carries
+                          SAFE_PLACE_USED.
+                        x-parser-schema-id: <anonymous-schema-44>
                       failureReason:
                         type: string
                         description: Present only when outcome is FAILED.
-                        x-parser-schema-id: <anonymous-schema-44>
+                        x-parser-schema-id: <anonymous-schema-45>
                       at:
                         type: string
                         format: date-time
                         description: >-
                           The instant of the attempt as reported by the driver
                           app.
-                        x-parser-schema-id: <anonymous-schema-45>
+                        x-parser-schema-id: <anonymous-schema-46>
                     x-parser-schema-id: <anonymous-schema-41>
                 x-parser-schema-id: <anonymous-schema-40>
             x-parser-schema-id: DeliveryAttemptedEvent
@@ -4666,6 +5742,167 @@ operations:
                   failureReason: recipient absent
                   at: '2026-10-24T14:19:30Z'
           x-parser-unique-object-id: DeliveryAttempted
+        StopEtaWindowAssigned:
+          name: StopEtaWindowAssigned
+          title: Stop ETA window assigned
+          summary: A two-hour ETA window for one stop of a started route.
+          description: >-
+            `type` =
+            `com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned`;
+            subject = the routeId, key = the routeId (the key of
+            PackageOutForDelivery, so the two stay ordered). Raised by
+            StartRoute in the same transaction, AFTER every
+            PackageOutForDelivery, one per stop in stop order (ADR 0013). The
+            CloudEvents `time` is the route start instant (the assignment time).
+            The window is a deterministic spread of the route's stops over what
+            is left of the wave's delivery window, at most two hours wide; it is
+            not a prediction. No event is raised when less than 30 minutes of
+            the wave window is left at the start instant. An ETA is never
+            retracted and never re-raised for the same start; a re-inducted
+            package gets a new one from its next StartRoute. `stopKey` is the
+            opaque stop key (`pkg:<trackingNumber>` when the package has no
+            label data); no address, name or phone is carried. A window may fall
+            after the promised delivery window; it is published as computed.
+          contentType: application/cloudevents+json
+          headers:
+            type: object
+            description: >-
+              Kafka record headers of every published message (the record key is
+              the CloudEvents subject, partitioned with kafka-go Hash).
+            required:
+              - content-type
+            properties:
+              content-type:
+                type: string
+                const: application/cloudevents+json; charset=UTF-8
+                x-parser-schema-id: <anonymous-schema-1>
+            x-parser-schema-id: KafkaHeaders
+          tags:
+            - name: route
+          payload:
+            allOf:
+              - type: object
+                required:
+                  - specversion
+                  - id
+                  - source
+                  - type
+                  - subject
+                  - time
+                  - datacontenttype
+                  - dataschema
+                  - data
+                properties:
+                  specversion:
+                    type: string
+                    const: '1.0'
+                    x-parser-schema-id: <anonymous-schema-2>
+                  id:
+                    type: string
+                    description: >-
+                      UUID minted once per occurrence and stored with the outbox
+                      row.
+                    x-parser-schema-id: <anonymous-schema-3>
+                  source:
+                    type: string
+                    const: /retailnetwork/last-mile-delivery
+                    x-parser-schema-id: <anonymous-schema-4>
+                  type:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-5>
+                  subject:
+                    type: string
+                    description: The aggregate root id; also the Kafka key.
+                    x-parser-schema-id: <anonymous-schema-6>
+                  time:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-7>
+                  datacontenttype:
+                    type: string
+                    const: application/json
+                    x-parser-schema-id: <anonymous-schema-8>
+                  dataschema:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-9>
+                x-parser-schema-id: CloudEventEnvelope
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - routeId
+                      - stopNo
+                      - stopKey
+                      - trackingNumbers
+                      - etaStart
+                      - etaEnd
+                    properties:
+                      routeId:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-49>
+                      stopNo:
+                        type: integer
+                        minimum: 1
+                        description: >-
+                          The 1-based stop number on the route; a route may hold
+                          two stops with one stopKey.
+                        x-parser-schema-id: <anonymous-schema-50>
+                      stopKey:
+                        type: string
+                        description: >-
+                          The opaque stop key; pkg:<trackingNumber> when the
+                          package has no label data.
+                        x-parser-schema-id: <anonymous-schema-51>
+                      trackingNumbers:
+                        type: array
+                        minItems: 1
+                        items:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-53>
+                        description: The packages of the stop in stop order.
+                        x-parser-schema-id: <anonymous-schema-52>
+                      etaStart:
+                        type: string
+                        format: date-time
+                        x-parser-schema-id: <anonymous-schema-54>
+                      etaEnd:
+                        type: string
+                        format: date-time
+                        description: >-
+                          Later than etaStart; the window is at most two hours
+                          wide.
+                        x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-48>
+                x-parser-schema-id: <anonymous-schema-47>
+            x-parser-schema-id: StopEtaWindowAssignedEvent
+          examples:
+            - name: stopEtaWindowAssigned
+              summary: >-
+                The second stop of a route started at 12:02 in a wave window of
+                12:00 to 20:00.
+              payload:
+                specversion: '1.0'
+                id: 7c2d9e41-5b83-4a6f-9e10-d4a8b3f6c299
+                source: /retailnetwork/last-mile-delivery
+                type: >-
+                  com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned
+                subject: route-81c2
+                time: '2026-10-24T12:02:00Z'
+                datacontenttype: application/json
+                dataschema: >-
+                  urn:retailnetwork:last-mile-delivery:events:StopEtaWindowAssigned:v1
+                data:
+                  routeId: route-81c2
+                  stopNo: 2
+                  stopKey: >-
+                    7d1f0c5a9e3b4a2c8f6d0e1b3a5c7e9f2b4d6a8c0e1f3a5b7c9d1e3f5a7b9c0d
+                  trackingNumbers:
+                    - TRK-000124
+                    - TRK-000125
+                  etaStart: '2026-10-24T17:00:00Z'
+                  etaEnd: '2026-10-24T19:00:00Z'
+          x-parser-unique-object-id: StopEtaWindowAssigned
         PackageInductionDeferred:
           name: PackageInductionDeferred
           title: Package induction deferred
@@ -4752,15 +5989,15 @@ operations:
                     properties:
                       trackingNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-48>
+                        x-parser-schema-id: <anonymous-schema-58>
                       assignmentId:
                         type: string
                         description: >-
                           From LabelIssued; omitted only when no label data was
                           received.
-                        x-parser-schema-id: <anonymous-schema-49>
-                    x-parser-schema-id: <anonymous-schema-47>
-                x-parser-schema-id: <anonymous-schema-46>
+                        x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-57>
+                x-parser-schema-id: <anonymous-schema-56>
             x-parser-schema-id: PackageInductionDeferredEvent
           examples:
             - name: packageInductionDeferred
@@ -4863,9 +6100,9 @@ operations:
                     properties:
                       trackingNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-52>
-                    x-parser-schema-id: <anonymous-schema-51>
-                x-parser-schema-id: <anonymous-schema-50>
+                        x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-61>
+                x-parser-schema-id: <anonymous-schema-60>
             x-parser-schema-id: PackageReturnInitiatedEvent
           examples:
             - name: packageReturnInitiated
@@ -4884,6 +6121,161 @@ operations:
                 data:
                   trackingNumber: TRK-000123
           x-parser-unique-object-id: PackageReturnInitiated
+        DeliveryPointFlagged:
+          name: DeliveryPointFlagged
+          title: Delivery point flagged
+          summary: >-
+            A drop-off point reached two counted failed visits; these packages
+            are newly affected.
+          description: >-
+            `type` =
+            `com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged`;
+            subject and key = the stopKey (opaque; no address, name or free text
+            anywhere in the event). Raised by RecordAttempt, in the same
+            transaction as the attempt, while a DeliveryPointProfile holds at
+            least two open strikes (a strike is one failed visit reported as
+            NOT_HOME or ACCESS_PROBLEM; one strike per route; strikes older than
+            60 days from the newest attempt do not count) and the attempt
+            reached packages that were not told yet. `trackingNumbers` holds
+            only the newly affected packages (1 to 5); `failures` is the number
+            of strikes open at that moment; `reason` is ACCESS_PROBLEM when any
+            open strike has it, else NOT_HOME; `flaggedAt` is the attempt
+            instant that triggered it. No optional fields. No event means no new
+            package was affected; there is no cleared event. Consumers are
+            idempotent per tracking number. Dormant until the driver client
+            sends an outcomeDetail on the attempt (ADR 0014).
+          contentType: application/cloudevents+json
+          headers:
+            type: object
+            description: >-
+              Kafka record headers of every published message (the record key is
+              the CloudEvents subject, partitioned with kafka-go Hash).
+            required:
+              - content-type
+            properties:
+              content-type:
+                type: string
+                const: application/cloudevents+json; charset=UTF-8
+                x-parser-schema-id: <anonymous-schema-1>
+            x-parser-schema-id: KafkaHeaders
+          tags:
+            - name: deliverypointprofile
+          payload:
+            allOf:
+              - type: object
+                required:
+                  - specversion
+                  - id
+                  - source
+                  - type
+                  - subject
+                  - time
+                  - datacontenttype
+                  - dataschema
+                  - data
+                properties:
+                  specversion:
+                    type: string
+                    const: '1.0'
+                    x-parser-schema-id: <anonymous-schema-2>
+                  id:
+                    type: string
+                    description: >-
+                      UUID minted once per occurrence and stored with the outbox
+                      row.
+                    x-parser-schema-id: <anonymous-schema-3>
+                  source:
+                    type: string
+                    const: /retailnetwork/last-mile-delivery
+                    x-parser-schema-id: <anonymous-schema-4>
+                  type:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-5>
+                  subject:
+                    type: string
+                    description: The aggregate root id; also the Kafka key.
+                    x-parser-schema-id: <anonymous-schema-6>
+                  time:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-7>
+                  datacontenttype:
+                    type: string
+                    const: application/json
+                    x-parser-schema-id: <anonymous-schema-8>
+                  dataschema:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-9>
+                x-parser-schema-id: CloudEventEnvelope
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - stopKey
+                      - reason
+                      - failures
+                      - trackingNumbers
+                      - flaggedAt
+                    properties:
+                      stopKey:
+                        type: string
+                        description: Opaque keyed hash of the address; never an address.
+                        x-parser-schema-id: <anonymous-schema-65>
+                      reason:
+                        type: string
+                        enum:
+                          - NOT_HOME
+                          - ACCESS_PROBLEM
+                        x-parser-schema-id: <anonymous-schema-66>
+                      failures:
+                        type: integer
+                        minimum: 2
+                        maximum: 5
+                        description: Strikes open at that moment.
+                        x-parser-schema-id: <anonymous-schema-67>
+                      trackingNumbers:
+                        type: array
+                        minItems: 1
+                        maxItems: 5
+                        items:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-69>
+                        description: Only the packages newly affected by this event.
+                        x-parser-schema-id: <anonymous-schema-68>
+                      flaggedAt:
+                        type: string
+                        format: date-time
+                        description: The attempt instant that triggered the event.
+                        x-parser-schema-id: <anonymous-schema-70>
+                    x-parser-schema-id: <anonymous-schema-64>
+                x-parser-schema-id: <anonymous-schema-63>
+            x-parser-schema-id: DeliveryPointFlaggedEvent
+          examples:
+            - name: deliveryPointFlagged
+              summary: A second NOT_HOME visit at one point.
+              payload:
+                specversion: '1.0'
+                id: 6a1d3c5e-8b2f-4d70-9e14-2c4f6a8b0d22
+                source: /retailnetwork/last-mile-delivery
+                type: >-
+                  com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged
+                subject: >-
+                  9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+                time: '2026-11-11T14:21:00Z'
+                datacontenttype: application/json
+                dataschema: >-
+                  urn:retailnetwork:last-mile-delivery:events:DeliveryPointFlagged:v1
+                data:
+                  stopKey: >-
+                    9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+                  reason: NOT_HOME
+                  failures: 2
+                  trackingNumbers:
+                    - TRK-000123
+                    - TRK-000124
+                  flaggedAt: '2026-11-11T14:20:30Z'
+          x-parser-unique-object-id: DeliveryPointFlagged
       x-eventcatalog-channel-version: 1.0.0
       x-parser-unique-object-id: lastMileEvents
     messages:
@@ -5510,9 +6902,11 @@ operations:
           subject = the routeId, key = the routeId. Raised by RecordAttempt, per
           package (Gap Register G17: outcomes are per package, the stop outcome
           is derived). `outcome` is DELIVERED or FAILED; `failureReason` is
-          present only when FAILED. A FAILED attempt re-inducts the package onto
-          the next wave, or after the third failure raises
-          PackageReturnInitiated.
+          present only when FAILED; `outcomeDetail` (NOT_HOME, ACCESS_PROBLEM or
+          OTHER on FAILED, SAFE_PLACE_USED on DELIVERED) is present only when
+          the driver client reported one (additive and optional, same v1
+          dataschema). A FAILED attempt re-inducts the package onto the next
+          wave, or after the third failure raises PackageReturnInitiated.
         contentType: application/cloudevents+json
         headers:
           type: object
@@ -5598,17 +6992,30 @@ operations:
                         - DELIVERED
                         - FAILED
                       x-parser-schema-id: Outcome
+                    outcomeDetail:
+                      type: string
+                      enum:
+                        - NOT_HOME
+                        - ACCESS_PROBLEM
+                        - OTHER
+                        - SAFE_PLACE_USED
+                      description: >-
+                        Optional category reported by the driver client; omitted
+                        when not reported. FAILED carries NOT_HOME,
+                        ACCESS_PROBLEM or OTHER; DELIVERED carries
+                        SAFE_PLACE_USED.
+                      x-parser-schema-id: <anonymous-schema-44>
                     failureReason:
                       type: string
                       description: Present only when outcome is FAILED.
-                      x-parser-schema-id: <anonymous-schema-44>
+                      x-parser-schema-id: <anonymous-schema-45>
                     at:
                       type: string
                       format: date-time
                       description: >-
                         The instant of the attempt as reported by the driver
                         app.
-                      x-parser-schema-id: <anonymous-schema-45>
+                      x-parser-schema-id: <anonymous-schema-46>
                   x-parser-schema-id: <anonymous-schema-41>
               x-parser-schema-id: <anonymous-schema-40>
           x-parser-schema-id: DeliveryAttemptedEvent
@@ -5632,6 +7039,166 @@ operations:
                 failureReason: recipient absent
                 at: '2026-10-24T14:19:30Z'
         x-parser-unique-object-id: DeliveryAttempted
+      - name: StopEtaWindowAssigned
+        title: Stop ETA window assigned
+        summary: A two-hour ETA window for one stop of a started route.
+        description: >-
+          `type` =
+          `com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned`;
+          subject = the routeId, key = the routeId (the key of
+          PackageOutForDelivery, so the two stay ordered). Raised by StartRoute
+          in the same transaction, AFTER every PackageOutForDelivery, one per
+          stop in stop order (ADR 0013). The CloudEvents `time` is the route
+          start instant (the assignment time). The window is a deterministic
+          spread of the route's stops over what is left of the wave's delivery
+          window, at most two hours wide; it is not a prediction. No event is
+          raised when less than 30 minutes of the wave window is left at the
+          start instant. An ETA is never retracted and never re-raised for the
+          same start; a re-inducted package gets a new one from its next
+          StartRoute. `stopKey` is the opaque stop key (`pkg:<trackingNumber>`
+          when the package has no label data); no address, name or phone is
+          carried. A window may fall after the promised delivery window; it is
+          published as computed.
+        contentType: application/cloudevents+json
+        headers:
+          type: object
+          description: >-
+            Kafka record headers of every published message (the record key is
+            the CloudEvents subject, partitioned with kafka-go Hash).
+          required:
+            - content-type
+          properties:
+            content-type:
+              type: string
+              const: application/cloudevents+json; charset=UTF-8
+              x-parser-schema-id: <anonymous-schema-1>
+          x-parser-schema-id: KafkaHeaders
+        tags:
+          - name: route
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-2>
+                id:
+                  type: string
+                  description: >-
+                    UUID minted once per occurrence and stored with the outbox
+                    row.
+                  x-parser-schema-id: <anonymous-schema-3>
+                source:
+                  type: string
+                  const: /retailnetwork/last-mile-delivery
+                  x-parser-schema-id: <anonymous-schema-4>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-5>
+                subject:
+                  type: string
+                  description: The aggregate root id; also the Kafka key.
+                  x-parser-schema-id: <anonymous-schema-6>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-7>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-8>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - routeId
+                    - stopNo
+                    - stopKey
+                    - trackingNumbers
+                    - etaStart
+                    - etaEnd
+                  properties:
+                    routeId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-49>
+                    stopNo:
+                      type: integer
+                      minimum: 1
+                      description: >-
+                        The 1-based stop number on the route; a route may hold
+                        two stops with one stopKey.
+                      x-parser-schema-id: <anonymous-schema-50>
+                    stopKey:
+                      type: string
+                      description: >-
+                        The opaque stop key; pkg:<trackingNumber> when the
+                        package has no label data.
+                      x-parser-schema-id: <anonymous-schema-51>
+                    trackingNumbers:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-53>
+                      description: The packages of the stop in stop order.
+                      x-parser-schema-id: <anonymous-schema-52>
+                    etaStart:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-54>
+                    etaEnd:
+                      type: string
+                      format: date-time
+                      description: >-
+                        Later than etaStart; the window is at most two hours
+                        wide.
+                      x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-48>
+              x-parser-schema-id: <anonymous-schema-47>
+          x-parser-schema-id: StopEtaWindowAssignedEvent
+        examples:
+          - name: stopEtaWindowAssigned
+            summary: >-
+              The second stop of a route started at 12:02 in a wave window of
+              12:00 to 20:00.
+            payload:
+              specversion: '1.0'
+              id: 7c2d9e41-5b83-4a6f-9e10-d4a8b3f6c299
+              source: /retailnetwork/last-mile-delivery
+              type: >-
+                com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned
+              subject: route-81c2
+              time: '2026-10-24T12:02:00Z'
+              datacontenttype: application/json
+              dataschema: >-
+                urn:retailnetwork:last-mile-delivery:events:StopEtaWindowAssigned:v1
+              data:
+                routeId: route-81c2
+                stopNo: 2
+                stopKey: >-
+                  7d1f0c5a9e3b4a2c8f6d0e1b3a5c7e9f2b4d6a8c0e1f3a5b7c9d1e3f5a7b9c0d
+                trackingNumbers:
+                  - TRK-000124
+                  - TRK-000125
+                etaStart: '2026-10-24T17:00:00Z'
+                etaEnd: '2026-10-24T19:00:00Z'
+        x-parser-unique-object-id: StopEtaWindowAssigned
       - name: PackageReturnInitiated
         title: Package return initiated
         summary: The third delivery attempt of a package failed; return it to sender.
@@ -5714,9 +7281,9 @@ operations:
                   properties:
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-52>
-                  x-parser-schema-id: <anonymous-schema-51>
-              x-parser-schema-id: <anonymous-schema-50>
+                      x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-61>
+              x-parser-schema-id: <anonymous-schema-60>
           x-parser-schema-id: PackageReturnInitiatedEvent
         examples:
           - name: packageReturnInitiated
@@ -5841,19 +7408,19 @@ operations:
                     properties:
                       routeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-55>
+                        x-parser-schema-id: <anonymous-schema-73>
                       waveId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-56>
+                        x-parser-schema-id: <anonymous-schema-74>
                       dspId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-57>
+                        x-parser-schema-id: <anonymous-schema-75>
                       stopCount:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-58>
-                    x-parser-schema-id: <anonymous-schema-54>
-                x-parser-schema-id: <anonymous-schema-53>
+                        x-parser-schema-id: <anonymous-schema-76>
+                    x-parser-schema-id: <anonymous-schema-72>
+                x-parser-schema-id: <anonymous-schema-71>
             x-parser-schema-id: RoutePlannedEvent
           examples:
             - name: routePlanned
@@ -5961,19 +7528,19 @@ operations:
                   properties:
                     routeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-55>
+                      x-parser-schema-id: <anonymous-schema-73>
                     waveId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-56>
+                      x-parser-schema-id: <anonymous-schema-74>
                     dspId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-57>
+                      x-parser-schema-id: <anonymous-schema-75>
                     stopCount:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-58>
-                  x-parser-schema-id: <anonymous-schema-54>
-              x-parser-schema-id: <anonymous-schema-53>
+                      x-parser-schema-id: <anonymous-schema-76>
+                  x-parser-schema-id: <anonymous-schema-72>
+              x-parser-schema-id: <anonymous-schema-71>
           x-parser-schema-id: RoutePlannedEvent
         examples:
           - name: routePlanned
@@ -6091,32 +7658,32 @@ operations:
                     properties:
                       loadId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-61>
+                        x-parser-schema-id: <anonymous-schema-79>
                       departureId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-62>
+                        x-parser-schema-id: <anonymous-schema-80>
                       destinationNodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-63>
+                        x-parser-schema-id: <anonymous-schema-81>
                       nodeType:
                         type: string
                         description: >-
                           Type of the node where the arrival happened
                           (contracts-delta E3).
-                        x-parser-schema-id: <anonymous-schema-64>
+                        x-parser-schema-id: <anonymous-schema-82>
                       trackingNumbers:
                         type: array
                         items:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-66>
-                        x-parser-schema-id: <anonymous-schema-65>
+                          x-parser-schema-id: <anonymous-schema-84>
+                        x-parser-schema-id: <anonymous-schema-83>
                       arrivedAt:
                         type: string
                         format: date-time
                         description: Optional; the processing time is used when absent.
-                        x-parser-schema-id: <anonymous-schema-67>
-                    x-parser-schema-id: <anonymous-schema-60>
-                x-parser-schema-id: <anonymous-schema-59>
+                        x-parser-schema-id: <anonymous-schema-85>
+                    x-parser-schema-id: <anonymous-schema-78>
+                x-parser-schema-id: <anonymous-schema-77>
             x-parser-schema-id: LoadArrivedEvent
           examples:
             - name: loadArrived
@@ -6216,32 +7783,32 @@ operations:
                   properties:
                     loadId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-79>
                     departureId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-62>
+                      x-parser-schema-id: <anonymous-schema-80>
                     destinationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-63>
+                      x-parser-schema-id: <anonymous-schema-81>
                     nodeType:
                       type: string
                       description: >-
                         Type of the node where the arrival happened
                         (contracts-delta E3).
-                      x-parser-schema-id: <anonymous-schema-64>
+                      x-parser-schema-id: <anonymous-schema-82>
                     trackingNumbers:
                       type: array
                       items:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-66>
-                      x-parser-schema-id: <anonymous-schema-65>
+                        x-parser-schema-id: <anonymous-schema-84>
+                      x-parser-schema-id: <anonymous-schema-83>
                     arrivedAt:
                       type: string
                       format: date-time
                       description: Optional; the processing time is used when absent.
-                      x-parser-schema-id: <anonymous-schema-67>
-                  x-parser-schema-id: <anonymous-schema-60>
-              x-parser-schema-id: <anonymous-schema-59>
+                      x-parser-schema-id: <anonymous-schema-85>
+                  x-parser-schema-id: <anonymous-schema-78>
+              x-parser-schema-id: <anonymous-schema-77>
           x-parser-schema-id: LoadArrivedEvent
         examples:
           - name: loadArrived
@@ -6361,18 +7928,18 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-70>
+                        x-parser-schema-id: <anonymous-schema-88>
                       nodeType:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-71>
+                        x-parser-schema-id: <anonymous-schema-89>
                       regionId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-72>
+                        x-parser-schema-id: <anonymous-schema-90>
                       timezone:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-73>
-                    x-parser-schema-id: <anonymous-schema-69>
-                x-parser-schema-id: <anonymous-schema-68>
+                        x-parser-schema-id: <anonymous-schema-91>
+                    x-parser-schema-id: <anonymous-schema-87>
+                x-parser-schema-id: <anonymous-schema-86>
             x-parser-schema-id: NodeRegisteredEvent
           examples:
             - name: nodeRegistered
@@ -6462,19 +8029,19 @@ operations:
                     properties:
                       postalPrefix:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-76>
+                        x-parser-schema-id: <anonymous-schema-94>
                       deliveryStationNodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-77>
+                        x-parser-schema-id: <anonymous-schema-95>
                       regionId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-78>
+                        x-parser-schema-id: <anonymous-schema-96>
                       assignmentVersion:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-79>
-                    x-parser-schema-id: <anonymous-schema-75>
-                x-parser-schema-id: <anonymous-schema-74>
+                        x-parser-schema-id: <anonymous-schema-97>
+                    x-parser-schema-id: <anonymous-schema-93>
+                x-parser-schema-id: <anonymous-schema-92>
             x-parser-schema-id: ServiceAreaAssignedEvent
           examples:
             - name: serviceAreaAssigned
@@ -6565,18 +8132,18 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-70>
+                      x-parser-schema-id: <anonymous-schema-88>
                     nodeType:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-89>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-90>
                     timezone:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-73>
-                  x-parser-schema-id: <anonymous-schema-69>
-              x-parser-schema-id: <anonymous-schema-68>
+                      x-parser-schema-id: <anonymous-schema-91>
+                  x-parser-schema-id: <anonymous-schema-87>
+              x-parser-schema-id: <anonymous-schema-86>
           x-parser-schema-id: NodeRegisteredEvent
         examples:
           - name: nodeRegistered
@@ -6664,19 +8231,19 @@ operations:
                   properties:
                     postalPrefix:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-76>
+                      x-parser-schema-id: <anonymous-schema-94>
                     deliveryStationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-95>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-78>
+                      x-parser-schema-id: <anonymous-schema-96>
                     assignmentVersion:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-79>
-                  x-parser-schema-id: <anonymous-schema-75>
-              x-parser-schema-id: <anonymous-schema-74>
+                      x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-93>
+              x-parser-schema-id: <anonymous-schema-92>
           x-parser-schema-id: ServiceAreaAssignedEvent
         examples:
           - name: serviceAreaAssigned
@@ -6796,19 +8363,19 @@ operations:
                     properties:
                       trackingNumber:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-82>
+                        x-parser-schema-id: <anonymous-schema-100>
                       assignmentId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-83>
+                        x-parser-schema-id: <anonymous-schema-101>
                       stopKey:
                         type: string
                         description: Opaque keyed hash of the normalized address.
-                        x-parser-schema-id: <anonymous-schema-84>
+                        x-parser-schema-id: <anonymous-schema-102>
                       destinationPostalPrefix:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-85>
-                    x-parser-schema-id: <anonymous-schema-81>
-                x-parser-schema-id: <anonymous-schema-80>
+                        x-parser-schema-id: <anonymous-schema-103>
+                    x-parser-schema-id: <anonymous-schema-99>
+                x-parser-schema-id: <anonymous-schema-98>
             x-parser-schema-id: LabelIssuedEvent
           examples:
             - name: labelIssued
@@ -6902,19 +8469,19 @@ operations:
                   properties:
                     trackingNumber:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-82>
+                      x-parser-schema-id: <anonymous-schema-100>
                     assignmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-83>
+                      x-parser-schema-id: <anonymous-schema-101>
                     stopKey:
                       type: string
                       description: Opaque keyed hash of the normalized address.
-                      x-parser-schema-id: <anonymous-schema-84>
+                      x-parser-schema-id: <anonymous-schema-102>
                     destinationPostalPrefix:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-85>
-                  x-parser-schema-id: <anonymous-schema-81>
-              x-parser-schema-id: <anonymous-schema-80>
+                      x-parser-schema-id: <anonymous-schema-103>
+                  x-parser-schema-id: <anonymous-schema-99>
+              x-parser-schema-id: <anonymous-schema-98>
           x-parser-schema-id: LabelIssuedEvent
         examples:
           - name: labelIssued
@@ -7521,19 +9088,19 @@ components:
                 properties:
                   routeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-73>
                   waveId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-56>
+                    x-parser-schema-id: <anonymous-schema-74>
                   dspId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-57>
+                    x-parser-schema-id: <anonymous-schema-75>
                   stopCount:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-58>
-                x-parser-schema-id: <anonymous-schema-54>
-            x-parser-schema-id: <anonymous-schema-53>
+                    x-parser-schema-id: <anonymous-schema-76>
+                x-parser-schema-id: <anonymous-schema-72>
+            x-parser-schema-id: <anonymous-schema-71>
         x-parser-schema-id: RoutePlannedEvent
       examples:
         - name: routePlanned
@@ -7682,8 +9249,11 @@ components:
         subject = the routeId, key = the routeId. Raised by RecordAttempt, per
         package (Gap Register G17: outcomes are per package, the stop outcome is
         derived). `outcome` is DELIVERED or FAILED; `failureReason` is present
-        only when FAILED. A FAILED attempt re-inducts the package onto the next
-        wave, or after the third failure raises PackageReturnInitiated.
+        only when FAILED; `outcomeDetail` (NOT_HOME, ACCESS_PROBLEM or OTHER on
+        FAILED, SAFE_PLACE_USED on DELIVERED) is present only when the driver
+        client reported one (additive and optional, same v1 dataschema). A
+        FAILED attempt re-inducts the package onto the next wave, or after the
+        third failure raises PackageReturnInitiated.
       contentType: application/cloudevents+json
       headers:
         type: object
@@ -7769,15 +9339,27 @@ components:
                       - DELIVERED
                       - FAILED
                     x-parser-schema-id: Outcome
+                  outcomeDetail:
+                    type: string
+                    enum:
+                      - NOT_HOME
+                      - ACCESS_PROBLEM
+                      - OTHER
+                      - SAFE_PLACE_USED
+                    description: >-
+                      Optional category reported by the driver client; omitted
+                      when not reported. FAILED carries NOT_HOME, ACCESS_PROBLEM
+                      or OTHER; DELIVERED carries SAFE_PLACE_USED.
+                    x-parser-schema-id: <anonymous-schema-44>
                   failureReason:
                     type: string
                     description: Present only when outcome is FAILED.
-                    x-parser-schema-id: <anonymous-schema-44>
+                    x-parser-schema-id: <anonymous-schema-45>
                   at:
                     type: string
                     format: date-time
                     description: The instant of the attempt as reported by the driver app.
-                    x-parser-schema-id: <anonymous-schema-45>
+                    x-parser-schema-id: <anonymous-schema-46>
                 x-parser-schema-id: <anonymous-schema-41>
             x-parser-schema-id: <anonymous-schema-40>
         x-parser-schema-id: DeliveryAttemptedEvent
@@ -7801,6 +9383,163 @@ components:
               failureReason: recipient absent
               at: '2026-10-24T14:19:30Z'
       x-parser-unique-object-id: DeliveryAttempted
+    StopEtaWindowAssigned:
+      name: StopEtaWindowAssigned
+      title: Stop ETA window assigned
+      summary: A two-hour ETA window for one stop of a started route.
+      description: >-
+        `type` =
+        `com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned`;
+        subject = the routeId, key = the routeId (the key of
+        PackageOutForDelivery, so the two stay ordered). Raised by StartRoute in
+        the same transaction, AFTER every PackageOutForDelivery, one per stop in
+        stop order (ADR 0013). The CloudEvents `time` is the route start instant
+        (the assignment time). The window is a deterministic spread of the
+        route's stops over what is left of the wave's delivery window, at most
+        two hours wide; it is not a prediction. No event is raised when less
+        than 30 minutes of the wave window is left at the start instant. An ETA
+        is never retracted and never re-raised for the same start; a re-inducted
+        package gets a new one from its next StartRoute. `stopKey` is the opaque
+        stop key (`pkg:<trackingNumber>` when the package has no label data); no
+        address, name or phone is carried. A window may fall after the promised
+        delivery window; it is published as computed.
+      contentType: application/cloudevents+json
+      headers:
+        type: object
+        description: >-
+          Kafka record headers of every published message (the record key is the
+          CloudEvents subject, partitioned with kafka-go Hash).
+        required:
+          - content-type
+        properties:
+          content-type:
+            type: string
+            const: application/cloudevents+json; charset=UTF-8
+            x-parser-schema-id: <anonymous-schema-1>
+        x-parser-schema-id: KafkaHeaders
+      tags:
+        - name: route
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-2>
+              id:
+                type: string
+                description: >-
+                  UUID minted once per occurrence and stored with the outbox
+                  row.
+                x-parser-schema-id: <anonymous-schema-3>
+              source:
+                type: string
+                const: /retailnetwork/last-mile-delivery
+                x-parser-schema-id: <anonymous-schema-4>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              subject:
+                type: string
+                description: The aggregate root id; also the Kafka key.
+                x-parser-schema-id: <anonymous-schema-6>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-7>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-8>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-9>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - routeId
+                  - stopNo
+                  - stopKey
+                  - trackingNumbers
+                  - etaStart
+                  - etaEnd
+                properties:
+                  routeId:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-49>
+                  stopNo:
+                    type: integer
+                    minimum: 1
+                    description: >-
+                      The 1-based stop number on the route; a route may hold two
+                      stops with one stopKey.
+                    x-parser-schema-id: <anonymous-schema-50>
+                  stopKey:
+                    type: string
+                    description: >-
+                      The opaque stop key; pkg:<trackingNumber> when the package
+                      has no label data.
+                    x-parser-schema-id: <anonymous-schema-51>
+                  trackingNumbers:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-53>
+                    description: The packages of the stop in stop order.
+                    x-parser-schema-id: <anonymous-schema-52>
+                  etaStart:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-54>
+                  etaEnd:
+                    type: string
+                    format: date-time
+                    description: Later than etaStart; the window is at most two hours wide.
+                    x-parser-schema-id: <anonymous-schema-55>
+                x-parser-schema-id: <anonymous-schema-48>
+            x-parser-schema-id: <anonymous-schema-47>
+        x-parser-schema-id: StopEtaWindowAssignedEvent
+      examples:
+        - name: stopEtaWindowAssigned
+          summary: >-
+            The second stop of a route started at 12:02 in a wave window of
+            12:00 to 20:00.
+          payload:
+            specversion: '1.0'
+            id: 7c2d9e41-5b83-4a6f-9e10-d4a8b3f6c299
+            source: /retailnetwork/last-mile-delivery
+            type: >-
+              com.retailnetwork.logistics.last-mile-delivery.route.StopEtaWindowAssigned
+            subject: route-81c2
+            time: '2026-10-24T12:02:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:retailnetwork:last-mile-delivery:events:StopEtaWindowAssigned:v1
+            data:
+              routeId: route-81c2
+              stopNo: 2
+              stopKey: 7d1f0c5a9e3b4a2c8f6d0e1b3a5c7e9f2b4d6a8c0e1f3a5b7c9d1e3f5a7b9c0d
+              trackingNumbers:
+                - TRK-000124
+                - TRK-000125
+              etaStart: '2026-10-24T17:00:00Z'
+              etaEnd: '2026-10-24T19:00:00Z'
+      x-parser-unique-object-id: StopEtaWindowAssigned
     PackageInductionDeferred:
       name: PackageInductionDeferred
       title: Package induction deferred
@@ -7887,15 +9626,15 @@ components:
                 properties:
                   trackingNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-48>
+                    x-parser-schema-id: <anonymous-schema-58>
                   assignmentId:
                     type: string
                     description: >-
                       From LabelIssued; omitted only when no label data was
                       received.
-                    x-parser-schema-id: <anonymous-schema-49>
-                x-parser-schema-id: <anonymous-schema-47>
-            x-parser-schema-id: <anonymous-schema-46>
+                    x-parser-schema-id: <anonymous-schema-59>
+                x-parser-schema-id: <anonymous-schema-57>
+            x-parser-schema-id: <anonymous-schema-56>
         x-parser-schema-id: PackageInductionDeferredEvent
       examples:
         - name: packageInductionDeferred
@@ -7998,9 +9737,9 @@ components:
                 properties:
                   trackingNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-52>
-                x-parser-schema-id: <anonymous-schema-51>
-            x-parser-schema-id: <anonymous-schema-50>
+                    x-parser-schema-id: <anonymous-schema-62>
+                x-parser-schema-id: <anonymous-schema-61>
+            x-parser-schema-id: <anonymous-schema-60>
         x-parser-schema-id: PackageReturnInitiatedEvent
       examples:
         - name: packageReturnInitiated
@@ -8019,6 +9758,159 @@ components:
             data:
               trackingNumber: TRK-000123
       x-parser-unique-object-id: PackageReturnInitiated
+    DeliveryPointFlagged:
+      name: DeliveryPointFlagged
+      title: Delivery point flagged
+      summary: >-
+        A drop-off point reached two counted failed visits; these packages are
+        newly affected.
+      description: >-
+        `type` =
+        `com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged`;
+        subject and key = the stopKey (opaque; no address, name or free text
+        anywhere in the event). Raised by RecordAttempt, in the same transaction
+        as the attempt, while a DeliveryPointProfile holds at least two open
+        strikes (a strike is one failed visit reported as NOT_HOME or
+        ACCESS_PROBLEM; one strike per route; strikes older than 60 days from
+        the newest attempt do not count) and the attempt reached packages that
+        were not told yet. `trackingNumbers` holds only the newly affected
+        packages (1 to 5); `failures` is the number of strikes open at that
+        moment; `reason` is ACCESS_PROBLEM when any open strike has it, else
+        NOT_HOME; `flaggedAt` is the attempt instant that triggered it. No
+        optional fields. No event means no new package was affected; there is no
+        cleared event. Consumers are idempotent per tracking number. Dormant
+        until the driver client sends an outcomeDetail on the attempt (ADR
+        0014).
+      contentType: application/cloudevents+json
+      headers:
+        type: object
+        description: >-
+          Kafka record headers of every published message (the record key is the
+          CloudEvents subject, partitioned with kafka-go Hash).
+        required:
+          - content-type
+        properties:
+          content-type:
+            type: string
+            const: application/cloudevents+json; charset=UTF-8
+            x-parser-schema-id: <anonymous-schema-1>
+        x-parser-schema-id: KafkaHeaders
+      tags:
+        - name: deliverypointprofile
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-2>
+              id:
+                type: string
+                description: >-
+                  UUID minted once per occurrence and stored with the outbox
+                  row.
+                x-parser-schema-id: <anonymous-schema-3>
+              source:
+                type: string
+                const: /retailnetwork/last-mile-delivery
+                x-parser-schema-id: <anonymous-schema-4>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              subject:
+                type: string
+                description: The aggregate root id; also the Kafka key.
+                x-parser-schema-id: <anonymous-schema-6>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-7>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-8>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-9>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - stopKey
+                  - reason
+                  - failures
+                  - trackingNumbers
+                  - flaggedAt
+                properties:
+                  stopKey:
+                    type: string
+                    description: Opaque keyed hash of the address; never an address.
+                    x-parser-schema-id: <anonymous-schema-65>
+                  reason:
+                    type: string
+                    enum:
+                      - NOT_HOME
+                      - ACCESS_PROBLEM
+                    x-parser-schema-id: <anonymous-schema-66>
+                  failures:
+                    type: integer
+                    minimum: 2
+                    maximum: 5
+                    description: Strikes open at that moment.
+                    x-parser-schema-id: <anonymous-schema-67>
+                  trackingNumbers:
+                    type: array
+                    minItems: 1
+                    maxItems: 5
+                    items:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-69>
+                    description: Only the packages newly affected by this event.
+                    x-parser-schema-id: <anonymous-schema-68>
+                  flaggedAt:
+                    type: string
+                    format: date-time
+                    description: The attempt instant that triggered the event.
+                    x-parser-schema-id: <anonymous-schema-70>
+                x-parser-schema-id: <anonymous-schema-64>
+            x-parser-schema-id: <anonymous-schema-63>
+        x-parser-schema-id: DeliveryPointFlaggedEvent
+      examples:
+        - name: deliveryPointFlagged
+          summary: A second NOT_HOME visit at one point.
+          payload:
+            specversion: '1.0'
+            id: 6a1d3c5e-8b2f-4d70-9e14-2c4f6a8b0d22
+            source: /retailnetwork/last-mile-delivery
+            type: >-
+              com.retailnetwork.logistics.last-mile-delivery.deliverypointprofile.DeliveryPointFlagged
+            subject: 9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+            time: '2026-11-11T14:21:00Z'
+            datacontenttype: application/json
+            dataschema: >-
+              urn:retailnetwork:last-mile-delivery:events:DeliveryPointFlagged:v1
+            data:
+              stopKey: 9f2c4a1e7b3d5c60e1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+              reason: NOT_HOME
+              failures: 2
+              trackingNumbers:
+                - TRK-000123
+                - TRK-000124
+              flaggedAt: '2026-11-11T14:20:30Z'
+      x-parser-unique-object-id: DeliveryPointFlagged
     LoadArrived:
       name: LoadArrived
       title: Load arrived (consumed)
@@ -8093,32 +9985,32 @@ components:
                 properties:
                   loadId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-61>
+                    x-parser-schema-id: <anonymous-schema-79>
                   departureId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-80>
                   destinationNodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-63>
+                    x-parser-schema-id: <anonymous-schema-81>
                   nodeType:
                     type: string
                     description: >-
                       Type of the node where the arrival happened
                       (contracts-delta E3).
-                    x-parser-schema-id: <anonymous-schema-64>
+                    x-parser-schema-id: <anonymous-schema-82>
                   trackingNumbers:
                     type: array
                     items:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-66>
-                    x-parser-schema-id: <anonymous-schema-65>
+                      x-parser-schema-id: <anonymous-schema-84>
+                    x-parser-schema-id: <anonymous-schema-83>
                   arrivedAt:
                     type: string
                     format: date-time
                     description: Optional; the processing time is used when absent.
-                    x-parser-schema-id: <anonymous-schema-67>
-                x-parser-schema-id: <anonymous-schema-60>
-            x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-85>
+                x-parser-schema-id: <anonymous-schema-78>
+            x-parser-schema-id: <anonymous-schema-77>
         x-parser-schema-id: LoadArrivedEvent
       examples:
         - name: loadArrived
@@ -8211,18 +10103,18 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-70>
+                    x-parser-schema-id: <anonymous-schema-88>
                   nodeType:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-71>
+                    x-parser-schema-id: <anonymous-schema-89>
                   regionId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-72>
+                    x-parser-schema-id: <anonymous-schema-90>
                   timezone:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-73>
-                x-parser-schema-id: <anonymous-schema-69>
-            x-parser-schema-id: <anonymous-schema-68>
+                    x-parser-schema-id: <anonymous-schema-91>
+                x-parser-schema-id: <anonymous-schema-87>
+            x-parser-schema-id: <anonymous-schema-86>
         x-parser-schema-id: NodeRegisteredEvent
       examples:
         - name: nodeRegistered
@@ -8311,19 +10203,19 @@ components:
                 properties:
                   postalPrefix:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-76>
+                    x-parser-schema-id: <anonymous-schema-94>
                   deliveryStationNodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-77>
+                    x-parser-schema-id: <anonymous-schema-95>
                   regionId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-78>
+                    x-parser-schema-id: <anonymous-schema-96>
                   assignmentVersion:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-79>
-                x-parser-schema-id: <anonymous-schema-75>
-            x-parser-schema-id: <anonymous-schema-74>
+                    x-parser-schema-id: <anonymous-schema-97>
+                x-parser-schema-id: <anonymous-schema-93>
+            x-parser-schema-id: <anonymous-schema-92>
         x-parser-schema-id: ServiceAreaAssignedEvent
       examples:
         - name: serviceAreaAssigned
@@ -8414,19 +10306,19 @@ components:
                 properties:
                   trackingNumber:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-82>
+                    x-parser-schema-id: <anonymous-schema-100>
                   assignmentId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-83>
+                    x-parser-schema-id: <anonymous-schema-101>
                   stopKey:
                     type: string
                     description: Opaque keyed hash of the normalized address.
-                    x-parser-schema-id: <anonymous-schema-84>
+                    x-parser-schema-id: <anonymous-schema-102>
                   destinationPostalPrefix:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-85>
-                x-parser-schema-id: <anonymous-schema-81>
-            x-parser-schema-id: <anonymous-schema-80>
+                    x-parser-schema-id: <anonymous-schema-103>
+                x-parser-schema-id: <anonymous-schema-99>
+            x-parser-schema-id: <anonymous-schema-98>
         x-parser-schema-id: LabelIssuedEvent
       examples:
         - name: labelIssued
@@ -8864,19 +10756,19 @@ components:
               properties:
                 routeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-73>
                 waveId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-56>
+                  x-parser-schema-id: <anonymous-schema-74>
                 dspId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-57>
+                  x-parser-schema-id: <anonymous-schema-75>
                 stopCount:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-58>
-              x-parser-schema-id: <anonymous-schema-54>
-          x-parser-schema-id: <anonymous-schema-53>
+                  x-parser-schema-id: <anonymous-schema-76>
+              x-parser-schema-id: <anonymous-schema-72>
+          x-parser-schema-id: <anonymous-schema-71>
       x-parser-schema-id: RoutePlannedEvent
     PackageOutForDeliveryEvent:
       allOf:
@@ -9016,18 +10908,123 @@ components:
                     - DELIVERED
                     - FAILED
                   x-parser-schema-id: Outcome
+                outcomeDetail:
+                  type: string
+                  enum:
+                    - NOT_HOME
+                    - ACCESS_PROBLEM
+                    - OTHER
+                    - SAFE_PLACE_USED
+                  description: >-
+                    Optional category reported by the driver client; omitted
+                    when not reported. FAILED carries NOT_HOME, ACCESS_PROBLEM
+                    or OTHER; DELIVERED carries SAFE_PLACE_USED.
+                  x-parser-schema-id: <anonymous-schema-44>
                 failureReason:
                   type: string
                   description: Present only when outcome is FAILED.
-                  x-parser-schema-id: <anonymous-schema-44>
+                  x-parser-schema-id: <anonymous-schema-45>
                 at:
                   type: string
                   format: date-time
                   description: The instant of the attempt as reported by the driver app.
-                  x-parser-schema-id: <anonymous-schema-45>
+                  x-parser-schema-id: <anonymous-schema-46>
               x-parser-schema-id: <anonymous-schema-41>
           x-parser-schema-id: <anonymous-schema-40>
       x-parser-schema-id: DeliveryAttemptedEvent
+    StopEtaWindowAssignedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-2>
+            id:
+              type: string
+              description: UUID minted once per occurrence and stored with the outbox row.
+              x-parser-schema-id: <anonymous-schema-3>
+            source:
+              type: string
+              const: /retailnetwork/last-mile-delivery
+              x-parser-schema-id: <anonymous-schema-4>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-5>
+            subject:
+              type: string
+              description: The aggregate root id; also the Kafka key.
+              x-parser-schema-id: <anonymous-schema-6>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-7>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-8>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-9>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - routeId
+                - stopNo
+                - stopKey
+                - trackingNumbers
+                - etaStart
+                - etaEnd
+              properties:
+                routeId:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-49>
+                stopNo:
+                  type: integer
+                  minimum: 1
+                  description: >-
+                    The 1-based stop number on the route; a route may hold two
+                    stops with one stopKey.
+                  x-parser-schema-id: <anonymous-schema-50>
+                stopKey:
+                  type: string
+                  description: >-
+                    The opaque stop key; pkg:<trackingNumber> when the package
+                    has no label data.
+                  x-parser-schema-id: <anonymous-schema-51>
+                trackingNumbers:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-53>
+                  description: The packages of the stop in stop order.
+                  x-parser-schema-id: <anonymous-schema-52>
+                etaStart:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-54>
+                etaEnd:
+                  type: string
+                  format: date-time
+                  description: Later than etaStart; the window is at most two hours wide.
+                  x-parser-schema-id: <anonymous-schema-55>
+              x-parser-schema-id: <anonymous-schema-48>
+          x-parser-schema-id: <anonymous-schema-47>
+      x-parser-schema-id: StopEtaWindowAssignedEvent
     PackageInductionDeferredEvent:
       allOf:
         - type: object
@@ -9082,15 +11079,15 @@ components:
               properties:
                 trackingNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-48>
+                  x-parser-schema-id: <anonymous-schema-58>
                 assignmentId:
                   type: string
                   description: >-
                     From LabelIssued; omitted only when no label data was
                     received.
-                  x-parser-schema-id: <anonymous-schema-49>
-              x-parser-schema-id: <anonymous-schema-47>
-          x-parser-schema-id: <anonymous-schema-46>
+                  x-parser-schema-id: <anonymous-schema-59>
+              x-parser-schema-id: <anonymous-schema-57>
+          x-parser-schema-id: <anonymous-schema-56>
       x-parser-schema-id: PackageInductionDeferredEvent
     PackageReturnInitiatedEvent:
       allOf:
@@ -9146,10 +11143,99 @@ components:
               properties:
                 trackingNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-52>
-              x-parser-schema-id: <anonymous-schema-51>
-          x-parser-schema-id: <anonymous-schema-50>
+                  x-parser-schema-id: <anonymous-schema-62>
+              x-parser-schema-id: <anonymous-schema-61>
+          x-parser-schema-id: <anonymous-schema-60>
       x-parser-schema-id: PackageReturnInitiatedEvent
+    DeliveryPointFlaggedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-2>
+            id:
+              type: string
+              description: UUID minted once per occurrence and stored with the outbox row.
+              x-parser-schema-id: <anonymous-schema-3>
+            source:
+              type: string
+              const: /retailnetwork/last-mile-delivery
+              x-parser-schema-id: <anonymous-schema-4>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-5>
+            subject:
+              type: string
+              description: The aggregate root id; also the Kafka key.
+              x-parser-schema-id: <anonymous-schema-6>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-7>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-8>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-9>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - stopKey
+                - reason
+                - failures
+                - trackingNumbers
+                - flaggedAt
+              properties:
+                stopKey:
+                  type: string
+                  description: Opaque keyed hash of the address; never an address.
+                  x-parser-schema-id: <anonymous-schema-65>
+                reason:
+                  type: string
+                  enum:
+                    - NOT_HOME
+                    - ACCESS_PROBLEM
+                  x-parser-schema-id: <anonymous-schema-66>
+                failures:
+                  type: integer
+                  minimum: 2
+                  maximum: 5
+                  description: Strikes open at that moment.
+                  x-parser-schema-id: <anonymous-schema-67>
+                trackingNumbers:
+                  type: array
+                  minItems: 1
+                  maxItems: 5
+                  items:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-69>
+                  description: Only the packages newly affected by this event.
+                  x-parser-schema-id: <anonymous-schema-68>
+                flaggedAt:
+                  type: string
+                  format: date-time
+                  description: The attempt instant that triggered the event.
+                  x-parser-schema-id: <anonymous-schema-70>
+              x-parser-schema-id: <anonymous-schema-64>
+          x-parser-schema-id: <anonymous-schema-63>
+      x-parser-schema-id: DeliveryPointFlaggedEvent
     LoadArrivedEvent:
       allOf:
         - type: object
@@ -9205,32 +11291,32 @@ components:
               properties:
                 loadId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-61>
+                  x-parser-schema-id: <anonymous-schema-79>
                 departureId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-80>
                 destinationNodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-63>
+                  x-parser-schema-id: <anonymous-schema-81>
                 nodeType:
                   type: string
                   description: >-
                     Type of the node where the arrival happened (contracts-delta
                     E3).
-                  x-parser-schema-id: <anonymous-schema-64>
+                  x-parser-schema-id: <anonymous-schema-82>
                 trackingNumbers:
                   type: array
                   items:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-66>
-                  x-parser-schema-id: <anonymous-schema-65>
+                    x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-83>
                 arrivedAt:
                   type: string
                   format: date-time
                   description: Optional; the processing time is used when absent.
-                  x-parser-schema-id: <anonymous-schema-67>
-              x-parser-schema-id: <anonymous-schema-60>
-          x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-85>
+              x-parser-schema-id: <anonymous-schema-78>
+          x-parser-schema-id: <anonymous-schema-77>
       x-parser-schema-id: LoadArrivedEvent
     NodeRegisteredEvent:
       allOf:
@@ -9287,18 +11373,18 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-70>
+                  x-parser-schema-id: <anonymous-schema-88>
                 nodeType:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-71>
+                  x-parser-schema-id: <anonymous-schema-89>
                 regionId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-72>
+                  x-parser-schema-id: <anonymous-schema-90>
                 timezone:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-73>
-              x-parser-schema-id: <anonymous-schema-69>
-          x-parser-schema-id: <anonymous-schema-68>
+                  x-parser-schema-id: <anonymous-schema-91>
+              x-parser-schema-id: <anonymous-schema-87>
+          x-parser-schema-id: <anonymous-schema-86>
       x-parser-schema-id: NodeRegisteredEvent
     ServiceAreaAssignedEvent:
       allOf:
@@ -9356,19 +11442,19 @@ components:
               properties:
                 postalPrefix:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-76>
+                  x-parser-schema-id: <anonymous-schema-94>
                 deliveryStationNodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-77>
+                  x-parser-schema-id: <anonymous-schema-95>
                 regionId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-78>
+                  x-parser-schema-id: <anonymous-schema-96>
                 assignmentVersion:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-79>
-              x-parser-schema-id: <anonymous-schema-75>
-          x-parser-schema-id: <anonymous-schema-74>
+                  x-parser-schema-id: <anonymous-schema-97>
+              x-parser-schema-id: <anonymous-schema-93>
+          x-parser-schema-id: <anonymous-schema-92>
       x-parser-schema-id: ServiceAreaAssignedEvent
     LabelIssuedEvent:
       allOf:
@@ -9424,19 +11510,19 @@ components:
               properties:
                 trackingNumber:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-82>
+                  x-parser-schema-id: <anonymous-schema-100>
                 assignmentId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-83>
+                  x-parser-schema-id: <anonymous-schema-101>
                 stopKey:
                   type: string
                   description: Opaque keyed hash of the normalized address.
-                  x-parser-schema-id: <anonymous-schema-84>
+                  x-parser-schema-id: <anonymous-schema-102>
                 destinationPostalPrefix:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-85>
-              x-parser-schema-id: <anonymous-schema-81>
-          x-parser-schema-id: <anonymous-schema-80>
+                  x-parser-schema-id: <anonymous-schema-103>
+              x-parser-schema-id: <anonymous-schema-99>
+          x-parser-schema-id: <anonymous-schema-98>
       x-parser-schema-id: LabelIssuedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3
