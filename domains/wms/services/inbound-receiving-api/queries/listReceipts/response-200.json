@@ -73,6 +73,16 @@
                   "type": "integer",
                   "format": "int64",
                   "minimum": 0
+                },
+                "earliestBestBefore": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "The earliest best-before (AI 15) of the accepted cartons of the line (ADR 0024). Absent when none carried one."
+                },
+                "earliestExpiry": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "The earliest expiry (AI 17) of the accepted cartons of the line (ADR 0024). Absent when none carried one."
                 }
               }
             }
@@ -128,6 +138,21 @@
                 "damagedQty": {
                   "type": "integer",
                   "format": "int64"
+                },
+                "w13Code": {
+                  "type": "string",
+                  "enum": [
+                    "01",
+                    "02",
+                    "03",
+                    "05",
+                    "09"
+                  ],
+                  "description": "The X12 W13 receiving condition code of the finding (ADR 0023): `01`\ndamaged, `02` short, `03` over, `05` incorrect product, `09` hold. Two\ncharacters, leading zero kept. Absent for a kind the standard has no code\nfor (`DuplicateSscc`, `UnlabelledCarton`, `CartonOverLimit`, ...); never\ninvented. Derived from `kind`.\n"
+                },
+                "cbvDisposition": {
+                  "type": "string",
+                  "description": "The GS1 CBV disposition of the finding (ADR 0023), derived from `kind`\n(`damaged`, `mismatch_quantity`, `mismatch_class`, `mismatch_instance`,\n`non_conformant`, ...). Always present on a coded kind.\n"
                 }
               }
             }
@@ -145,7 +170,7 @@
               "properties": {
                 "kind": {
                   "type": "string",
-                  "description": "Raised on `CartonDiscrepancyRaised`, never on `ReceiptClosed`.\n`UnexpectedCarton` = an SSCC not on the manifest; `MissingCarton` = a\nmanifest carton never accepted (raised at close); `DuplicateSscc` =\nscanned twice or already received; `UnknownGtin` = a GTIN the\nPackagingView does not know; `CaseQtyMismatch` = quantity differs from\nthe active CASE units per pack or the label count;\n`MixedCaseDeclaredAsCasePack` = the label's content contradicts the\nmanifest SKU; `UnlabelledCarton` = a case with no SSCC against a carton\nASN (it gets an internal LPN, see the label endpoint);\n`CartonOverLimit` = the carton's DECLARED `grossWeightG` or longest\n`dims` side is above `CARTON_MAX_GROSS_WEIGHT_G` /\n`CARTON_MAX_LONGEST_SIDE_MM` (the carton is still ACCEPTED;\n`expected` holds the breached limits and `actual` the declared values,\nas `grossWeightG:<n>` / `longestSideMm:<n>` joined by commas);\n`MixedCartonContentMismatch` = the `countedContents` of a MIXED carton\ndiffer from its manifest for a SKU (`expected` and `actual` are\n`<sku>:<qty>`, one finding per SKU).\n",
+                  "description": "Raised on `CartonDiscrepancyRaised`, never on `ReceiptClosed`.\n`UnexpectedCarton` = an SSCC not on the manifest; `MissingCarton` = a\nmanifest carton never accepted (raised at close); `DuplicateSscc` =\nscanned twice or already received; `UnknownGtin` = a GTIN the\nPackagingView does not know; `CaseQtyMismatch` = quantity differs from\nthe active CASE units per pack or the label count;\n`MixedCaseDeclaredAsCasePack` = the label's content contradicts the\nmanifest SKU; `UnlabelledCarton` = a case with no SSCC against a carton\nASN (it gets an internal LPN, see the label endpoint);\n`CartonOverLimit` = the carton's DECLARED `grossWeightG` or longest\n`dims` side is above `CARTON_MAX_GROSS_WEIGHT_G` /\n`CARTON_MAX_LONGEST_SIDE_MM` (the carton is still ACCEPTED;\n`expected` holds the breached limits and `actual` the declared values,\nas `grossWeightG:<n>` / `longestSideMm:<n>` joined by commas);\n`MixedCartonContentMismatch` = the `countedContents` of a MIXED carton\ndiffer from its manifest for a SKU (`expected` and `actual` are\n`<sku>:<qty>`, one finding per SKU);\n`LabelNonCompliant` = the scanned label breaks the GS1 rules (`expected`\nis the reason code: `bad_check_digit`, `invalid_identifier`,\n`conflicting_ais`, `missing_ai`, `unknown_ai`, ...; `actual` the raw\nscan; nothing is booked); `WrongDestination` = the label's ship-to GLN\n(AI 410) is not a site of this receiving (`actual` is the GLN; nothing\nis booked); `MissingContentGtin` = a carton scan against a FLAT ASN\n(lines, no carton manifest, ADR 0025) carried no AI 02 content GTIN, so\nno line could be resolved (`sscc` carries the parsed SSCC, the label\nmay itself be GS1-compliant; nothing is booked). The last three kinds\nhave no W13 code; their CBV dispositions are\n`non_conformant`, `mismatch_instance` and `non_conformant`\n(ADR 0024, ADR 0025).\n",
                   "enum": [
                     "UnexpectedCarton",
                     "MissingCarton",
@@ -155,7 +180,10 @@
                     "MixedCaseDeclaredAsCasePack",
                     "UnlabelledCarton",
                     "CartonOverLimit",
-                    "MixedCartonContentMismatch"
+                    "MixedCartonContentMismatch",
+                    "LabelNonCompliant",
+                    "WrongDestination",
+                    "MissingContentGtin"
                   ]
                 },
                 "sscc": {
@@ -171,6 +199,44 @@
                 "at": {
                   "type": "string",
                   "format": "date-time"
+                },
+                "w13Code": "[Circular]",
+                "cbvDisposition": "[Circular]",
+                "supplierRef": {
+                  "type": "string",
+                  "description": "The ASN's supplier; set on `LabelNonCompliant` and `WrongDestination` (ADR 0024)."
+                }
+              }
+            }
+          },
+          "pallets": {
+            "type": "array",
+            "description": "The accepted cartons grouped by parent SSCC, in the order the pallets\nfirst appear, each with its earliest best-before and expiry: what the\nputaway needs to pick by first-expired-first-out on a mixed pallet\n(ADR 0024). Absent when no accepted carton has a pallet.\n",
+            "items": {
+              "type": "object",
+              "required": [
+                "parentSscc",
+                "cartonCount"
+              ],
+              "description": "The accepted cartons of one pallet and their earliest dates (ADR 0024).",
+              "properties": {
+                "parentSscc": {
+                  "type": "string",
+                  "pattern": "^[0-9]{18}$"
+                },
+                "cartonCount": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "earliestBestBefore": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "The earliest AI 15 of the pallet's accepted cartons. Absent when none carried one."
+                },
+                "earliestExpiry": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "The earliest AI 17 of the pallet's accepted cartons. Absent when none carried one."
                 }
               }
             }
