@@ -1,0 +1,76 @@
+---
+id: yard-management-api-completeInspection
+version: 1.0.0
+name: completeInspection
+summary: Complete an inspection (CompleteInspection)
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Inspections'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/inspections/{inspectionId}/completions'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Completes an OPEN inspection, once and for good. Every REQUIRED item needs a result first (409 `required-item-pending`). The outcome is `FAILED` when any required item failed, `PASSED` otherwise. A FAILED inspection places a hold on the trailer in the SAME transaction, with the reason of its most severe failed item (the template item says which: `SECURITY`, `SEAL_BROKEN`, `DAMAGED`, `NOT_FOUND` or `QUALITY`, the default), unless the trailer already carries a hold; releasing it stays the existing human action (`POST /trailers/{trailerId}/hold-releases`), and a re-inspection can then be opened. `conditionGrade` is an optional record of the equipment, never the verdict. Raises InspectionCompleted and, for a FAILED inspection, InspectionFailed (and TrailerHeld when it held the trailer). Completing again is 409 `inspection-closed`.
+
+
+
+
+## POST `(/inspections/{inspectionId}/completions)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Caller-generated unique key (a UUID per logical submit, 1-128 printable ASCII characters) that makes a retried request safe. Required on every POST and PUT (400 `idempotency-key-required`; `idempotency-key-invalid` when malformed). A replay with the same key, method, path and body returns the original response with `Idempotency-Replayed: true`; the same key with a different method, path or body is 409 `idempotency-key-reused`.
+- **inspectionId** (path) (required): The inspection id.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem document used for every non-2xx response.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

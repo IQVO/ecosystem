@@ -3708,15 +3708,17 @@ channels:
           x-parser-schema-id: PathCapacityChangedEvent
         messageId: PathCapacityChanged
   warehouse.inbound-receiving.events:
-    description: |
+    description: >
       This service's integration topic. Written by the outbox relay; every
+
       message carries the CloudEvents content-type header (plus the optional
+
       W3C `traceparent` of the writing request). Key = `asn_number`
-      for ASN and receipt events, `appointment_id` for the legacy appointment
-      events. Dispatch on the full `type`, ignore unknown types, dedupe on
+
+      for ASN and receipt events. Dispatch on the full `type`, ignore unknown
+      types, dedupe on
+
       `id`. The first consumer is inventory-storage (`ReceiptLineReceived`).
-      The `DockAppointment*` messages are LEGACY (ADR 0019): only the
-      one-shot `republish-appointments` command writes them now.
     x-eventcatalog-channel-version: 1.0.0
     subscribe:
       operationId: consumeInboundReceiptEvents
@@ -4019,6 +4021,213 @@ channels:
                   x-parser-schema-id: <anonymous-schema-201>
               x-parser-schema-id: ReceiptClosedEvent
             messageId: ReceiptClosed
+  warehouse.outbound-shipping.events:
+    description: |
+      This service's integration topic. Written by the outbox relay; key =
+      aggregate id, so all events of one load (or package, or BOL) stay
+      ordered on one partition. Every message carries the CloudEvents
+      content-type header. Dispatch on the full `type`, ignore unknown
+      types, dedupe on `id`.
+    x-eventcatalog-channel-version: 1.0.0
+    subscribe:
+      operationId: consumeOutboundShippingEvents
+      summary: >-
+        Confirm network orders from the fleet's shipment facts (ADR 0014
+        addendum).
+      message:
+        oneOf:
+          - name: ShipmentConfirmed
+            title: Shipment confirmed (consumed from outbound-shipping)
+            summary: The trailer left with a closed load; the shipment is a fact.
+            description: >
+              CONSUMED, not produced. Pinned by outbound-shipping's merged
+
+              `apis/asyncapi.yaml` (IQVO/outbound-shipping PR #2):
+
+              `source=/warehouse/outbound-shipping`, type
+
+              `com.warehouse.wms.outbound-shipping.outboundload.ShipmentConfirmed`,
+
+              subject and Kafka key = the load id, dataschema
+
+              `urn:warehouse:outbound-shipping:events:ShipmentConfirmed:v1`.
+
+              `orders[].order_id` is order-management's `OrderId` — the join key
+
+              on `NetworkOrder.localOrderId` (ADR 0014 addendum). A per-order
+
+              `package_count` is an additive producer change that has NOT
+              landed;
+
+              this consumer's decode tolerates it and reports the real count the
+
+              day it ships, keeping ADR 0026's single-package placeholder until
+
+              then.
+            contentType: application/cloudevents+json
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-207>
+                    id:
+                      type: string
+                      description: >-
+                        UUID minted once per occurrence and persisted with the
+                        outbox row; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-208>
+                    source:
+                      type: string
+                      const: /warehouse/outbound-shipping
+                      x-parser-schema-id: <anonymous-schema-209>
+                    type:
+                      type: string
+                      description: >-
+                        com.warehouse.wms.outbound-shipping.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-210>
+                    subject:
+                      type: string
+                      description: Aggregate root id; also the Kafka partition key.
+                      x-parser-schema-id: <anonymous-schema-211>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-212>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-213>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:outbound-shipping:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-214>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: >-
+                        com.warehouse.wms.outbound-shipping.outboundload.ShipmentConfirmed
+                      x-parser-schema-id: <anonymous-schema-216>
+                    subject:
+                      type: string
+                      description: The load id.
+                      x-parser-schema-id: <anonymous-schema-217>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-218>
+                    datacontenttype:
+                      type: string
+                      enum:
+                        - application/json
+                      x-parser-schema-id: <anonymous-schema-219>
+                    dataschema:
+                      type: string
+                      const: >-
+                        urn:warehouse:outbound-shipping:events:ShipmentConfirmed:v1
+                      x-parser-schema-id: <anonymous-schema-220>
+                    data:
+                      type: object
+                      description: >
+                        Pinned per outbound-shipping's merged contract; every
+                        field
+
+                        below is required there. `orders[].package_count` is NOT
+                        in
+
+                        the contract yet (additive, pending) — listed here as
+                        the
+
+                        optional field this consumer already tolerates.
+                      required:
+                        - load_id
+                        - site_id
+                        - cpt_id
+                        - carrier
+                        - trailer_id
+                        - seal_number
+                        - departed_at
+                        - orders
+                        - version
+                      properties:
+                        load_id:
+                          type: string
+                          description: >-
+                            The shipment reference of the idempotency key; falls
+                            back to the Kafka key when empty — an event naming
+                            neither is dead-lettered.
+                          x-parser-schema-id: <anonymous-schema-222>
+                        site_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-223>
+                        cpt_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-224>
+                        carrier:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-225>
+                        trailer_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-226>
+                        seal_number:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-227>
+                        departed_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-228>
+                        orders:
+                          type: array
+                          description: >-
+                            Distinct source_order_id (order-management OrderId)
+                            of the shipped packages; a package manifested
+                            without one is excluded by the producer.
+                          items:
+                            type: object
+                            required:
+                              - order_id
+                            properties:
+                              order_id:
+                                type: string
+                                description: >-
+                                  The join key on NetworkOrder.localOrderId; no
+                                  match means a customer-demand order — skipped
+                                  and logged.
+                                x-parser-schema-id: <anonymous-schema-231>
+                              package_count:
+                                type: integer
+                                minimum: 1
+                                description: >-
+                                  ADDITIVE, NOT in the merged contract yet. The
+                                  real per-order package count; until it lands
+                                  the network is told 1 (ADR 0026, gap recorded
+                                  in ADR 0014's addendum).
+                                x-parser-schema-id: <anonymous-schema-232>
+                            x-parser-schema-id: <anonymous-schema-230>
+                          x-parser-schema-id: <anonymous-schema-229>
+                        version:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-233>
+                      x-parser-schema-id: <anonymous-schema-221>
+                  x-parser-schema-id: <anonymous-schema-215>
+              x-parser-schema-id: ShipmentConfirmedEvent
+            messageId: ShipmentConfirmed
 components:
   messages:
     NetworkOrderReceived:
@@ -7749,6 +7958,178 @@ components:
             x-parser-schema-id: <anonymous-schema-201>
         x-parser-schema-id: ReceiptClosedEvent
       messageId: ReceiptClosed
+    ShipmentConfirmed:
+      name: ShipmentConfirmed
+      title: Shipment confirmed (consumed from outbound-shipping)
+      summary: The trailer left with a closed load; the shipment is a fact.
+      description: |
+        CONSUMED, not produced. Pinned by outbound-shipping's merged
+        `apis/asyncapi.yaml` (IQVO/outbound-shipping PR #2):
+        `source=/warehouse/outbound-shipping`, type
+        `com.warehouse.wms.outbound-shipping.outboundload.ShipmentConfirmed`,
+        subject and Kafka key = the load id, dataschema
+        `urn:warehouse:outbound-shipping:events:ShipmentConfirmed:v1`.
+        `orders[].order_id` is order-management's `OrderId` — the join key
+        on `NetworkOrder.localOrderId` (ADR 0014 addendum). A per-order
+        `package_count` is an additive producer change that has NOT landed;
+        this consumer's decode tolerates it and reports the real count the
+        day it ships, keeping ADR 0026's single-package placeholder until
+        then.
+      contentType: application/cloudevents+json
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-207>
+              id:
+                type: string
+                description: >-
+                  UUID minted once per occurrence and persisted with the outbox
+                  row; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-208>
+              source:
+                type: string
+                const: /warehouse/outbound-shipping
+                x-parser-schema-id: <anonymous-schema-209>
+              type:
+                type: string
+                description: com.warehouse.wms.outbound-shipping.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-210>
+              subject:
+                type: string
+                description: Aggregate root id; also the Kafka partition key.
+                x-parser-schema-id: <anonymous-schema-211>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-212>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-213>
+              dataschema:
+                type: string
+                description: >-
+                  urn:warehouse:outbound-shipping:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-214>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: >-
+                  com.warehouse.wms.outbound-shipping.outboundload.ShipmentConfirmed
+                x-parser-schema-id: <anonymous-schema-216>
+              subject:
+                type: string
+                description: The load id.
+                x-parser-schema-id: <anonymous-schema-217>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-218>
+              datacontenttype:
+                type: string
+                enum:
+                  - application/json
+                x-parser-schema-id: <anonymous-schema-219>
+              dataschema:
+                type: string
+                const: urn:warehouse:outbound-shipping:events:ShipmentConfirmed:v1
+                x-parser-schema-id: <anonymous-schema-220>
+              data:
+                type: object
+                description: |
+                  Pinned per outbound-shipping's merged contract; every field
+                  below is required there. `orders[].package_count` is NOT in
+                  the contract yet (additive, pending) — listed here as the
+                  optional field this consumer already tolerates.
+                required:
+                  - load_id
+                  - site_id
+                  - cpt_id
+                  - carrier
+                  - trailer_id
+                  - seal_number
+                  - departed_at
+                  - orders
+                  - version
+                properties:
+                  load_id:
+                    type: string
+                    description: >-
+                      The shipment reference of the idempotency key; falls back
+                      to the Kafka key when empty — an event naming neither is
+                      dead-lettered.
+                    x-parser-schema-id: <anonymous-schema-222>
+                  site_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-223>
+                  cpt_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-224>
+                  carrier:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-225>
+                  trailer_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-226>
+                  seal_number:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-227>
+                  departed_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-228>
+                  orders:
+                    type: array
+                    description: >-
+                      Distinct source_order_id (order-management OrderId) of the
+                      shipped packages; a package manifested without one is
+                      excluded by the producer.
+                    items:
+                      type: object
+                      required:
+                        - order_id
+                      properties:
+                        order_id:
+                          type: string
+                          description: >-
+                            The join key on NetworkOrder.localOrderId; no match
+                            means a customer-demand order — skipped and logged.
+                          x-parser-schema-id: <anonymous-schema-231>
+                        package_count:
+                          type: integer
+                          minimum: 1
+                          description: >-
+                            ADDITIVE, NOT in the merged contract yet. The real
+                            per-order package count; until it lands the network
+                            is told 1 (ADR 0026, gap recorded in ADR 0014's
+                            addendum).
+                          x-parser-schema-id: <anonymous-schema-232>
+                      x-parser-schema-id: <anonymous-schema-230>
+                    x-parser-schema-id: <anonymous-schema-229>
+                  version:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-233>
+                x-parser-schema-id: <anonymous-schema-221>
+            x-parser-schema-id: <anonymous-schema-215>
+        x-parser-schema-id: ShipmentConfirmedEvent
+      messageId: ShipmentConfirmed
   schemas:
     KafkaHeaders:
       type: object
@@ -10528,5 +10909,206 @@ components:
               x-parser-schema-id: <anonymous-schema-205>
           x-parser-schema-id: <anonymous-schema-201>
       x-parser-schema-id: ReceiptClosedEvent
+    CloudEventEnvelope:
+      type: object
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - dataschema
+        - data
+      properties:
+        specversion:
+          type: string
+          const: '1.0'
+          x-parser-schema-id: <anonymous-schema-207>
+        id:
+          type: string
+          description: >-
+            UUID minted once per occurrence and persisted with the outbox row;
+            consumers dedupe on it.
+          x-parser-schema-id: <anonymous-schema-208>
+        source:
+          type: string
+          const: /warehouse/outbound-shipping
+          x-parser-schema-id: <anonymous-schema-209>
+        type:
+          type: string
+          description: com.warehouse.wms.outbound-shipping.<entity>.<EventName>.
+          x-parser-schema-id: <anonymous-schema-210>
+        subject:
+          type: string
+          description: Aggregate root id; also the Kafka partition key.
+          x-parser-schema-id: <anonymous-schema-211>
+        time:
+          type: string
+          format: date-time
+          x-parser-schema-id: <anonymous-schema-212>
+        datacontenttype:
+          type: string
+          const: application/json
+          x-parser-schema-id: <anonymous-schema-213>
+        dataschema:
+          type: string
+          description: urn:warehouse:outbound-shipping:<events|analytics>:<EventName>:v1.
+          x-parser-schema-id: <anonymous-schema-214>
+      x-parser-schema-id: CloudEventEnvelope
+    ShipmentConfirmedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-207>
+            id:
+              type: string
+              description: >-
+                UUID minted once per occurrence and persisted with the outbox
+                row; consumers dedupe on it.
+              x-parser-schema-id: <anonymous-schema-208>
+            source:
+              type: string
+              const: /warehouse/outbound-shipping
+              x-parser-schema-id: <anonymous-schema-209>
+            type:
+              type: string
+              description: com.warehouse.wms.outbound-shipping.<entity>.<EventName>.
+              x-parser-schema-id: <anonymous-schema-210>
+            subject:
+              type: string
+              description: Aggregate root id; also the Kafka partition key.
+              x-parser-schema-id: <anonymous-schema-211>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-212>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-213>
+            dataschema:
+              type: string
+              description: >-
+                urn:warehouse:outbound-shipping:<events|analytics>:<EventName>:v1.
+              x-parser-schema-id: <anonymous-schema-214>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            type:
+              type: string
+              const: >-
+                com.warehouse.wms.outbound-shipping.outboundload.ShipmentConfirmed
+              x-parser-schema-id: <anonymous-schema-216>
+            subject:
+              type: string
+              description: The load id.
+              x-parser-schema-id: <anonymous-schema-217>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-218>
+            datacontenttype:
+              type: string
+              enum:
+                - application/json
+              x-parser-schema-id: <anonymous-schema-219>
+            dataschema:
+              type: string
+              const: urn:warehouse:outbound-shipping:events:ShipmentConfirmed:v1
+              x-parser-schema-id: <anonymous-schema-220>
+            data:
+              type: object
+              description: |
+                Pinned per outbound-shipping's merged contract; every field
+                below is required there. `orders[].package_count` is NOT in
+                the contract yet (additive, pending) — listed here as the
+                optional field this consumer already tolerates.
+              required:
+                - load_id
+                - site_id
+                - cpt_id
+                - carrier
+                - trailer_id
+                - seal_number
+                - departed_at
+                - orders
+                - version
+              properties:
+                load_id:
+                  type: string
+                  description: >-
+                    The shipment reference of the idempotency key; falls back to
+                    the Kafka key when empty — an event naming neither is
+                    dead-lettered.
+                  x-parser-schema-id: <anonymous-schema-222>
+                site_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-223>
+                cpt_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-224>
+                carrier:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-225>
+                trailer_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-226>
+                seal_number:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-227>
+                departed_at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-228>
+                orders:
+                  type: array
+                  description: >-
+                    Distinct source_order_id (order-management OrderId) of the
+                    shipped packages; a package manifested without one is
+                    excluded by the producer.
+                  items:
+                    type: object
+                    required:
+                      - order_id
+                    properties:
+                      order_id:
+                        type: string
+                        description: >-
+                          The join key on NetworkOrder.localOrderId; no match
+                          means a customer-demand order — skipped and logged.
+                        x-parser-schema-id: <anonymous-schema-231>
+                      package_count:
+                        type: integer
+                        minimum: 1
+                        description: >-
+                          ADDITIVE, NOT in the merged contract yet. The real
+                          per-order package count; until it lands the network is
+                          told 1 (ADR 0026, gap recorded in ADR 0014's
+                          addendum).
+                        x-parser-schema-id: <anonymous-schema-232>
+                    x-parser-schema-id: <anonymous-schema-230>
+                  x-parser-schema-id: <anonymous-schema-229>
+                version:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-233>
+              x-parser-schema-id: <anonymous-schema-221>
+          x-parser-schema-id: <anonymous-schema-215>
+      x-parser-schema-id: ShipmentConfirmedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3
