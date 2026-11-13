@@ -609,19 +609,29 @@ components:
           description: The escaped request path.
     Tier:
       type: string
-      description: Service tier (promise.Tier).
+      description: 'Service tier (promise.Tier). CONSOLIDATED is the opt-in tier of a customer-chosen delivery day (ADR 0024): a quote returns it only when its request lists it or names consolidatedDeliveryDay, so a caller that never asks never sees it.'
       enum:
         - SAME_DAY
         - NEXT_DAY
         - TWO_DAY
         - STANDARD
+        - CONSOLIDATED
     Basis:
       type: string
-      description: 'Promise basis: SCHEDULED from the timetable, MEASURED when a leg''s measured transit pushed the arrival later (ADR 0014), NOMINAL from lane times (STANDARD only).'
+      description: 'Promise basis: SCHEDULED from the timetable, MEASURED when a leg''s measured transit pushed the arrival later (ADR 0014), NOMINAL from lane times (STANDARD and CONSOLIDATED only).'
       enum:
         - SCHEDULED
         - MEASURED
         - NOMINAL
+    Confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+      multipleOf: 0.001
+      description: 'The calibrated probability, rounded to three decimals, that a quote is kept on time (ADR 0020): the share of the judged promises of its segment (tier, basis, node grade) whose lateness was within the buffer the quote carries. It is present only when the segment has at least minCalibrationObservations judgements in the window; absent means UNKNOWN, never zero, and consumers must read absence that way.'
+    ConsolidationEligible:
+      type: boolean
+      description: 'Present only for the tier CONSOLIDATED (ADR 0024): true when the chosen delivery day leaves the network at least one local day after the fastest feasible window to merge the order with others, false when the day is that window itself. It is computed from this service''s own candidate set and never asserts that another order exists. Omitted for every other tier, and never false by default.'
     CapacityBand:
       type: string
       description: 'The capacity pressure on the PromiseBook that the offer''s chosen window would charge, read when the offer was quoted (ADR 0023): utilisation u = (provisional + confirmed holds) / capacity share. AMPLE: u < 0.60. TIGHT: 0.60 <= u < 0.85. SCARCE: u >= 0.85. The thresholds are constants of the service, not policy fields. A signal only: the network never computes a fee, and it reserves nothing (only POST /promises holds capacity).'
@@ -697,7 +707,7 @@ components:
           description: IANA time zone of the delivery station serving the destination. Always set on a new offer; omitted only for an offer stored before it was carried (ADR 0011), in which case read the window in UTC.
     WitnessPath:
       type: object
-      description: 'The node, pickup departure, departure legs and delivery wave that prove feasibility. A NOMINAL path (STANDARD only) carries no departure or wave ids: pickupDepartureId and deliveryWaveId are omitted and legs is empty (E8).'
+      description: 'The node, pickup departure, departure legs and delivery wave that prove feasibility. A NOMINAL path (STANDARD and CONSOLIDATED only) carries no departure or wave ids: pickupDepartureId and deliveryWaveId are omitted and legs is empty (E8).'
       required:
         - nodeId
         - legs
@@ -735,9 +745,15 @@ components:
             $ref: '#/components/schemas/GroupLine'
         tiers:
           type: array
-          description: Tiers to quote; all four when omitted.
+          description: Tiers to quote; the four classic tiers (SAME_DAY, NEXT_DAY, TWO_DAY, STANDARD) when omitted. CONSOLIDATED is returned only when it is listed here or consolidatedDeliveryDay is present (ADR 0024).
           items:
             $ref: '#/components/schemas/Tier'
+        consolidatedDeliveryDay:
+          type: string
+          format: date
+          pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+          example: '2026-10-26'
+          description: 'The calendar date the shopper wants the order delivered on, as a local date of the destination delivery station''s time zone (ADR 0024). Naming it adds the CONSOLIDATED tier to the quote. A day earlier than the fastest feasible window is moved up to that window (the offer then has consolidationEligible false); with tiers listing CONSOLIDATED and no day, the day is two local days after the fastest window. A day more than 14 local days from now, or without a wave, has no CONSOLIDATED offer: the tier is reported in unavailable.'
     TierUnavailable:
       type: object
       required:
@@ -769,7 +785,7 @@ components:
             $ref: '#/components/schemas/TierUnavailable'
     DeliveryOffer:
       type: object
-      description: 'One delivery offer. capacityBand (ADR 0023) is optional: it is omitted when the book of the offer''s window has no finite capacity, and on an offer read back with GET /delivery-quotes/{quoteId}, because the band is a quote-time reading that is not stored. It changes no offer, window or order.'
+      description: 'One delivery offer. capacityBand (ADR 0023) is optional: it is omitted when the book of the offer''s window has no finite capacity, and on an offer read back with GET /delivery-quotes/{quoteId}, because the band is a quote-time reading that is not stored. It changes no offer, window or order. consolidationEligible (ADR 0024) is present only for the tier CONSOLIDATED.'
       required:
         - offerId
         - state
@@ -822,11 +838,15 @@ components:
           description: Quote-relative shipment group number (1 for a single-node cart).
         basis:
           $ref: '#/components/schemas/Basis'
+        confidence:
+          $ref: '#/components/schemas/Confidence'
         policyVersion:
           type: string
           description: The promise policy version the quote used (G8).
         capacityBand:
           $ref: '#/components/schemas/CapacityBand'
+        consolidationEligible:
+          $ref: '#/components/schemas/ConsolidationEligible'
     EstimateItem:
       type: object
       required:
@@ -858,9 +878,14 @@ components:
           example: '787'
         tiers:
           type: array
-          description: Tiers to estimate; all four when omitted.
+          description: 'Tiers to estimate; the four classic tiers when omitted. CONSOLIDATED is refused with 422 validation-failed: it is a persistent-offer tier, quoted on POST /delivery-quotes (ADR 0024).'
           items:
-            $ref: '#/components/schemas/Tier'
+            type: string
+            enum:
+              - SAME_DAY
+              - NEXT_DAY
+              - TWO_DAY
+              - STANDARD
         items:
           type: array
           minItems: 1
@@ -901,6 +926,8 @@ components:
           $ref: '#/components/schemas/EstimateWindow'
         basis:
           $ref: '#/components/schemas/Basis'
+        confidence:
+          $ref: '#/components/schemas/Confidence'
         orderByAt:
           type: string
           format: date-time
@@ -1006,8 +1033,12 @@ components:
           description: IANA time zone of the delivery station serving the destination, the local calendar deliverByEarliest and deliverByLatest belong to. Always set on a new promise; omitted only for a promise stored before it was carried (ADR 0011), in which case read the window in UTC.
         basis:
           $ref: '#/components/schemas/Basis'
+        confidence:
+          $ref: '#/components/schemas/Confidence'
         policyVersion:
           type: string
+        consolidationEligible:
+          $ref: '#/components/schemas/ConsolidationEligible'
     Revision:
       type: object
       required:
@@ -1245,6 +1276,26 @@ components:
           minimum: 5
           maximum: 1000
           description: Observations a lane needs inside the window before its measured transit can push a promise later than the timetable (ADR 0014). Default 20 when omitted or 0.
+        targetOnTimeProbabilityPercent:
+          type: integer
+          minimum: 50
+          maximum: 99
+          description: Share of the promises of a calibration segment the buffer aims to deliver on time; ONE value for every tier (ADR 0020). Default 95 when omitted or 0.
+        minCalibrationObservations:
+          type: integer
+          minimum: 10
+          maximum: 10000
+          description: Judgements a segment (tier, basis, node grade) needs inside the window before its buffer applies and its quotes carry a confidence (ADR 0020). Default 50 when omitted or 0.
+        calibrationWindowDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: Days of judgements a calibration segment keeps (ADR 0020). Default 28 when omitted or 0.
+        maxCalibrationBufferMinutes:
+          type: integer
+          minimum: 0
+          maximum: 2880
+          description: Cap of a segment's buffer in minutes; 0 switches the buffer off and keeps the confidence (ADR 0020). Default 720 only when the field is omitted.
         orderDeadlines:
           type: array
           maxItems: 200
@@ -1278,6 +1329,10 @@ components:
         - transitWindowDays
         - transitServiceLevelPercent
         - minTransitObservations
+        - targetOnTimeProbabilityPercent
+        - minCalibrationObservations
+        - calibrationWindowDays
+        - maxCalibrationBufferMinutes
         - orderDeadlines
         - publishedAt
       properties:
@@ -1311,6 +1366,26 @@ components:
           minimum: 5
           maximum: 1000
           description: Observations a lane needs inside the window before its measured transit can push a promise later than the timetable (ADR 0014).
+        targetOnTimeProbabilityPercent:
+          type: integer
+          minimum: 50
+          maximum: 99
+          description: Share of the promises of a calibration segment the buffer aims to deliver on time; ONE value for every tier (ADR 0020).
+        minCalibrationObservations:
+          type: integer
+          minimum: 10
+          maximum: 10000
+          description: Judgements a segment (tier, basis, node grade) needs inside the window before its buffer applies and its quotes carry a confidence (ADR 0020).
+        calibrationWindowDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: Days of judgements a calibration segment keeps (ADR 0020).
+        maxCalibrationBufferMinutes:
+          type: integer
+          minimum: 0
+          maximum: 2880
+          description: Cap of a segment's buffer in minutes; 0 switches the buffer off and keeps the confidence (ADR 0020).
         orderDeadlines:
           type: array
           items:
