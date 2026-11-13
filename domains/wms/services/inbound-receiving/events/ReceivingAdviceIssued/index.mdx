@@ -1,0 +1,59 @@
+---
+id: ReceivingAdviceIssued
+version: 1.0.0
+name: Receiving advice issued
+summary: >-
+  What was received and accepted per line, with W13/CBV-coded discrepancies, for
+  the supplier or the 3PL depositor (ADR 0023).
+badges:
+  - content: receipt
+    textColor: blue
+    backgroundColor: blue
+schemaPath: schema.json
+owners:
+  - claudioed
+---
+## Description
+`type` = `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceIssued`;
+subject = the receipt id, key = the ASN number. The domain fact only: this
+service renders no EANCOM, X12 or transport. Raised exactly once per
+receipt, in the same transaction as `ReceiptClosed` (right after it), for a
+receipt closed after this event existed; a receipt closed earlier gets no
+advice. `despatch_advice_ref` is the ASN number (the reference to the
+despatch advice), `supplier_ref` the supplier as the ASN knows it and
+`owner_ref` the 3PL depositor (omitted for fleet-owned stock). `last_carton_at`
+is when the last unit was received (the receipt's opening when nothing
+was); `within_sla` is `issued_at - last_carton_at <= sla_seconds`
+(`RECEIVING_ADVICE_SLA`, default 24 h). Per line the three quantities are
+exclusive: `accepted_qty` is the Good units not held, `rejected_qty` the
+Damaged ones and `held_qty` the Good units declared held; `received_qty`
+is their sum. `discrepancies` carry the line kinds `Short`, `Over`, `Damaged`,
+`IncorrectProduct` and `Hold` with `w13_code` and `cbv_disposition`.
+The payload is bounded because a message the broker refuses blocks the
+outbox (ADR 0007): at most 1000 lines (lines with exceptions first, then
+in line order; `lines_total` is the real count and `lines_truncated` is
+true when some are left out), at most 1000 SSCCs per line (`sscc_count` is
+the real count, `ssccs_truncated` is true when listed ones are fewer) and
+at most 200 carton findings (`carton_findings_total`). A consumer that
+needs the full list reads the receipt over REST.
+
+> **No consumer by design:** none yet: partner-connectivity renders it as EANCOM RECADV / X12 861 / 944 later (D-3 not taken)
+
+## Envelope
+| | |
+|---|---|
+| CloudEvents `type` | `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceIssued` |
+| CloudEvents `source` | `/warehouse/inbound-receiving` |
+| CloudEvents `subject` | the id of the aggregate instance the event is about (example: `rcpt-223e4567-e89b-12d3-a456-426614174000`) |
+| CloudEvents `dataschema` | `urn:warehouse:inbound-receiving:events:ReceivingAdviceIssued:v1` |
+| Content type | `application/cloudevents+json` |
+| Kafka topic | `warehouse.inbound-receiving.events` |
+| Entity / aggregate | `receipt` |
+
+
+## Architecture
+<NodeGraph />
+
+
+## Schema
+<SchemaViewer file="schema.json" title="Message Schema" maxHeight="500" />
