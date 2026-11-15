@@ -220,6 +220,15 @@ export const CONTEXTS = {
       "The authoritative registry of the network's physical shape: every node (vendor fulfillment centres, cross-docks, returns centres, and the network's own sortation centres, delivery stations and air hubs), its declared operational profile, the directed lanes between nodes, the regions, and which delivery station serves which postal area.",
     topics: ["retailnetwork.node-topology.events"],
   },
+  'customer-returns': {
+    subdomain: 'retail-network',
+    ceSegment: 'commerce',
+    classification: 'Supporting',
+    tier: 'Retail Network, commerce tier',
+    purpose:
+      "The shopper-facing return authorization of the retail network: a return is authorized with its disposition decided at authorization (KEEP returnless below a caller-declared threshold, NEAREST_RETURNS_CENTER, ORIGIN_NODE), the reverse label comes from shipping-and-tracking, returns-processing receives the advices and grades the outcome, and offer-availability restocks the sellable units. Fees are recorded as facts, never money; doorstep pickup is dormant until last-mile carries it.",
+    topics: ["retailnetwork.customer-returns.events"],
+  },
   'offer-availability': {
     subdomain: 'retail-network',
     ceSegment: 'commerce',

@@ -1,0 +1,995 @@
+asyncapi: 3.0.0
+info:
+  title: customer-returns Domain Events
+  version: 1.0.0
+  contact:
+    name: customer-returns maintainers
+    url: https://github.com/IQVO/customer-returns
+    email: customer-returns@iqvo.example.com
+  license:
+    name: UNLICENSED
+  tags:
+  - name: customer-returns
+    description: The customer-returns bounded context (retail network, commerce tier).
+  - name: returnauthorization
+    description: Events raised by the ReturnAuthorization aggregate.
+  description: |
+    Event catalog for the **customer-returns** bounded context of the retail network (commerce tier): the shopper-facing returns front door of the network.
+    The REST contract is `apis/openapi.yaml`.
+
+    **Published.** Four types, all on `retailnetwork.customer-returns.events`: `ReturnAuthorized` (raised for every disposition, KEEP included), `ReturnLabelIssued`
+    (once per linked reverse label), `ReturnCompleted` (the graded outcome, the fact offer-availability consumes to raise availability) and `ReturnCancelled`
+    (the shopper's cancellation or the lazy expiry). Every event leaves through a **transactional outbox**: the aggregate row and the already-encoded events are
+    written in ONE database transaction and an always-on relay drains them to Kafka (at-least-once; the CloudEvents `id` is minted with the outbox row, so a
+    retry republishes the same `id`).
+
+    **Consumed.** Ten types from four producers (ADR 0003): customer-ordering `CustomerOrderPlaced` and the terminal `ShopperNoticeDecided` families (local
+    OrderGroupView; only a SHIPPED or DELIVERED group is authorizable); node-topology `NodeRegistered`, `NodeActivated`, `NodeSuspended`, `NodeRetired` and
+    `ServiceAreaAssigned` (local ReturnsNetworkView, the node and prefix halves); order-sourcing `FulfillmentReleasedToNode` (the per-item owners) and
+    `FulfillmentLocked` (the fulfilling node, the origin half); vendor-connectivity `VendorReturnOutcomeSubmitted` (the returns centre's graded outcome). Each is
+    deduplicated on the CloudEvents `id` in the `processed_events` inbox table and dispatched on the full `type`; a message that is not a valid CloudEvents 1.0
+    envelope is skipped with a WARN and a type this context does not act on is ignored (both are committed past). `data` is decoded tolerantly (unknown fields are
+    ignored). Offsets are committed only after the handler succeeded; a transient failure retries the same message with capped exponential backoff, and a payload
+    that can never be applied or an exhausted retry budget is dead-lettered to `<topic>.dlq` with the headers `x-dlq-source-topic`, `x-dlq-source-partition`,
+    `x-dlq-source-offset`, `x-dlq-error` and `x-dlq-failed-at`. The consumed `data` below lists only the fields this context relies on. The ONE synchronous call
+    is the shipping context's reverse-label route (ADR 0005); no other neighbour is called.
+
+    **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka header `content-type` set to `application/cloudevents+json; charset=UTF-8`.
+    `specversion`, `id`, `source` (`/retailnetwork/customer-returns`), `type`, `subject` (the aggregate root id, the `authorizationId`), `time`,
+    `datacontenttype` (`application/json`) and `dataschema` (`urn:retailnetwork:customer-returns:events:<EventName>:v<version>`) are all required. Kafka key =
+    the subject, so one authorization's events stay ordered on one partition. Type = `com.retailnetwork.commerce.customer-returns.returnauthorization.<EventName>`.
+
+    **Conventions.** `data` is camelCase; timestamps are RFC 3339 UTC; quantities are ALWAYS eaches; optional fields are omitted when absent (never null);
+    arrays are always present. No published event carries a unit price, an address, a person's name, a phone number or free text (the PII rule); `reason` is an
+    enum. Lines beyond the authorization are never published on `ReturnCompleted` (they stay on the local outcome facts, flagged unexpected).
+servers:
+  production:
+    host: '{brokers}'
+    protocol: kafka
+    description: Retail-network Kafka broker (host supplied by the deployment environment via KAFKA_BROKERS).
+    variables:
+      brokers:
+        default: kafka.retail-network.internal:9092
+defaultContentType: application/cloudevents+json
+channels:
+  customerReturnsEvents:
+    address: retailnetwork.customer-returns.events
+    title: customer-returns integration topic
+    description: This service's integration topic, written by the outbox relay; key = subject. Carries the four ReturnAuthorization events other contexts
+      consume (vendor-connectivity's return advices, offer-availability's restock). Every message carries the CloudEvents content-type header. Dispatch on the
+      full `type`, ignore unknown types, dedupe on `id`.
+    messages:
+      ReturnAuthorized:
+        $ref: '#/components/messages/ReturnAuthorized'
+      ReturnLabelIssued:
+        $ref: '#/components/messages/ReturnLabelIssued'
+      ReturnCompleted:
+        $ref: '#/components/messages/ReturnCompleted'
+      ReturnCancelled:
+        $ref: '#/components/messages/ReturnCancelled'
+  customerOrderingEvents:
+    address: retailnetwork.customer-ordering.events
+    title: customer-ordering integration topic
+    description: The customer-ordering integration topic, consumed under the mandatory consumer group `ORDER_CONSUMER_GROUP`.
+    messages:
+      CustomerOrderPlaced:
+        $ref: '#/components/messages/CustomerOrderPlaced'
+      ShopperNoticeDecided:
+        $ref: '#/components/messages/ShopperNoticeDecided'
+  nodeTopologyEvents:
+    address: retailnetwork.node-topology.events
+    title: node-topology integration topic
+    description: The node-topology integration topic, consumed under the mandatory consumer group `TOPOLOGY_CONSUMER_GROUP`.
+    messages:
+      NodeRegistered:
+        $ref: '#/components/messages/NodeRegistered'
+      NodeActivated:
+        $ref: '#/components/messages/NodeActivated'
+      NodeSuspended:
+        $ref: '#/components/messages/NodeSuspended'
+      NodeRetired:
+        $ref: '#/components/messages/NodeRetired'
+      ServiceAreaAssigned:
+        $ref: '#/components/messages/ServiceAreaAssigned'
+  orderSourcingEvents:
+    address: retailnetwork.order-sourcing.events
+    title: order-sourcing integration topic
+    description: The order-sourcing integration topic, consumed under the mandatory consumer group `SOURCING_CONSUMER_GROUP`.
+    messages:
+      FulfillmentReleasedToNode:
+        $ref: '#/components/messages/FulfillmentReleasedToNode'
+      FulfillmentLocked:
+        $ref: '#/components/messages/FulfillmentLocked'
+  vendorConnectivityEvents:
+    address: retailnetwork.vendor-connectivity.events
+    title: vendor-connectivity integration topic
+    description: The vendor-connectivity integration topic, consumed under the mandatory consumer group `VENDOR_CONSUMER_GROUP`.
+    messages:
+      VendorReturnOutcomeSubmitted:
+        $ref: '#/components/messages/VendorReturnOutcomeSubmitted'
+operations:
+  publishCustomerReturnsEvents:
+    action: send
+    title: Publish customer-returns integration events
+    summary: Publish the four ReturnAuthorization events through the transactional outbox.
+    description: The service sends `ReturnAuthorized`, `ReturnLabelIssued`, `ReturnCompleted` and `ReturnCancelled` to `retailnetwork.customer-returns.events`.
+      Consumers route on the full `type` and dedupe on the CloudEvents `id`.
+    tags:
+    - name: returnauthorization
+    channel:
+      $ref: '#/channels/customerReturnsEvents'
+    messages:
+    - $ref: '#/channels/customerReturnsEvents/messages/ReturnAuthorized'
+    - $ref: '#/channels/customerReturnsEvents/messages/ReturnLabelIssued'
+    - $ref: '#/channels/customerReturnsEvents/messages/ReturnCompleted'
+    - $ref: '#/channels/customerReturnsEvents/messages/ReturnCancelled'
+  receiveCustomerOrderingEvents:
+    action: receive
+    title: Receive customer-ordering events
+    summary: Receive the order facts of the OrderGroupView.
+    description: 'Consumes `CustomerOrderPlaced` (the placed groups, their destination postal prefix and lines) and the terminal `ShopperNoticeDecided` families
+      (GROUP_SHIPPED, GROUP_DELIVERED make a group authorizable; GROUP_LOST, GROUP_RETURNED record the fact) into the local OrderGroupView (Conformist).'
+    tags:
+    - name: customer-returns
+    channel:
+      $ref: '#/channels/customerOrderingEvents'
+    messages:
+    - $ref: '#/channels/customerOrderingEvents/messages/CustomerOrderPlaced'
+    - $ref: '#/channels/customerOrderingEvents/messages/ShopperNoticeDecided'
+  receiveNodeTopologyEvents:
+    action: receive
+    title: Receive node-topology events
+    summary: Receive the node and service-area facts of the ReturnsNetworkView.
+    description: Consumes the node lifecycle of returns centres (only ACTIVE RETURNS_CENTERs are ever returned to) and `ServiceAreaAssigned` (which region a
+      postal prefix belongs to; the highest assignmentVersion wins) into the local ReturnsNetworkView.
+    tags:
+    - name: customer-returns
+    channel:
+      $ref: '#/channels/nodeTopologyEvents'
+    messages:
+    - $ref: '#/channels/nodeTopologyEvents/messages/NodeRegistered'
+    - $ref: '#/channels/nodeTopologyEvents/messages/NodeActivated'
+    - $ref: '#/channels/nodeTopologyEvents/messages/NodeSuspended'
+    - $ref: '#/channels/nodeTopologyEvents/messages/NodeRetired'
+    - $ref: '#/channels/nodeTopologyEvents/messages/ServiceAreaAssigned'
+  receiveOrderSourcingEvents:
+    action: receive
+    title: Receive order-sourcing events
+    summary: Receive the origin facts of the ReturnsNetworkView.
+    description: Consumes `FulfillmentReleasedToNode` (whose stock each catalog item took, the ownerRefs) and `FulfillmentLocked` (the fulfilling node,
+      authoritative) into the ReturnsNetworkView's origin half.
+    tags:
+    - name: customer-returns
+    channel:
+      $ref: '#/channels/orderSourcingEvents'
+    messages:
+    - $ref: '#/channels/orderSourcingEvents/messages/FulfillmentReleasedToNode'
+    - $ref: '#/channels/orderSourcingEvents/messages/FulfillmentLocked'
+  receiveVendorConnectivityEvents:
+    action: receive
+    title: Receive vendor-connectivity events
+    summary: Receive the returns centres' graded outcomes.
+    description: Consumes `VendorReturnOutcomeSubmitted` and completes the first fitting open authorization (RECEIVED). Lines beyond the authorization are
+      recorded on the local outcome facts as unexpected and never completed on; an outcome for an unknown or closed authorization is recorded and
+      acknowledged, never a consumer error.
+    tags:
+    - name: customer-returns
+    channel:
+      $ref: '#/channels/vendorConnectivityEvents'
+    messages:
+    - $ref: '#/channels/vendorConnectivityEvents/messages/VendorReturnOutcomeSubmitted'
+components:
+  messages:
+    ReturnAuthorized:
+      name: ReturnAuthorized
+      title: A return was authorized
+      summary: A return was authorized, KEEP included.
+      description: '`type` = `com.retailnetwork.commerce.customer-returns.returnauthorization.ReturnAuthorized`; subject and key = the `authorizationId`; raised
+        by POST /return-authorizations for every disposition. `destinationNodeId` is omitted for KEEP (no destination); the pickup window is present only for
+        PICKUP; no line carries a unit price (the price is the storefront''s fact and never leaves the context). vendor-connectivity consumes it into its return
+        advices.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: returnauthorization
+      payload:
+        $ref: '#/components/schemas/ReturnAuthorizedEvent'
+      examples:
+      - name: returnAuthorized
+        summary: A defective return to the nearest returns centre.
+        payload:
+          specversion: '1.0'
+          id: 3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1d01
+          source: /retailnetwork/customer-returns
+          type: com.retailnetwork.commerce.customer-returns.returnauthorization.ReturnAuthorized
+          subject: ret-0f3a91e2
+          time: '2026-11-14T10:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:customer-returns:events:ReturnAuthorized:v1
+          data:
+            authorizationId: ret-0f3a91e2
+            orderId: ord-51a0c9
+            groupNo: 2
+            reason: DEFECTIVE
+            disposition: NEAREST_RETURNS_CENTER
+            method: DROP_OFF
+            lines:
+            - lineNo: 1
+              catalogItemId: sku-100
+              quantity: 2
+              ownerRef: sel-42
+            - lineNo: 2
+              catalogItemId: sku-200
+              quantity: 1
+            destinationNodeId: node-rc-1
+            originNodeId: node-fc-1
+            expiresAt: '2026-12-14T10:00:00Z'
+            authorizedAt: '2026-11-14T10:00:00Z'
+    ReturnLabelIssued:
+      name: ReturnLabelIssued
+      title: A reverse label was issued and linked
+      summary: The shipping context issued the shopper's reverse label; it is linked here.
+      description: '`type` = `com.retailnetwork.commerce.customer-returns.returnauthorization.ReturnLabelIssued`; subject and key = the `authorizationId`;
+        raised once per package by POST /return-authorizations/{id}/labels after the shipping context answered. vendor-connectivity consumes it (the advice
+        carries the tracking numbers).'
+      contentType: application/cloudevents+json
+      tags:
+      - name: returnauthorization
+      payload:
+        $ref: '#/components/schemas/ReturnLabelIssuedEvent'
+      examples:
+      - name: returnLabelIssued
+        summary: The first package's reverse label.
+        payload:
+          specversion: '1.0'
+          id: 3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1d02
+          source: /retailnetwork/customer-returns
+          type: com.retailnetwork.commerce.customer-returns.returnauthorization.ReturnLabelIssued
+          subject: ret-0f3a91e2
+          time: '2026-11-14T11:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:customer-returns:events:ReturnLabelIssued:v2
+          data:
+            authorizationId: ret-0f3a91e2
+            trackingNumber: trk-rev-9
+            destinationNodeId: node-rc-1
+            issuedAt: '2026-11-14T11:00:00Z'
+    ReturnCompleted:
+      name: ReturnCompleted
+      title: A return was received and graded
+      summary: The restock fact of the network.
+      description: '`type` = `com.retailnetwork.commerce.customer-returns.returnauthorization.ReturnCompleted`; subject and key = the `authorizationId`;
+        raised by the first graded outcome that fits an open authorization. Lines beyond the authorization are NEVER published (they stay on the local outcome
+        facts, flagged unexpected). offer-availability consumes this to raise the owner listings'' availability at the node by `qtyRestockable`; unsellable
+        units never touch a listing.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: returnauthorization
+      payload:
+        $ref: '#/components/schemas/ReturnCompletedEvent'
+      examples:
+      - name: returnCompleted
+        summary: One line restockable, one unsellable.
+        payload:
+          specversion: '1.0'
+          id: 3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1d03
+          source: /retailnetwork/customer-returns
+          type: com.retailnetwork.commerce.customer-returns.returnauthorization.ReturnCompleted
+          subject: ret-0f3a91e2
+          time: '2026-11-20T09:30:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:customer-returns:events:ReturnCompleted:v3
+          data:
+            authorizationId: ret-0f3a91e2
+            outcome: RECEIVED
+            nodeId: node-rc-1
+            lines:
+            - catalogItemId: sku-100
+              ownerRef: sel-42
+              qtyRestockable: 2
+              qtyUnsellable: 0
+            - catalogItemId: sku-200
+              ownerRef: sel-42
+              qtyRestockable: 0
+              qtyUnsellable: 1
+            receivedAt: '2026-11-20T09:30:00Z'
+    ReturnCancelled:
+      name: ReturnCancelled
+      title: A return was cancelled
+      summary: The shopper cancelled, or the authorization expired.
+      description: '`type` = `com.retailnetwork.commerce.customer-returns.returnauthorization.ReturnCancelled`; subject and key = the `authorizationId`;
+        raised by POST /return-authorizations/{id}/cancellations (reason SHOPPER_REQUESTED) and by the lazy expiry of an untouched authorization (reason
+        EXPIRED). vendor-connectivity leaves the advice poll when it sees it.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: returnauthorization
+      payload:
+        $ref: '#/components/schemas/ReturnCancelledEvent'
+      examples:
+      - name: returnCancelled
+        summary: The shopper changed their mind before shipping.
+        payload:
+          specversion: '1.0'
+          id: 3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1d04
+          source: /retailnetwork/customer-returns
+          type: com.retailnetwork.commerce.customer-returns.returnauthorization.ReturnCancelled
+          subject: ret-0f3a91e2
+          time: '2026-11-15T08:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:customer-returns:events:ReturnCancelled:v2
+          data:
+            authorizationId: ret-0f3a91e2
+            reason: SHOPPER_REQUESTED
+            cancelledAt: '2026-11-15T08:00:00Z'
+    CustomerOrderPlaced:
+      name: CustomerOrderPlaced
+      title: A customer order was placed
+      summary: The placed groups, their destination postal prefix and lines (published by customer-ordering).
+      description: '`type` = `com.retailnetwork.commerce.customer-ordering.customerorder.CustomerOrderPlaced`; consumed into the OrderGroupView with status
+        PROMISED per group (the terminal families arrive as notice facts). This context reads the group''s destination postal prefix (never the ship-to), the
+        witness node and the placed lines.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/CustomerOrderPlacedEvent'
+      examples:
+      - name: customerOrderPlaced
+        summary: One order, two groups.
+        payload:
+          specversion: '1.0'
+          id: 5a1e0c7d-2f4b-4e8a-8c11-9d3f2e6b4a10
+          source: /retailnetwork/customer-ordering
+          type: com.retailnetwork.commerce.customer-ordering.customerorder.CustomerOrderPlaced
+          subject: ord-51a0c9
+          time: '2026-11-01T10:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:customer-ordering:events:CustomerOrderPlaced:v1
+          data:
+            orderId: ord-51a0c9
+            placedAt: '2026-11-01T10:00:00Z'
+            groups:
+            - groupNo: 1
+              destinationPostalPrefix: '22'
+              witnessNodeId: node-fc-1
+              lines:
+              - lineNo: 1
+                catalogItemId: sku-100
+                quantity: 2
+    ShopperNoticeDecided:
+      name: ShopperNoticeDecided
+      title: A terminal shopper notice was decided
+      summary: The terminal group families (published by customer-ordering).
+      description: '`type` = `com.retailnetwork.commerce.customer-ordering.order.ShopperNoticeDecided`; consumed for the families GROUP_SHIPPED and
+        GROUP_DELIVERED (the group becomes authorizable) and GROUP_LOST, GROUP_RETURNED (the fact is recorded). Other families are ignored.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/ShopperNoticeDecidedEvent'
+      examples:
+      - name: shopperNoticeDecided
+        summary: Group 1 shipped.
+        payload:
+          specversion: '1.0'
+          id: 5a1e0c7d-2f4b-4e8a-8c11-9d3f2e6b4a11
+          source: /retailnetwork/customer-ordering
+          type: com.retailnetwork.commerce.customer-ordering.order.ShopperNoticeDecided
+          subject: ord-51a0c9
+          time: '2026-11-02T10:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:customer-ordering:events:ShopperNoticeDecided:v1
+          data:
+            orderId: ord-51a0c9
+            groupNo: 1
+            family: GROUP_SHIPPED
+            fact:
+              status: SHIPPED
+    NodeRegistered:
+      name: NodeRegistered
+      title: A node was registered
+      summary: A node entered the topology (published by node-topology).
+      description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeRegistered`; consumed into the ReturnsNetworkView with lifecycle PENDING. Only
+        RETURNS_CENTER nodes ever influence a disposition.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/NodeFactEvent'
+      examples:
+      - name: nodeRegistered
+        summary: A returns centre in region-east.
+        payload:
+          specversion: '1.0'
+          id: 8c2f1a4e-6b3d-4f9a-a5c8-7e1d2f3a4b12
+          source: /retailnetwork/node-topology
+          type: com.retailnetwork.logistics.node-topology.node.NodeRegistered
+          subject: node-rc-1
+          time: '2026-10-01T10:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:node-topology:events:NodeRegistered:v1
+          data:
+            nodeId: node-rc-1
+            nodeType: RETURNS_CENTER
+            regionId: region-east
+    NodeActivated:
+      name: NodeActivated
+      title: A node went ACTIVE
+      summary: A registered node became ACTIVE (published by node-topology).
+      description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeActivated`; an ACTIVE RETURNS_CENTER is a `decide` candidate for
+        NEAREST_RETURNS_CENTER.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/NodeFactEvent'
+      examples:
+      - name: nodeActivated
+        summary: The returns centre is live.
+        payload:
+          specversion: '1.0'
+          id: 8c2f1a4e-6b3d-4f9a-a5c8-7e1d2f3a4b13
+          source: /retailnetwork/node-topology
+          type: com.retailnetwork.logistics.node-topology.node.NodeActivated
+          subject: node-rc-1
+          time: '2026-10-02T10:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:node-topology:events:NodeActivated:v1
+          data:
+            nodeId: node-rc-1
+            nodeType: RETURNS_CENTER
+            regionId: region-east
+    NodeSuspended:
+      name: NodeSuspended
+      title: A node was suspended
+      summary: An ACTIVE node was suspended (published by node-topology).
+      description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeSuspended`; a suspended returns centre stops being a `decide` candidate at once
+        (an advice already issued stays in the vendor''s poll).'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/NodeFactEvent'
+      examples:
+      - name: nodeSuspended
+        summary: The returns centre paused.
+        payload:
+          specversion: '1.0'
+          id: 8c2f1a4e-6b3d-4f9a-a5c8-7e1d2f3a4b14
+          source: /retailnetwork/node-topology
+          type: com.retailnetwork.logistics.node-topology.node.NodeSuspended
+          subject: node-rc-1
+          time: '2026-10-03T10:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:node-topology:events:NodeSuspended:v1
+          data:
+            nodeId: node-rc-1
+            nodeType: RETURNS_CENTER
+            regionId: region-east
+    NodeRetired:
+      name: NodeRetired
+      title: A node was retired
+      summary: A node left the topology (published by node-topology).
+      description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeRetired`; a retired node is never a destination again.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/NodeFactEvent'
+      examples:
+      - name: nodeRetired
+        summary: The returns centre closed.
+        payload:
+          specversion: '1.0'
+          id: 8c2f1a4e-6b3d-4f9a-a5c8-7e1d2f3a4b15
+          source: /retailnetwork/node-topology
+          type: com.retailnetwork.logistics.node-topology.node.NodeRetired
+          subject: node-rc-1
+          time: '2026-10-04T10:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:node-topology:events:NodeRetired:v1
+          data:
+            nodeId: node-rc-1
+            nodeType: RETURNS_CENTER
+            regionId: region-east
+    ServiceAreaAssigned:
+      name: ServiceAreaAssigned
+      title: A postal prefix was assigned to a region
+      summary: The prefix half of the ReturnsNetworkView (published by node-topology).
+      description: '`type` = `com.retailnetwork.logistics.node-topology.servicearea.ServiceAreaAssigned`; the highest `assignmentVersion` wins. The prefix (never
+        a full address) is what this context keeps.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/ServiceAreaAssignedEvent'
+      examples:
+      - name: serviceAreaAssigned
+        summary: Prefix 22 belongs to region-east.
+        payload:
+          specversion: '1.0'
+          id: 8c2f1a4e-6b3d-4f9a-a5c8-7e1d2f3a4b16
+          source: /retailnetwork/node-topology
+          type: com.retailnetwork.logistics.node-topology.servicearea.ServiceAreaAssigned
+          subject: '22'
+          time: '2026-10-01T11:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:node-topology:events:ServiceAreaAssigned:v1
+          data:
+            postalPrefix: '22'
+            regionId: region-east
+            assignmentVersion: 1
+    FulfillmentReleasedToNode:
+      name: FulfillmentReleasedToNode
+      title: A group's fulfillment was released to a node
+      summary: The per-item owners of a group (published by order-sourcing).
+      description: '`type` = `com.retailnetwork.commerce.order-sourcing.assignment.FulfillmentReleasedToNode`; the release''s per-line `ownerRef` (whose stock
+        the line took) decorates the authorized lines and the completed fact.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/FulfillmentOriginEvent'
+      examples:
+      - name: fulfillmentReleased
+        summary: sku-100 took sel-42's stock.
+        payload:
+          specversion: '1.0'
+          id: 9d3a2b5f-7c4e-4a1b-b6d9-8f2e3a4b5c17
+          source: /retailnetwork/order-sourcing
+          type: com.retailnetwork.commerce.order-sourcing.assignment.FulfillmentReleasedToNode
+          subject: ord-51a0c9
+          time: '2026-11-01T12:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:order-sourcing:events:FulfillmentReleasedToNode:v1
+          data:
+            orderId: ord-51a0c9
+            groupNo: 2
+            nodeId: node-fc-1
+            lines:
+            - catalogItemId: sku-100
+              ownerRef: sel-42
+    FulfillmentLocked:
+      name: FulfillmentLocked
+      title: A group's fulfillment was locked
+      summary: The fulfilling node, authoritative (published by order-sourcing).
+      description: '`type` = `com.retailnetwork.commerce.order-sourcing.assignment.FulfillmentLocked`; the locked node is the ORIGIN_NODE fallback of `decide`.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/FulfillmentOriginEvent'
+      examples:
+      - name: fulfillmentLocked
+        summary: node-fc-1 fulfils group 2.
+        payload:
+          specversion: '1.0'
+          id: 9d3a2b5f-7c4e-4a1b-b6d9-8f2e3a4b5c18
+          source: /retailnetwork/order-sourcing
+          type: com.retailnetwork.commerce.order-sourcing.assignment.FulfillmentLocked
+          subject: ord-51a0c9
+          time: '2026-11-01T12:05:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:order-sourcing:events:FulfillmentLocked:v1
+          data:
+            orderId: ord-51a0c9
+            groupNo: 2
+            nodeId: node-fc-1
+    VendorReturnOutcomeSubmitted:
+      name: VendorReturnOutcomeSubmitted
+      title: A returns centre graded a return
+      summary: The graded outcome, through vendor-connectivity.
+      description: '`type` = `com.retailnetwork.partner.vendor-connectivity.returnoutcome.VendorReturnOutcomeSubmitted`; the first outcome that fits an open
+        authorization completes it (RECEIVED, `ReturnCompleted`). Lines beyond the authorization (an unexpected return) are recorded on the local outcome
+        facts, flagged, and never completed on. A duplicate `id` is swallowed by the inbox.'
+      contentType: application/cloudevents+json
+      tags:
+      - name: customer-returns
+      payload:
+        $ref: '#/components/schemas/VendorReturnOutcomeSubmittedEvent'
+      examples:
+      - name: vendorReturnOutcome
+        summary: Two restockable, one unsellable.
+        payload:
+          specversion: '1.0'
+          id: b4e5d6a7-8f9c-4b2d-a0e1-1a2b3c4d5e19
+          source: /retailnetwork/vendor-connectivity
+          type: com.retailnetwork.partner.vendor-connectivity.returnoutcome.VendorReturnOutcomeSubmitted
+          subject: ret-0f3a91e2
+          time: '2026-11-20T09:30:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:vendor-connectivity:events:VendorReturnOutcomeSubmitted:v1
+          data:
+            authorizationId: ret-0f3a91e2
+            nodeId: node-rc-1
+            receivedAt: '2026-11-20T09:30:00Z'
+            lines:
+            - catalogItemId: sku-100
+              qtyRestockable: 2
+              qtyUnsellable: 0
+  schemas:
+    CloudEventEnvelope:
+      type: object
+      required:
+      - specversion
+      - id
+      - source
+      - type
+      - subject
+      - time
+      - datacontenttype
+      - dataschema
+      - data
+      properties:
+        specversion:
+          type: string
+          const: '1.0'
+        id:
+          type: string
+          format: uuid
+        source:
+          type: string
+        type:
+          type: string
+        subject:
+          type: string
+          description: The aggregate root id (this context publishes the authorizationId; consumed events carry the producer's own root id).
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          const: application/json
+        dataschema:
+          type: string
+    Reason:
+      type: string
+      enum:
+      - DEFECTIVE
+      - NOT_AS_DESCRIBED
+      - WRONG_ITEM
+      - NOT_NEEDED
+      - OTHER
+      description: The enum reason code; free text is never accepted (the PII rule).
+    ReturnAuthorizedEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - authorizationId
+            - orderId
+            - groupNo
+            - reason
+            - disposition
+            - method
+            - lines
+            - expiresAt
+            - authorizedAt
+            properties:
+              authorizationId:
+                type: string
+              orderId:
+                type: string
+              groupNo:
+                type: integer
+              reason:
+                $ref: '#/components/schemas/Reason'
+              disposition:
+                type: string
+                enum:
+                - KEEP
+                - NEAREST_RETURNS_CENTER
+                - ORIGIN_NODE
+              method:
+                type: string
+                enum:
+                - DROP_OFF
+                - PICKUP
+              lines:
+                type: array
+                items:
+                  type: object
+                  required:
+                  - lineNo
+                  - catalogItemId
+                  - quantity
+                  properties:
+                    lineNo:
+                      type: integer
+                    catalogItemId:
+                      type: string
+                    quantity:
+                      type: integer
+                    ownerRef:
+                      type: string
+                      description: Optional; whose stock the line took, when the sourcing release named it.
+              destinationNodeId:
+                type: string
+                description: Optional; omitted for KEEP and when no node is known.
+              originNodeId:
+                type: string
+                description: Optional; the node that fulfilled the group, when known.
+              pickupWindowStart:
+                type: string
+                format: date-time
+                description: Optional; present only for PICKUP.
+              pickupWindowEnd:
+                type: string
+                format: date-time
+                description: Optional; present only for PICKUP.
+              expiresAt:
+                type: string
+                format: date-time
+              authorizedAt:
+                type: string
+                format: date-time
+    ReturnLabelIssuedEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - authorizationId
+            - trackingNumber
+            - destinationNodeId
+            - issuedAt
+            properties:
+              authorizationId:
+                type: string
+              trackingNumber:
+                type: string
+              destinationNodeId:
+                type: string
+              issuedAt:
+                type: string
+                format: date-time
+    ReturnCompletedEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - authorizationId
+            - outcome
+            - nodeId
+            - lines
+            - receivedAt
+            properties:
+              authorizationId:
+                type: string
+              outcome:
+                type: string
+                enum:
+                - RECEIVED
+              nodeId:
+                type: string
+                description: The returns centre that graded the return.
+              lines:
+                type: array
+                description: The authorized lines only; lines beyond the authorization are never published.
+                items:
+                  type: object
+                  required:
+                  - catalogItemId
+                  - qtyRestockable
+                  - qtyUnsellable
+                  properties:
+                    catalogItemId:
+                      type: string
+                    ownerRef:
+                      type: string
+                      description: Optional; whose stock comes back.
+                    qtyRestockable:
+                      type: integer
+                    qtyUnsellable:
+                      type: integer
+              receivedAt:
+                type: string
+                format: date-time
+    ReturnCancelledEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - authorizationId
+            - reason
+            - cancelledAt
+            properties:
+              authorizationId:
+                type: string
+              reason:
+                type: string
+                enum:
+                - SHOPPER_REQUESTED
+                - EXPIRED
+              cancelledAt:
+                type: string
+                format: date-time
+    CustomerOrderPlacedEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - orderId
+            - placedAt
+            - groups
+            properties:
+              orderId:
+                type: string
+              placedAt:
+                type: string
+                format: date-time
+              groups:
+                type: array
+                items:
+                  type: object
+                  required:
+                  - groupNo
+                  - destinationPostalPrefix
+                  properties:
+                    groupNo:
+                      type: integer
+                    destinationPostalPrefix:
+                      type: string
+                      description: The postal prefix (never a full address).
+                    witnessNodeId:
+                      type: string
+                    lines:
+                      type: array
+                      items:
+                        type: object
+                        required:
+                        - lineNo
+                        - catalogItemId
+                        - quantity
+                        properties:
+                          lineNo:
+                            type: integer
+                          catalogItemId:
+                            type: string
+                          quantity:
+                            type: integer
+    ShopperNoticeDecidedEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - orderId
+            - groupNo
+            - family
+            properties:
+              orderId:
+                type: string
+              groupNo:
+                type: integer
+              family:
+                type: string
+                enum:
+                - GROUP_SHIPPED
+                - GROUP_DELIVERED
+                - GROUP_LOST
+                - GROUP_RETURNED
+              fact:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    description: The asserted group status; wins over the family when present.
+    NodeFactEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - nodeId
+            - nodeType
+            properties:
+              nodeId:
+                type: string
+              nodeType:
+                type: string
+                description: Only RETURNS_CENTER nodes influence a disposition.
+              regionId:
+                type: string
+    ServiceAreaAssignedEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - postalPrefix
+            - regionId
+            properties:
+              postalPrefix:
+                type: string
+              regionId:
+                type: string
+              assignmentVersion:
+                type: integer
+                format: int64
+    FulfillmentOriginEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - orderId
+            - groupNo
+            properties:
+              orderId:
+                type: string
+              groupNo:
+                type: integer
+              nodeId:
+                type: string
+              lines:
+                type: array
+                description: Optional; the release's per-item owners.
+                items:
+                  type: object
+                  required:
+                  - catalogItemId
+                  properties:
+                    catalogItemId:
+                      type: string
+                    ownerRef:
+                      type: string
+    VendorReturnOutcomeSubmittedEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            required:
+            - authorizationId
+            - nodeId
+            - receivedAt
+            - lines
+            properties:
+              authorizationId:
+                type: string
+              nodeId:
+                type: string
+              receivedAt:
+                type: string
+                format: date-time
+              lines:
+                type: array
+                items:
+                  type: object
+                  required:
+                  - catalogItemId
+                  - qtyRestockable
+                  - qtyUnsellable
+                  properties:
+                    catalogItemId:
+                      type: string
+                    ownerRef:
+                      type: string
+                      description: Optional; this context fills it from the authorization when absent.
+                    qtyRestockable:
+                      type: integer
+                    qtyUnsellable:
+                      type: integer
