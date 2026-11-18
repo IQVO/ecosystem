@@ -326,10 +326,11 @@ components:
     CustomerOrderPlaced:
       name: CustomerOrderPlaced
       title: A customer order was placed
-      summary: The placed groups, their destination postal prefix and lines (published by customer-ordering).
+      summary: The order's destination postal prefix and its placed groups with their lines (published by customer-ordering).
       description: '`type` = `com.retailnetwork.commerce.customer-ordering.customerorder.CustomerOrderPlaced`; consumed into the OrderGroupView with status
-        PROMISED per group (the terminal families arrive as notice facts). This context reads the group''s destination postal prefix (never the ship-to), the
-        witness node and the placed lines.'
+        PROMISED per group (the terminal families arrive as notice facts). This context reads the order''s `destinationPostalPrefix` (never the ship-to;
+        customer-ordering publishes ONE prefix per order, at the top of `data`, and none on a group, so every group row of the order gets the order''s
+        prefix), and per group the witness node and the placed lines.'
       contentType: application/cloudevents+json
       tags:
       - name: customer-returns
@@ -349,10 +350,10 @@ components:
           dataschema: urn:retailnetwork:customer-ordering:events:CustomerOrderPlaced:v1
           data:
             orderId: ord-51a0c9
+            destinationPostalPrefix: '787'
             placedAt: '2026-11-01T10:00:00Z'
             groups:
             - groupNo: 1
-              destinationPostalPrefix: '22'
               witnessNodeId: node-fc-1
               lines:
               - lineNo: 1
@@ -391,13 +392,15 @@ components:
       name: NodeRegistered
       title: A node was registered
       summary: A node entered the topology (published by node-topology).
-      description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeRegistered`; consumed into the ReturnsNetworkView with lifecycle PENDING. Only
-        RETURNS_CENTER nodes ever influence a disposition.'
+      description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeRegistered`; the ONE node fact that carries the node''s descriptive
+        attributes. Consumed into the ReturnsNetworkView: a node never seen starts PENDING, a node already held keeps its lifecycle (a registration applied
+        again never demotes an ACTIVE, SUSPENDED or RETIRED node). The node type is stored as published; only RETURNS_CENTER nodes ever influence a
+        disposition.'
       contentType: application/cloudevents+json
       tags:
       - name: customer-returns
       payload:
-        $ref: '#/components/schemas/NodeFactEvent'
+        $ref: '#/components/schemas/NodeRegisteredEvent'
       examples:
       - name: nodeRegistered
         summary: A returns centre in region-east.
@@ -419,12 +422,13 @@ components:
       title: A node went ACTIVE
       summary: A registered node became ACTIVE (published by node-topology).
       description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeActivated`; an ACTIVE RETURNS_CENTER is a `decide` candidate for
-        NEAREST_RETURNS_CENTER.'
+        NEAREST_RETURNS_CENTER. node-topology publishes the node id and `activatedAt` on this fact and never repeats the node''s type or region: this context
+        reads the node id from `data` and the instant from the CloudEvents `time`, and moves the lifecycle only.'
       contentType: application/cloudevents+json
       tags:
       - name: customer-returns
       payload:
-        $ref: '#/components/schemas/NodeFactEvent'
+        $ref: '#/components/schemas/NodeStatusEvent'
       examples:
       - name: nodeActivated
         summary: The returns centre is live.
@@ -439,19 +443,19 @@ components:
           dataschema: urn:retailnetwork:node-topology:events:NodeActivated:v1
           data:
             nodeId: node-rc-1
-            nodeType: RETURNS_CENTER
-            regionId: region-east
+            activatedAt: '2026-10-02T10:00:00Z'
     NodeSuspended:
       name: NodeSuspended
       title: A node was suspended
       summary: An ACTIVE node was suspended (published by node-topology).
       description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeSuspended`; a suspended returns centre stops being a `decide` candidate at once
-        (an advice already issued stays in the vendor''s poll).'
+        (an advice already issued stays in the vendor''s poll). The fact carries the node id (plus `reason` and `suspendedAt`, neither read here); the
+        instant is the CloudEvents `time`.'
       contentType: application/cloudevents+json
       tags:
       - name: customer-returns
       payload:
-        $ref: '#/components/schemas/NodeFactEvent'
+        $ref: '#/components/schemas/NodeStatusEvent'
       examples:
       - name: nodeSuspended
         summary: The returns centre paused.
@@ -466,18 +470,18 @@ components:
           dataschema: urn:retailnetwork:node-topology:events:NodeSuspended:v1
           data:
             nodeId: node-rc-1
-            nodeType: RETURNS_CENTER
-            regionId: region-east
+            suspendedAt: '2026-10-03T10:00:00Z'
     NodeRetired:
       name: NodeRetired
       title: A node was retired
       summary: A node left the topology (published by node-topology).
-      description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeRetired`; a retired node is never a destination again.'
+      description: '`type` = `com.retailnetwork.logistics.node-topology.node.NodeRetired`; a retired node is never a destination again. The fact carries the
+        node id (plus `retiredAt`, not read here); the instant is the CloudEvents `time`.'
       contentType: application/cloudevents+json
       tags:
       - name: customer-returns
       payload:
-        $ref: '#/components/schemas/NodeFactEvent'
+        $ref: '#/components/schemas/NodeStatusEvent'
       examples:
       - name: nodeRetired
         summary: The returns centre closed.
@@ -492,8 +496,7 @@ components:
           dataschema: urn:retailnetwork:node-topology:events:NodeRetired:v1
           data:
             nodeId: node-rc-1
-            nodeType: RETURNS_CENTER
-            regionId: region-east
+            retiredAt: '2026-10-04T10:00:00Z'
     ServiceAreaAssigned:
       name: ServiceAreaAssigned
       title: A postal prefix was assigned to a region
@@ -526,7 +529,9 @@ components:
       title: A group's fulfillment was released to a node
       summary: The per-item owners of a group (published by order-sourcing).
       description: '`type` = `com.retailnetwork.commerce.order-sourcing.assignment.FulfillmentReleasedToNode`; the release''s per-line `ownerRef` (whose stock
-        the line took) decorates the authorized lines and the completed fact.'
+        the line took) decorates the authorized lines and the completed fact. A MERGED release (order-sourcing ADR 0015) is one event for several order
+        groups: `orderId` and `groupNo` name the carrier group only, `members` lists every merged group and each line''s `assignmentId` names its member.
+        This context then writes one origin per member, each with the owners of its own lines; without `members` the event speaks for its own group.'
       contentType: application/cloudevents+json
       tags:
       - name: customer-returns
@@ -540,7 +545,7 @@ components:
           id: 9d3a2b5f-7c4e-4a1b-b6d9-8f2e3a4b5c17
           source: /retailnetwork/order-sourcing
           type: com.retailnetwork.commerce.order-sourcing.assignment.FulfillmentReleasedToNode
-          subject: ord-51a0c9
+          subject: asg-7f3c2d10
           time: '2026-11-01T12:00:00Z'
           datacontenttype: application/json
           dataschema: urn:retailnetwork:order-sourcing:events:FulfillmentReleasedToNode:v1
@@ -551,6 +556,34 @@ components:
             lines:
             - catalogItemId: sku-100
               ownerRef: sel-42
+      - name: fulfillmentReleasedMerged
+        summary: One release for two groups; each line names its member.
+        payload:
+          specversion: '1.0'
+          id: 9d3a2b5f-7c4e-4a1b-b6d9-8f2e3a4b5c27
+          source: /retailnetwork/order-sourcing
+          type: com.retailnetwork.commerce.order-sourcing.assignment.FulfillmentReleasedToNode
+          subject: asg-7f3c2d10
+          time: '2026-11-01T12:00:00Z'
+          datacontenttype: application/json
+          dataschema: urn:retailnetwork:order-sourcing:events:FulfillmentReleasedToNode:v1
+          data:
+            orderId: ord-51a0c9
+            groupNo: 1
+            nodeId: node-fc-1
+            lines:
+            - catalogItemId: sku-100
+              ownerRef: sel-42
+              assignmentId: asg-7f3c2d10
+            - catalogItemId: sku-200
+              assignmentId: asg-2c9d41aa
+            members:
+            - assignmentId: asg-7f3c2d10
+              orderId: ord-51a0c9
+              groupNo: 1
+            - assignmentId: asg-2c9d41aa
+              orderId: ord-6b2e07
+              groupNo: 1
     FulfillmentLocked:
       name: FulfillmentLocked
       title: A group's fulfillment was locked
@@ -569,7 +602,7 @@ components:
           id: 9d3a2b5f-7c4e-4a1b-b6d9-8f2e3a4b5c18
           source: /retailnetwork/order-sourcing
           type: com.retailnetwork.commerce.order-sourcing.assignment.FulfillmentLocked
-          subject: ord-51a0c9
+          subject: asg-7f3c2d10
           time: '2026-11-01T12:05:00Z'
           datacontenttype: application/json
           dataschema: urn:retailnetwork:order-sourcing:events:FulfillmentLocked:v1
@@ -826,11 +859,16 @@ components:
             type: object
             required:
             - orderId
+            - destinationPostalPrefix
             - placedAt
             - groups
             properties:
               orderId:
                 type: string
+              destinationPostalPrefix:
+                type: string
+                description: The ORDER's postal prefix (never a full address); customer-ordering publishes it once per order and none per group. It picks the
+                  region of every group of the order.
               placedAt:
                 type: string
                 format: date-time
@@ -840,13 +878,9 @@ components:
                   type: object
                   required:
                   - groupNo
-                  - destinationPostalPrefix
                   properties:
                     groupNo:
                       type: integer
-                    destinationPostalPrefix:
-                      type: string
-                      description: The postal prefix (never a full address).
                     witnessNodeId:
                       type: string
                     lines:
@@ -893,23 +927,41 @@ components:
                   status:
                     type: string
                     description: The asserted group status; wins over the family when present.
-    NodeFactEvent:
+    NodeRegisteredEvent:
       allOf:
       - $ref: '#/components/schemas/CloudEventEnvelope'
       - type: object
         properties:
           data:
             type: object
+            description: The fields of node-topology's NodeRegistered this context relies on; the producer sends more (subtype, operator, vendor fields,
+              timezone, countryCode), all ignored.
             required:
             - nodeId
             - nodeType
+            - regionId
             properties:
               nodeId:
                 type: string
               nodeType:
                 type: string
-                description: Only RETURNS_CENTER nodes influence a disposition.
+                description: Stored as published. Only RETURNS_CENTER nodes influence a disposition.
               regionId:
+                type: string
+    NodeStatusEvent:
+      allOf:
+      - $ref: '#/components/schemas/CloudEventEnvelope'
+      - type: object
+        properties:
+          data:
+            type: object
+            description: The one field of NodeActivated, NodeSuspended and NodeRetired this context relies on. node-topology publishes the node id and an
+              instant (`activatedAt`, `suspendedAt` with a `reason`, `retiredAt`) on these facts and never the node's type or region, so neither is read
+              and neither is required. The instant of the status change is read from the CloudEvents `time`.
+            required:
+            - nodeId
+            properties:
+              nodeId:
                 type: string
     ServiceAreaAssignedEvent:
       allOf:
@@ -948,7 +1000,7 @@ components:
                 type: string
               lines:
                 type: array
-                description: Optional; the release's per-item owners.
+                description: Optional; the release's per-item owners. A lock carries none.
                 items:
                   type: object
                   required:
@@ -958,6 +1010,26 @@ components:
                       type: string
                     ownerRef:
                       type: string
+                      description: Omitted when the line is operator-owned.
+                    assignmentId:
+                      type: string
+                      description: Present only on a merged release; names the member group the line belongs to.
+              members:
+                type: array
+                description: Present only on a MERGED release; every merged order group, the carrier first. Each member gets its own origin row.
+                items:
+                  type: object
+                  required:
+                  - assignmentId
+                  - orderId
+                  - groupNo
+                  properties:
+                    assignmentId:
+                      type: string
+                    orderId:
+                      type: string
+                    groupNo:
+                      type: integer
     VendorReturnOutcomeSubmittedEvent:
       allOf:
       - $ref: '#/components/schemas/CloudEventEnvelope'
