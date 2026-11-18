@@ -34,6 +34,9 @@ info:
       4 MiB is `422 validation-failed`.
     - Errors are RFC 9457 `application/problem+json`; the shared problem types are `not-found` 404, `illegal-transition` 409, `concurrent-update` 409,
       `validation-failed` 422, plus one slug per model `Err...` name.
+    - **Reports (ADR 0012).** `GET /reports/returns-performance` and `GET /reports/freshness` are read-only GETs served by the separate `cmd/reports` binary
+      (port 8092, behind the `/api/customer-returns/reports` Gateway route when `analytics.enabled`), from a projection of this context's own events topic. They
+      are unauthenticated like every route here, and every error is `application/problem+json`.
     - Events (AsyncAPI `apis/asyncapi.yaml`): `ReturnAuthorized`, `ReturnLabelIssued`, `ReturnCompleted`, `ReturnCancelled` on the events topic. `GET
       /return-authorizations/{id}/events` is deliberately NOT built: the audit trail IS the event stream.
   contact:
@@ -46,6 +49,8 @@ servers:
 tags:
 - name: Return Authorizations
   description: Authorize an order group's return, read it, label it, cancel it.
+- name: Reports
+  description: Read-only analytics reports over the separate analytical database (ADR 0012). Served by cmd/reports (:8092), never by the api.
 paths:
   /return-authorizations:
     post:
@@ -370,6 +375,82 @@ paths:
           description: Both dependencies answer.
         '503':
           description: At least one dependency is down; the body names it.
+  /reports/returns-performance:
+    servers:
+    - url: http://localhost:8092
+    get:
+      tags:
+      - Reports
+      operationId: getReturnsPerformanceReport
+      x-pagination-exempt: report
+      summary: Returns performance per UTC day, reason Pareto and freshness
+      description: 'Per UTC day of the business instant (`authorizedAt`, `receivedAt`): the returns authorized (a return is born authorized, so this is both
+        "opened" and "approved"), the returns received (`ReturnCompleted`) and, over the receipts whose authorization is also projected, the p50 and p95 of
+        `receivedAt - authorizedAt` in seconds (`null` on a day without a sample; a negative duration counts as 0). `reasonPareto` ranks the range''s
+        authorizations by reason code, at most 5 entries; `share` is over ALL authorizations of the range. `freshness` is the projection''s lag. Days
+        without activity are omitted, an empty range answers empty arrays. The return RATE and the refund figures are deliberately absent: their facts are
+        not in this context''s own events (ADR 0012).'
+      parameters:
+      - $ref: '#/components/parameters/ReportFrom'
+      - $ref: '#/components/parameters/ReportTo'
+      responses:
+        '200':
+          description: The report for the range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnsPerformanceReport'
+              example:
+                from: '2026-11-14'
+                to: '2026-11-15'
+                days:
+                - day: '2026-11-14'
+                  returnsAuthorized: 3
+                  returnsReceived: 1
+                  timeToReceiveSamples: 1
+                  timeToReceiveP50Seconds: 518400
+                  timeToReceiveP95Seconds: 518400
+                - day: '2026-11-15'
+                  returnsAuthorized: 0
+                  returnsReceived: 2
+                  timeToReceiveSamples: 0
+                  timeToReceiveP50Seconds: null
+                  timeToReceiveP95Seconds: null
+                reasonPareto:
+                - reason: DEFECTIVE
+                  returns: 2
+                  share: 0.6667
+                  cumulativeShare: 0.6667
+                - reason: NOT_NEEDED
+                  returns: 1
+                  share: 0.3333
+                  cumulativeShare: 1
+                freshness:
+                  asOf: '2026-11-15T09:30:00Z'
+                  lagSeconds: 42.5
+        '400':
+          $ref: '#/components/responses/InvalidReportRange'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /reports/freshness:
+    servers:
+    - url: http://localhost:8092
+    get:
+      tags:
+      - Reports
+      operationId: getReportFreshness
+      summary: How far the analytics projection is behind
+      description: '`asOf` is the CloudEvents time of the newest event the projector applied; `lagSeconds` is now minus `asOf`, never negative. Both are `null`
+        until the first event. The same figure is embedded in every report.'
+      responses:
+        '200':
+          description: The projection's freshness.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportFreshness'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   parameters:
     IdempotencyKey:
@@ -393,6 +474,22 @@ components:
         type: string
         pattern: '^ret-[0-9a-f-]{8,}$'
       example: ret-0f3a91e2
+    ReportFrom:
+      name: from
+      in: query
+      required: false
+      description: First UTC day of the range, inclusive. Omitted = 29 days before `to` (a 30-day range).
+      schema:
+        type: string
+        format: date
+    ReportTo:
+      name: to
+      in: query
+      required: false
+      description: Last UTC day of the range, inclusive. Omitted = today. At most 366 days from `from`.
+      schema:
+        type: string
+        format: date
   headers:
     IdempotencyReplayed:
       description: Set to the literal `true` when this response was replayed from the idempotency store; absent otherwise.
@@ -443,6 +540,16 @@ components:
             type: group-not-shipped
             title: The order group is not shipped or delivered yet; retry later with the same Idempotency-Key
             status: 422
+    InvalidReportRange:
+      description: invalid-report-range. `from` or `to` is not a date (YYYY-MM-DD), `from` is after `to`, or the range exceeds 366 days.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: invalid-report-range
+            title: The report range is invalid
+            status: 400
     InternalError:
       description: An unexpected failure; the body never leaks the internal error.
       content:
@@ -685,3 +792,103 @@ components:
         nextCursor:
           type: string
           description: Present when another page follows; feed it back as the cursor query parameter.
+    ReturnsPerformanceReport:
+      type: object
+      required:
+      - from
+      - to
+      - days
+      - reasonPareto
+      - freshness
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReturnsPerformanceDay'
+        reasonPareto:
+          type: array
+          maxItems: 5
+          description: The range's authorizations grouped by reason code, most frequent first (ties by reason), at most 5 entries.
+          items:
+            $ref: '#/components/schemas/ReasonShare'
+        freshness:
+          $ref: '#/components/schemas/ReportFreshness'
+    ReturnsPerformanceDay:
+      type: object
+      required:
+      - day
+      - returnsAuthorized
+      - returnsReceived
+      - timeToReceiveSamples
+      - timeToReceiveP50Seconds
+      - timeToReceiveP95Seconds
+      properties:
+        day:
+          type: string
+          format: date
+        returnsAuthorized:
+          type: integer
+          minimum: 0
+          description: Authorizations whose authorizedAt falls on the day (both "opened" and "approved").
+        returnsReceived:
+          type: integer
+          minimum: 0
+          description: Receipts (ReturnCompleted) whose receivedAt falls on the day.
+        timeToReceiveSamples:
+          type: integer
+          minimum: 0
+          description: The day's receipts whose authorization is also projected; the population of the two percentiles.
+        timeToReceiveP50Seconds:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Continuous p50 of receivedAt - authorizedAt in seconds; null without a sample.
+        timeToReceiveP95Seconds:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Continuous p95 of receivedAt - authorizedAt in seconds; null without a sample.
+    ReasonShare:
+      type: object
+      required:
+      - reason
+      - returns
+      - share
+      - cumulativeShare
+      properties:
+        reason:
+          type: string
+          description: The enum reason code of the authorization (never free text).
+        returns:
+          type: integer
+          minimum: 1
+        share:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: returns over ALL authorizations of the range.
+        cumulativeShare:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: The running sum of the shares in Pareto order.
+    ReportFreshness:
+      type: object
+      required:
+      - asOf
+      - lagSeconds
+      properties:
+        asOf:
+          type: string
+          format: date-time
+          nullable: true
+        lagSeconds:
+          type: number
+          minimum: 0
+          nullable: true
