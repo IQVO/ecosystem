@@ -1,0 +1,4155 @@
+asyncapi: 2.6.0
+info:
+  title: asrs-control Domain Events
+  version: 1.0.0
+  contact:
+    name: asrs-control maintainers
+    url: https://github.com/IQVO/asrs-control
+    email: asrs-control@iqvo.example.com
+  license:
+    name: UNLICENSED
+  description: >
+    Event contract of the **asrs-control** bounded context (WCS tier, Generic,
+    segment `wes`; ADR 0001, ADR 0003).
+
+    Five facts for material-flow-control's subsystem-controller interface (WCS
+    context map relationship 5) and,
+
+    for `StorageJobFailed` with reason `EQUIPMENT_FAULT`, exception-management.
+
+
+    **Published** through a transactional outbox to
+    `warehouse.asrs-control.events`, and the same occurrence
+
+    (same CloudEvents `id`, `type` and `data`) to
+    `warehouse.asrs-control.analytics` with the `analytics`
+
+    `dataschema` segment. Kafka key = `subject`.
+
+
+    **Envelope (mandatory).** CloudEvents 1.0 structured mode, header
+
+    `content-type: application/cloudevents+json; charset=UTF-8`,
+
+    `type` = `com.warehouse.wes.asrs-control.<entity>.<EventName>`. Dispatch on
+    the full `type`, ignore unknown
+
+    types, dedupe on `id`.
+
+
+    **Time.** `time` and every `*_at` field are asrs-control's clock.
+    `plc_timestamp` is the PLC telegram's
+
+    timestamp (the emulator's simulated time), present only on facts that came
+    from a telegram.
+
+
+    No rack position, reshuffle or internal move is ever published (invariant
+    6).
+
+
+    **PLC link (MQTT).** The second half of this contract is the AS/RS telegram
+    protocol v1 link to the PLC
+
+    (emulated by IQVO/equipment-emulator, `docs/telegram-protocol.md`; ADR
+    0002): channels `asrs/v1/{asrsId}/down`
+
+    and `asrs/v1/{asrsId}/up` on the `plc-link` MQTT server, flat JSON
+    (`application/json`, not CloudEvents),
+
+    QoS 1, not retained. asrs-control is the protocol's WCS side, so the
+    operations are written from asrs-control's
+
+    point of view: `subscribe` = asrs-control publishes (the down topic),
+    `publish` = asrs-control receives (the up
+
+    topic). equipment-emulator's `apis/asyncapi.yaml` describes the same two
+    channels from the PLC side. The
+
+    telegrams carry rack positions; they never leave the link (invariant 6).
+servers:
+  production:
+    url: '{brokers}'
+    protocol: kafka
+    description: Fleet-shared Kafka broker (host supplied by the deployment environment).
+    variables:
+      brokers:
+        default: kafka.warehouse-systems.internal:9092
+tags:
+  - name: asrs-control
+    description: The asrs-control bounded context (WCS tier).
+  - name: storagejob
+    description: Events raised by the StorageJob aggregate.
+  - name: equipmentunit
+    description: Events raised by the EquipmentUnit aggregate.
+  - name: asrs
+    description: Capacity facts of a whole AS/RS.
+  - name: telegram
+    description: >-
+      AS/RS telegram protocol v1, the MQTT link between asrs-control and the PLC
+      (ADR 0002).
+defaultContentType: application/cloudevents+json
+channels:
+  warehouse.asrs-control.events:
+    description: The integration topic. Written by the outbox relay; key = subject.
+    servers:
+      - production
+    x-eventcatalog-channel-version: 1.0.0
+    publish:
+      operationId: receiveAsrsControlEvents
+      summary: Receive asrs-control's facts.
+      description: >-
+        Route on the full `type`. material-flow-control (plan 04, not built yet)
+        is the intended consumer of every type.
+      tags:
+        - name: asrs-control
+      message:
+        oneOf:
+          - x-no-consumer-reason: >-
+              pending: material-flow-control (plan WCS-04, designed in
+              warehouse-docs wcs/, not built yet) is the intended consumer (WCS
+              context map relationship 5, ADR 0003 type catalogue); no fleet
+              context declares or handles this type yet.
+            name: ContainerStored
+            title: Container stored
+            summary: A store job's container is in the rack.
+            description: >-
+              `type` =
+              `com.warehouse.wes.asrs-control.storagejob.ContainerStored`;
+              subject and key = the storage job id. The rack position is not
+              published.
+            contentType: application/cloudevents+json
+            tags:
+              - name: storagejob
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: >-
+                        com.warehouse.wes.asrs-control.storagejob.ContainerStored
+                      x-parser-schema-id: <anonymous-schema-10>
+                    data:
+                      type: object
+                      required:
+                        - storage_job_id
+                        - asrs_id
+                        - container_id
+                        - port_id
+                        - stored_at
+                      properties:
+                        storage_job_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-12>
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-13>
+                        container_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-14>
+                        port_id:
+                          type: string
+                          description: The input port.
+                          x-parser-schema-id: <anonymous-schema-15>
+                        reference:
+                          type: string
+                          description: The caller's reference from the request
+                          when given.: null
+                          x-parser-schema-id: <anonymous-schema-16>
+                        stored_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-17>
+                        plc_timestamp:
+                          type: string
+                          format: date-time
+                          description: >-
+                            The PLC telegram's timestamp (simulated time in the
+                            emulator). Absent when the fact did not come from a
+                            telegram.
+                          x-parser-schema-id: PlcTimestamp
+                      x-parser-schema-id: <anonymous-schema-11>
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: ContainerStoredEvent
+            examples:
+              - name: stored
+                summary: Container C-0001 stored from input port IN1.
+                payload:
+                  specversion: '1.0'
+                  id: 11111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: com.warehouse.wes.asrs-control.storagejob.ContainerStored
+                  subject: sj-7f3a
+                  time: '2026-11-20T08:00:01Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:asrs-control:events:ContainerStored:v1
+                  data:
+                    storage_job_id: sj-7f3a
+                    asrs_id: ASRS1
+                    container_id: C-0001
+                    port_id: IN1
+                    reference: leg-9
+                    stored_at: '2026-11-20T08:00:01Z'
+                    plc_timestamp: '2026-11-20T08:09:30.5Z'
+            messageId: asrs-control-ContainerStored
+          - x-no-consumer-reason: >-
+              pending: material-flow-control (plan WCS-04, designed in
+              warehouse-docs wcs/, not built yet) is the intended consumer (WCS
+              context map relationship 5, ADR 0003 type catalogue); no fleet
+              context declares or handles this type yet.
+            name: ContainerPresentedAtPort
+            title: Container presented at port
+            summary: >-
+              A retrieve job's container arrived at its output port, in request
+              order per port.
+            description: >-
+              `type` =
+              `com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort`;
+              subject = the storage job id. `scan_result` NO_READ or MISMATCH
+              sends the container to clarification (material-flow-control).
+            contentType: application/cloudevents+json
+            tags:
+              - name: storagejob
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: >-
+                        com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+                      x-parser-schema-id: <anonymous-schema-19>
+                    data:
+                      type: object
+                      required:
+                        - storage_job_id
+                        - asrs_id
+                        - container_id
+                        - port_id
+                        - scan_result
+                        - presented_at
+                      properties:
+                        storage_job_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-21>
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-22>
+                        container_id:
+                          type: string
+                          description: The container the job retrieved.
+                          x-parser-schema-id: <anonymous-schema-23>
+                        port_id:
+                          type: string
+                          description: The output port.
+                          x-parser-schema-id: <anonymous-schema-24>
+                        reference:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-25>
+                        scan_result:
+                          type: string
+                          enum:
+                            - READ
+                            - NO_READ
+                            - MISMATCH
+                          x-parser-schema-id: <anonymous-schema-26>
+                        scanned_container_id:
+                          type: string
+                          description: What the port read; absent on NO_READ.
+                          x-parser-schema-id: <anonymous-schema-27>
+                        presented_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-28>
+                        plc_timestamp:
+                          type: string
+                          format: date-time
+                          description: >-
+                            The PLC telegram's timestamp (simulated time in the
+                            emulator). Absent when the fact did not come from a
+                            telegram.
+                          x-parser-schema-id: PlcTimestamp
+                      x-parser-schema-id: <anonymous-schema-20>
+                  x-parser-schema-id: <anonymous-schema-18>
+              x-parser-schema-id: ContainerPresentedAtPortEvent
+            examples:
+              - name: presented
+                summary: Container C-0001 presented at OUT1 and read correctly.
+                payload:
+                  specversion: '1.0'
+                  id: 21111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: >-
+                    com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+                  subject: sj-8b21
+                  time: '2026-11-20T08:05:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:asrs-control:events:ContainerPresentedAtPort:v1
+                  data:
+                    storage_job_id: sj-8b21
+                    asrs_id: ASRS1
+                    container_id: C-0001
+                    port_id: OUT1
+                    scan_result: READ
+                    scanned_container_id: C-0001
+                    presented_at: '2026-11-20T08:05:00Z'
+                    plc_timestamp: '2026-11-20T08:55:00Z'
+            messageId: asrs-control-ContainerPresentedAtPort
+          - x-no-consumer-reason: >-
+              pending: material-flow-control (plan WCS-04, designed in
+              warehouse-docs wcs/, not built yet) and, for reason
+              EQUIPMENT_FAULT, exception-management (plan WCS-05b, not built
+              yet) are the intended consumers (ADR 0003 type catalogue); neither
+              declares or handles this type yet.
+            name: StorageJobFailed
+            title: Storage job failed
+            summary: >-
+              A store or retrieve job ended without its outcome, or was
+              cancelled.
+            description: >-
+              `type` =
+              `com.warehouse.wes.asrs-control.storagejob.StorageJobFailed`;
+              subject = the storage job id. Intended for exception-management to
+              open a case for reason EQUIPMENT_FAULT (plan WCS-05b, not built
+              yet).
+            contentType: application/cloudevents+json
+            tags:
+              - name: storagejob
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: >-
+                        com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+                      x-parser-schema-id: <anonymous-schema-30>
+                    data:
+                      type: object
+                      required:
+                        - storage_job_id
+                        - asrs_id
+                        - job_kind
+                        - container_id
+                        - port_id
+                        - reason
+                        - failed_at
+                      properties:
+                        storage_job_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-32>
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-33>
+                        job_kind:
+                          type: string
+                          enum:
+                            - STORE
+                            - RETRIEVE
+                          x-parser-schema-id: <anonymous-schema-34>
+                        container_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-35>
+                        port_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-36>
+                        reference:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-37>
+                        reason:
+                          type: string
+                          enum:
+                            - CANCELLED
+                            - EQUIPMENT_FAULT
+                            - EQUIPMENT_UNREACHABLE
+                            - COMMAND_REFUSED
+                            - CONTAINER_NOT_AT_PORT
+                            - STORAGE_MAP_MISMATCH
+                            - PORT_OCCUPIED
+                            - RESHUFFLE_FAILED
+                            - NO_RESHUFFLE_POSITION
+                          x-parser-schema-id: <anonymous-schema-38>
+                        plc_reason:
+                          type: string
+                          description: The PLC's bare reason code
+                          when the failure came from the PLC.: null
+                          x-parser-schema-id: <anonymous-schema-39>
+                        failed_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-40>
+                        plc_timestamp:
+                          type: string
+                          format: date-time
+                          description: >-
+                            The PLC telegram's timestamp (simulated time in the
+                            emulator). Absent when the fact did not come from a
+                            telegram.
+                          x-parser-schema-id: PlcTimestamp
+                      x-parser-schema-id: <anonymous-schema-31>
+                  x-parser-schema-id: <anonymous-schema-29>
+              x-parser-schema-id: StorageJobFailedEvent
+            examples:
+              - name: equipment-fault
+                summary: A queued retrieve failed because its aisle's unit was held.
+                payload:
+                  specversion: '1.0'
+                  id: 31111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+                  subject: sj-9c02
+                  time: '2026-11-20T08:06:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:asrs-control:events:StorageJobFailed:v1
+                  data:
+                    storage_job_id: sj-9c02
+                    asrs_id: ASRS1
+                    job_kind: RETRIEVE
+                    container_id: C-0002
+                    port_id: OUT1
+                    reason: EQUIPMENT_FAULT
+                    failed_at: '2026-11-20T08:06:00Z'
+                    plc_timestamp: '2026-11-20T09:05:00Z'
+            messageId: asrs-control-StorageJobFailed
+          - x-no-consumer-reason: >-
+              pending: material-flow-control (plan WCS-04, designed in
+              warehouse-docs wcs/, not built yet) is the intended consumer (WCS
+              context map relationship 5, ADR 0003 type catalogue); no fleet
+              context declares or handles this type yet.
+            name: EquipmentStateChanged
+            title: Equipment state changed
+            summary: An aisle's shuttle-and-lift unit changed its PackML state.
+            description: >-
+              `type` =
+              `com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged`;
+              subject = `<asrsId>/<unitId>`.
+            contentType: application/cloudevents+json
+            tags:
+              - name: equipmentunit
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: >-
+                        com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+                      x-parser-schema-id: <anonymous-schema-42>
+                    data:
+                      type: object
+                      required:
+                        - asrs_id
+                        - unit_id
+                        - aisle
+                        - state
+                        - previous_state
+                        - changed_at
+                      properties:
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-44>
+                        unit_id:
+                          type: string
+                          description: >-
+                            A<aisle>: the aisle's combined shuttle-and-lift
+                            unit.
+                          x-parser-schema-id: <anonymous-schema-45>
+                        aisle:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-46>
+                        state:
+                          type: string
+                          enum:
+                            - IDLE
+                            - EXECUTE
+                            - HELD
+                          x-parser-schema-id: <anonymous-schema-47>
+                        previous_state:
+                          type: string
+                          enum:
+                            - IDLE
+                            - EXECUTE
+                            - HELD
+                          x-parser-schema-id: <anonymous-schema-48>
+                        changed_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-49>
+                        plc_timestamp:
+                          type: string
+                          format: date-time
+                          description: >-
+                            The PLC telegram's timestamp (simulated time in the
+                            emulator). Absent when the fact did not come from a
+                            telegram.
+                          x-parser-schema-id: PlcTimestamp
+                      x-parser-schema-id: <anonymous-schema-43>
+                  x-parser-schema-id: <anonymous-schema-41>
+              x-parser-schema-id: EquipmentStateChangedEvent
+            examples:
+              - name: held
+                summary: Unit A1 went to HELD.
+                payload:
+                  specversion: '1.0'
+                  id: 41111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: >-
+                    com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+                  subject: ASRS1/A1
+                  time: '2026-11-20T08:06:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:asrs-control:events:EquipmentStateChanged:v1
+                  data:
+                    asrs_id: ASRS1
+                    unit_id: A1
+                    aisle: 1
+                    state: HELD
+                    previous_state: EXECUTE
+                    changed_at: '2026-11-20T08:06:00Z'
+                    plc_timestamp: '2026-11-20T09:05:00Z'
+            messageId: asrs-control-EquipmentStateChanged
+          - x-no-consumer-reason: >-
+              pending: material-flow-control (plan WCS-04, designed in
+              warehouse-docs wcs/, not built yet) is the intended consumer, for
+              its capacity loop (ADR 0003 type catalogue); no fleet context
+              declares or handles this type yet.
+            name: AsrsCapacityChanged
+            title: AS/RS capacity changed
+            summary: Units available, free positions or open jobs of an AS/RS changed.
+            description: >-
+              `type` =
+              `com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged`; subject
+              = the AS/RS id. Intended to feed material-flow-control's
+              SubsystemCapacityChanged (plan 04, not built yet).
+            contentType: application/cloudevents+json
+            tags:
+              - name: asrs
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+                      x-parser-schema-id: <anonymous-schema-51>
+                    data:
+                      type: object
+                      required:
+                        - asrs_id
+                        - units_total
+                        - units_available
+                        - positions_total
+                        - positions_free
+                        - open_jobs
+                        - measured_at
+                      properties:
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-53>
+                        units_total:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-54>
+                        units_available:
+                          type: integer
+                          minimum: 0
+                          description: Units not HELD.
+                          x-parser-schema-id: <anonymous-schema-55>
+                        positions_total:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-56>
+                        positions_free:
+                          type: integer
+                          minimum: 0
+                          description: Positions neither occupied nor reserved.
+                          x-parser-schema-id: <anonymous-schema-57>
+                        open_jobs:
+                          type: integer
+                          minimum: 0
+                          description: Store and retrieve jobs without an outcome.
+                          x-parser-schema-id: <anonymous-schema-58>
+                        measured_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-59>
+                      x-parser-schema-id: <anonymous-schema-52>
+                  x-parser-schema-id: <anonymous-schema-50>
+              x-parser-schema-id: AsrsCapacityChangedEvent
+            examples:
+              - name: one-unit-held
+                summary: One of two units is held.
+                payload:
+                  specversion: '1.0'
+                  id: 51111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+                  subject: ASRS1
+                  time: '2026-11-20T08:06:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:asrs-control:events:AsrsCapacityChanged:v1
+                  data:
+                    asrs_id: ASRS1
+                    units_total: 2
+                    units_available: 1
+                    positions_total: 1280
+                    positions_free: 1200
+                    open_jobs: 3
+                    measured_at: '2026-11-20T08:06:00Z'
+            messageId: asrs-control-AsrsCapacityChanged
+  warehouse.asrs-control.analytics:
+    description: >-
+      The analytics twin of every integration event (same id, type and data;
+      analytics dataschema). Not an integration contract.
+    servers:
+      - production
+    x-eventcatalog-channel-version: 1.0.0
+    publish:
+      operationId: receiveAsrsControlAnalytics
+      summary: Receive the analytics twin of every asrs-control event.
+      description: >-
+        Payloads are byte-for-byte the integration payloads; only the
+        `dataschema` stream segment differs.
+      tags:
+        - name: asrs-control
+      message:
+        oneOf:
+          - name: ContainerStored
+            title: Container stored (analytics twin)
+            summary: A store job's container is in the rack, on the analytics topic.
+            description: >-
+              The analytics twin of `ContainerStored`: same `id`, `type`,
+              `subject` and `data`; only the `dataschema` stream segment is
+              `analytics`
+              (`urn:warehouse:asrs-control:analytics:ContainerStored:v1`). Not
+              an integration contract.
+            contentType: application/cloudevents+json
+            tags:
+              - name: storagejob
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: >-
+                        com.warehouse.wes.asrs-control.storagejob.ContainerStored
+                      x-parser-schema-id: <anonymous-schema-10>
+                    data:
+                      type: object
+                      required:
+                        - storage_job_id
+                        - asrs_id
+                        - container_id
+                        - port_id
+                        - stored_at
+                      properties:
+                        storage_job_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-12>
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-13>
+                        container_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-14>
+                        port_id:
+                          type: string
+                          description: The input port.
+                          x-parser-schema-id: <anonymous-schema-15>
+                        reference:
+                          type: string
+                          description: The caller's reference from the request
+                          when given.: null
+                          x-parser-schema-id: <anonymous-schema-16>
+                        stored_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-17>
+                        plc_timestamp:
+                          type: string
+                          format: date-time
+                          description: >-
+                            The PLC telegram's timestamp (simulated time in the
+                            emulator). Absent when the fact did not come from a
+                            telegram.
+                          x-parser-schema-id: PlcTimestamp
+                      x-parser-schema-id: <anonymous-schema-11>
+                  x-parser-schema-id: <anonymous-schema-9>
+              x-parser-schema-id: ContainerStoredEvent
+            examples:
+              - name: stored-analytics
+                summary: Container C-0001 stored from input port IN1 (analytics twin).
+                payload:
+                  specversion: '1.0'
+                  id: 11111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: com.warehouse.wes.asrs-control.storagejob.ContainerStored
+                  subject: sj-7f3a
+                  time: '2026-11-20T08:00:01Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:asrs-control:analytics:ContainerStored:v1
+                  data:
+                    storage_job_id: sj-7f3a
+                    asrs_id: ASRS1
+                    container_id: C-0001
+                    port_id: IN1
+                    reference: leg-9
+                    stored_at: '2026-11-20T08:00:01Z'
+                    plc_timestamp: '2026-11-20T08:09:30.5Z'
+            messageId: asrs-control-ContainerStoredAnalytics
+          - x-no-consumer-reason: >-
+              pending: material-flow-control (plan WCS-04, designed in
+              warehouse-docs wcs/, not built yet) is the intended consumer (WCS
+              context map relationship 5, ADR 0003 type catalogue); no fleet
+              context declares or handles this type yet.
+            name: ContainerPresentedAtPort
+            title: Container presented at port
+            summary: >-
+              A retrieve job's container arrived at its output port, in request
+              order per port.
+            description: >-
+              `type` =
+              `com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort`;
+              subject = the storage job id. `scan_result` NO_READ or MISMATCH
+              sends the container to clarification (material-flow-control).
+            contentType: application/cloudevents+json
+            tags:
+              - name: storagejob
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: >-
+                        com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+                      x-parser-schema-id: <anonymous-schema-19>
+                    data:
+                      type: object
+                      required:
+                        - storage_job_id
+                        - asrs_id
+                        - container_id
+                        - port_id
+                        - scan_result
+                        - presented_at
+                      properties:
+                        storage_job_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-21>
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-22>
+                        container_id:
+                          type: string
+                          description: The container the job retrieved.
+                          x-parser-schema-id: <anonymous-schema-23>
+                        port_id:
+                          type: string
+                          description: The output port.
+                          x-parser-schema-id: <anonymous-schema-24>
+                        reference:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-25>
+                        scan_result:
+                          type: string
+                          enum:
+                            - READ
+                            - NO_READ
+                            - MISMATCH
+                          x-parser-schema-id: <anonymous-schema-26>
+                        scanned_container_id:
+                          type: string
+                          description: What the port read; absent on NO_READ.
+                          x-parser-schema-id: <anonymous-schema-27>
+                        presented_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-28>
+                        plc_timestamp:
+                          type: string
+                          format: date-time
+                          description: >-
+                            The PLC telegram's timestamp (simulated time in the
+                            emulator). Absent when the fact did not come from a
+                            telegram.
+                          x-parser-schema-id: PlcTimestamp
+                      x-parser-schema-id: <anonymous-schema-20>
+                  x-parser-schema-id: <anonymous-schema-18>
+              x-parser-schema-id: ContainerPresentedAtPortEvent
+            examples:
+              - name: presented
+                summary: Container C-0001 presented at OUT1 and read correctly.
+                payload:
+                  specversion: '1.0'
+                  id: 21111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: >-
+                    com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+                  subject: sj-8b21
+                  time: '2026-11-20T08:05:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:asrs-control:events:ContainerPresentedAtPort:v1
+                  data:
+                    storage_job_id: sj-8b21
+                    asrs_id: ASRS1
+                    container_id: C-0001
+                    port_id: OUT1
+                    scan_result: READ
+                    scanned_container_id: C-0001
+                    presented_at: '2026-11-20T08:05:00Z'
+                    plc_timestamp: '2026-11-20T08:55:00Z'
+            messageId: asrs-control-ContainerPresentedAtPortAnalytics
+          - x-no-consumer-reason: >-
+              pending: material-flow-control (plan WCS-04, designed in
+              warehouse-docs wcs/, not built yet) and, for reason
+              EQUIPMENT_FAULT, exception-management (plan WCS-05b, not built
+              yet) are the intended consumers (ADR 0003 type catalogue); neither
+              declares or handles this type yet.
+            name: StorageJobFailed
+            title: Storage job failed
+            summary: >-
+              A store or retrieve job ended without its outcome, or was
+              cancelled.
+            description: >-
+              `type` =
+              `com.warehouse.wes.asrs-control.storagejob.StorageJobFailed`;
+              subject = the storage job id. Intended for exception-management to
+              open a case for reason EQUIPMENT_FAULT (plan WCS-05b, not built
+              yet).
+            contentType: application/cloudevents+json
+            tags:
+              - name: storagejob
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: >-
+                        com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+                      x-parser-schema-id: <anonymous-schema-30>
+                    data:
+                      type: object
+                      required:
+                        - storage_job_id
+                        - asrs_id
+                        - job_kind
+                        - container_id
+                        - port_id
+                        - reason
+                        - failed_at
+                      properties:
+                        storage_job_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-32>
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-33>
+                        job_kind:
+                          type: string
+                          enum:
+                            - STORE
+                            - RETRIEVE
+                          x-parser-schema-id: <anonymous-schema-34>
+                        container_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-35>
+                        port_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-36>
+                        reference:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-37>
+                        reason:
+                          type: string
+                          enum:
+                            - CANCELLED
+                            - EQUIPMENT_FAULT
+                            - EQUIPMENT_UNREACHABLE
+                            - COMMAND_REFUSED
+                            - CONTAINER_NOT_AT_PORT
+                            - STORAGE_MAP_MISMATCH
+                            - PORT_OCCUPIED
+                            - RESHUFFLE_FAILED
+                            - NO_RESHUFFLE_POSITION
+                          x-parser-schema-id: <anonymous-schema-38>
+                        plc_reason:
+                          type: string
+                          description: The PLC's bare reason code
+                          when the failure came from the PLC.: null
+                          x-parser-schema-id: <anonymous-schema-39>
+                        failed_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-40>
+                        plc_timestamp:
+                          type: string
+                          format: date-time
+                          description: >-
+                            The PLC telegram's timestamp (simulated time in the
+                            emulator). Absent when the fact did not come from a
+                            telegram.
+                          x-parser-schema-id: PlcTimestamp
+                      x-parser-schema-id: <anonymous-schema-31>
+                  x-parser-schema-id: <anonymous-schema-29>
+              x-parser-schema-id: StorageJobFailedEvent
+            examples:
+              - name: equipment-fault
+                summary: A queued retrieve failed because its aisle's unit was held.
+                payload:
+                  specversion: '1.0'
+                  id: 31111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+                  subject: sj-9c02
+                  time: '2026-11-20T08:06:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:asrs-control:events:StorageJobFailed:v1
+                  data:
+                    storage_job_id: sj-9c02
+                    asrs_id: ASRS1
+                    job_kind: RETRIEVE
+                    container_id: C-0002
+                    port_id: OUT1
+                    reason: EQUIPMENT_FAULT
+                    failed_at: '2026-11-20T08:06:00Z'
+                    plc_timestamp: '2026-11-20T09:05:00Z'
+            messageId: asrs-control-StorageJobFailedAnalytics
+          - x-no-consumer-reason: >-
+              pending: material-flow-control (plan WCS-04, designed in
+              warehouse-docs wcs/, not built yet) is the intended consumer (WCS
+              context map relationship 5, ADR 0003 type catalogue); no fleet
+              context declares or handles this type yet.
+            name: EquipmentStateChanged
+            title: Equipment state changed
+            summary: An aisle's shuttle-and-lift unit changed its PackML state.
+            description: >-
+              `type` =
+              `com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged`;
+              subject = `<asrsId>/<unitId>`.
+            contentType: application/cloudevents+json
+            tags:
+              - name: equipmentunit
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: >-
+                        com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+                      x-parser-schema-id: <anonymous-schema-42>
+                    data:
+                      type: object
+                      required:
+                        - asrs_id
+                        - unit_id
+                        - aisle
+                        - state
+                        - previous_state
+                        - changed_at
+                      properties:
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-44>
+                        unit_id:
+                          type: string
+                          description: >-
+                            A<aisle>: the aisle's combined shuttle-and-lift
+                            unit.
+                          x-parser-schema-id: <anonymous-schema-45>
+                        aisle:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-46>
+                        state:
+                          type: string
+                          enum:
+                            - IDLE
+                            - EXECUTE
+                            - HELD
+                          x-parser-schema-id: <anonymous-schema-47>
+                        previous_state:
+                          type: string
+                          enum:
+                            - IDLE
+                            - EXECUTE
+                            - HELD
+                          x-parser-schema-id: <anonymous-schema-48>
+                        changed_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-49>
+                        plc_timestamp:
+                          type: string
+                          format: date-time
+                          description: >-
+                            The PLC telegram's timestamp (simulated time in the
+                            emulator). Absent when the fact did not come from a
+                            telegram.
+                          x-parser-schema-id: PlcTimestamp
+                      x-parser-schema-id: <anonymous-schema-43>
+                  x-parser-schema-id: <anonymous-schema-41>
+              x-parser-schema-id: EquipmentStateChangedEvent
+            examples:
+              - name: held
+                summary: Unit A1 went to HELD.
+                payload:
+                  specversion: '1.0'
+                  id: 41111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: >-
+                    com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+                  subject: ASRS1/A1
+                  time: '2026-11-20T08:06:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:asrs-control:events:EquipmentStateChanged:v1
+                  data:
+                    asrs_id: ASRS1
+                    unit_id: A1
+                    aisle: 1
+                    state: HELD
+                    previous_state: EXECUTE
+                    changed_at: '2026-11-20T08:06:00Z'
+                    plc_timestamp: '2026-11-20T09:05:00Z'
+            messageId: asrs-control-EquipmentStateChangedAnalytics
+          - x-no-consumer-reason: >-
+              pending: material-flow-control (plan WCS-04, designed in
+              warehouse-docs wcs/, not built yet) is the intended consumer, for
+              its capacity loop (ADR 0003 type catalogue); no fleet context
+              declares or handles this type yet.
+            name: AsrsCapacityChanged
+            title: AS/RS capacity changed
+            summary: Units available, free positions or open jobs of an AS/RS changed.
+            description: >-
+              `type` =
+              `com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged`; subject
+              = the AS/RS id. Intended to feed material-flow-control's
+              SubsystemCapacityChanged (plan 04, not built yet).
+            contentType: application/cloudevents+json
+            tags:
+              - name: asrs
+            payload:
+              allOf:
+                - type: object
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      description: UUID minted once per occurrence; consumers dedupe on it.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      const: /warehouse/asrs-control
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      description: >-
+                        urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                      x-parser-schema-id: <anonymous-schema-8>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      const: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+                      x-parser-schema-id: <anonymous-schema-51>
+                    data:
+                      type: object
+                      required:
+                        - asrs_id
+                        - units_total
+                        - units_available
+                        - positions_total
+                        - positions_free
+                        - open_jobs
+                        - measured_at
+                      properties:
+                        asrs_id:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-53>
+                        units_total:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-54>
+                        units_available:
+                          type: integer
+                          minimum: 0
+                          description: Units not HELD.
+                          x-parser-schema-id: <anonymous-schema-55>
+                        positions_total:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-56>
+                        positions_free:
+                          type: integer
+                          minimum: 0
+                          description: Positions neither occupied nor reserved.
+                          x-parser-schema-id: <anonymous-schema-57>
+                        open_jobs:
+                          type: integer
+                          minimum: 0
+                          description: Store and retrieve jobs without an outcome.
+                          x-parser-schema-id: <anonymous-schema-58>
+                        measured_at:
+                          type: string
+                          format: date-time
+                          x-parser-schema-id: <anonymous-schema-59>
+                      x-parser-schema-id: <anonymous-schema-52>
+                  x-parser-schema-id: <anonymous-schema-50>
+              x-parser-schema-id: AsrsCapacityChangedEvent
+            examples:
+              - name: one-unit-held
+                summary: One of two units is held.
+                payload:
+                  specversion: '1.0'
+                  id: 51111111-2222-4333-8444-555555555555
+                  source: /warehouse/asrs-control
+                  type: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+                  subject: ASRS1
+                  time: '2026-11-20T08:06:00Z'
+                  datacontenttype: application/json
+                  dataschema: urn:warehouse:asrs-control:events:AsrsCapacityChanged:v1
+                  data:
+                    asrs_id: ASRS1
+                    units_total: 2
+                    units_available: 1
+                    positions_total: 1280
+                    positions_free: 1200
+                    open_jobs: 3
+                    measured_at: '2026-11-20T08:06:00Z'
+            messageId: asrs-control-AsrsCapacityChangedAnalytics
+components:
+  parameters:
+    asrsId:
+      description: >-
+        AS/RS id from the layout file (`ASRS_LAYOUT_FILE`), 1-32 characters
+        `[A-Za-z0-9_-]`.
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9_-]{1,32}$
+        examples:
+          - ASRS1
+        x-parser-schema-id: asrsId
+  messages:
+    ContainerStored:
+      x-no-consumer-reason: >-
+        pending: material-flow-control (plan WCS-04, designed in warehouse-docs
+        wcs/, not built yet) is the intended consumer (WCS context map
+        relationship 5, ADR 0003 type catalogue); no fleet context declares or
+        handles this type yet.
+      name: ContainerStored
+      title: Container stored
+      summary: A store job's container is in the rack.
+      description: >-
+        `type` = `com.warehouse.wes.asrs-control.storagejob.ContainerStored`;
+        subject and key = the storage job id. The rack position is not
+        published.
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: com.warehouse.wes.asrs-control.storagejob.ContainerStored
+                x-parser-schema-id: <anonymous-schema-10>
+              data:
+                type: object
+                required:
+                  - storage_job_id
+                  - asrs_id
+                  - container_id
+                  - port_id
+                  - stored_at
+                properties:
+                  storage_job_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-12>
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-13>
+                  container_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-14>
+                  port_id:
+                    type: string
+                    description: The input port.
+                    x-parser-schema-id: <anonymous-schema-15>
+                  reference:
+                    type: string
+                    description: The caller's reference from the request
+                    when given.: null
+                    x-parser-schema-id: <anonymous-schema-16>
+                  stored_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-17>
+                  plc_timestamp:
+                    type: string
+                    format: date-time
+                    description: >-
+                      The PLC telegram's timestamp (simulated time in the
+                      emulator). Absent when the fact did not come from a
+                      telegram.
+                    x-parser-schema-id: PlcTimestamp
+                x-parser-schema-id: <anonymous-schema-11>
+            x-parser-schema-id: <anonymous-schema-9>
+        x-parser-schema-id: ContainerStoredEvent
+      examples:
+        - name: stored
+          summary: Container C-0001 stored from input port IN1.
+          payload:
+            specversion: '1.0'
+            id: 11111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.ContainerStored
+            subject: sj-7f3a
+            time: '2026-11-20T08:00:01Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:ContainerStored:v1
+            data:
+              storage_job_id: sj-7f3a
+              asrs_id: ASRS1
+              container_id: C-0001
+              port_id: IN1
+              reference: leg-9
+              stored_at: '2026-11-20T08:00:01Z'
+              plc_timestamp: '2026-11-20T08:09:30.5Z'
+      messageId: asrs-control-ContainerStored
+    ContainerStoredAnalytics:
+      name: ContainerStored
+      title: Container stored (analytics twin)
+      summary: A store job's container is in the rack, on the analytics topic.
+      description: >-
+        The analytics twin of `ContainerStored`: same `id`, `type`, `subject`
+        and `data`; only the `dataschema` stream segment is `analytics`
+        (`urn:warehouse:asrs-control:analytics:ContainerStored:v1`). Not an
+        integration contract.
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: com.warehouse.wes.asrs-control.storagejob.ContainerStored
+                x-parser-schema-id: <anonymous-schema-10>
+              data:
+                type: object
+                required:
+                  - storage_job_id
+                  - asrs_id
+                  - container_id
+                  - port_id
+                  - stored_at
+                properties:
+                  storage_job_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-12>
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-13>
+                  container_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-14>
+                  port_id:
+                    type: string
+                    description: The input port.
+                    x-parser-schema-id: <anonymous-schema-15>
+                  reference:
+                    type: string
+                    description: The caller's reference from the request
+                    when given.: null
+                    x-parser-schema-id: <anonymous-schema-16>
+                  stored_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-17>
+                  plc_timestamp:
+                    type: string
+                    format: date-time
+                    description: >-
+                      The PLC telegram's timestamp (simulated time in the
+                      emulator). Absent when the fact did not come from a
+                      telegram.
+                    x-parser-schema-id: PlcTimestamp
+                x-parser-schema-id: <anonymous-schema-11>
+            x-parser-schema-id: <anonymous-schema-9>
+        x-parser-schema-id: ContainerStoredEvent
+      examples:
+        - name: stored-analytics
+          summary: Container C-0001 stored from input port IN1 (analytics twin).
+          payload:
+            specversion: '1.0'
+            id: 11111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.ContainerStored
+            subject: sj-7f3a
+            time: '2026-11-20T08:00:01Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:analytics:ContainerStored:v1
+            data:
+              storage_job_id: sj-7f3a
+              asrs_id: ASRS1
+              container_id: C-0001
+              port_id: IN1
+              reference: leg-9
+              stored_at: '2026-11-20T08:00:01Z'
+              plc_timestamp: '2026-11-20T08:09:30.5Z'
+      messageId: asrs-control-ContainerStoredAnalytics
+    ContainerPresentedAtPort:
+      x-no-consumer-reason: >-
+        pending: material-flow-control (plan WCS-04, designed in warehouse-docs
+        wcs/, not built yet) is the intended consumer (WCS context map
+        relationship 5, ADR 0003 type catalogue); no fleet context declares or
+        handles this type yet.
+      name: ContainerPresentedAtPort
+      title: Container presented at port
+      summary: >-
+        A retrieve job's container arrived at its output port, in request order
+        per port.
+      description: >-
+        `type` =
+        `com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort`;
+        subject = the storage job id. `scan_result` NO_READ or MISMATCH sends
+        the container to clarification (material-flow-control).
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: >-
+                  com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+                x-parser-schema-id: <anonymous-schema-19>
+              data:
+                type: object
+                required:
+                  - storage_job_id
+                  - asrs_id
+                  - container_id
+                  - port_id
+                  - scan_result
+                  - presented_at
+                properties:
+                  storage_job_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-21>
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-22>
+                  container_id:
+                    type: string
+                    description: The container the job retrieved.
+                    x-parser-schema-id: <anonymous-schema-23>
+                  port_id:
+                    type: string
+                    description: The output port.
+                    x-parser-schema-id: <anonymous-schema-24>
+                  reference:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-25>
+                  scan_result:
+                    type: string
+                    enum:
+                      - READ
+                      - NO_READ
+                      - MISMATCH
+                    x-parser-schema-id: <anonymous-schema-26>
+                  scanned_container_id:
+                    type: string
+                    description: What the port read; absent on NO_READ.
+                    x-parser-schema-id: <anonymous-schema-27>
+                  presented_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-28>
+                  plc_timestamp:
+                    type: string
+                    format: date-time
+                    description: >-
+                      The PLC telegram's timestamp (simulated time in the
+                      emulator). Absent when the fact did not come from a
+                      telegram.
+                    x-parser-schema-id: PlcTimestamp
+                x-parser-schema-id: <anonymous-schema-20>
+            x-parser-schema-id: <anonymous-schema-18>
+        x-parser-schema-id: ContainerPresentedAtPortEvent
+      examples:
+        - name: presented
+          summary: Container C-0001 presented at OUT1 and read correctly.
+          payload:
+            specversion: '1.0'
+            id: 21111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+            subject: sj-8b21
+            time: '2026-11-20T08:05:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:ContainerPresentedAtPort:v1
+            data:
+              storage_job_id: sj-8b21
+              asrs_id: ASRS1
+              container_id: C-0001
+              port_id: OUT1
+              scan_result: READ
+              scanned_container_id: C-0001
+              presented_at: '2026-11-20T08:05:00Z'
+              plc_timestamp: '2026-11-20T08:55:00Z'
+      messageId: asrs-control-ContainerPresentedAtPort
+    StorageJobFailed:
+      x-no-consumer-reason: >-
+        pending: material-flow-control (plan WCS-04, designed in warehouse-docs
+        wcs/, not built yet) and, for reason EQUIPMENT_FAULT,
+        exception-management (plan WCS-05b, not built yet) are the intended
+        consumers (ADR 0003 type catalogue); neither declares or handles this
+        type yet.
+      name: StorageJobFailed
+      title: Storage job failed
+      summary: A store or retrieve job ended without its outcome, or was cancelled.
+      description: >-
+        `type` = `com.warehouse.wes.asrs-control.storagejob.StorageJobFailed`;
+        subject = the storage job id. Intended for exception-management to open
+        a case for reason EQUIPMENT_FAULT (plan WCS-05b, not built yet).
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+                x-parser-schema-id: <anonymous-schema-30>
+              data:
+                type: object
+                required:
+                  - storage_job_id
+                  - asrs_id
+                  - job_kind
+                  - container_id
+                  - port_id
+                  - reason
+                  - failed_at
+                properties:
+                  storage_job_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-32>
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-33>
+                  job_kind:
+                    type: string
+                    enum:
+                      - STORE
+                      - RETRIEVE
+                    x-parser-schema-id: <anonymous-schema-34>
+                  container_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-35>
+                  port_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-36>
+                  reference:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-37>
+                  reason:
+                    type: string
+                    enum:
+                      - CANCELLED
+                      - EQUIPMENT_FAULT
+                      - EQUIPMENT_UNREACHABLE
+                      - COMMAND_REFUSED
+                      - CONTAINER_NOT_AT_PORT
+                      - STORAGE_MAP_MISMATCH
+                      - PORT_OCCUPIED
+                      - RESHUFFLE_FAILED
+                      - NO_RESHUFFLE_POSITION
+                    x-parser-schema-id: <anonymous-schema-38>
+                  plc_reason:
+                    type: string
+                    description: The PLC's bare reason code
+                    when the failure came from the PLC.: null
+                    x-parser-schema-id: <anonymous-schema-39>
+                  failed_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-40>
+                  plc_timestamp:
+                    type: string
+                    format: date-time
+                    description: >-
+                      The PLC telegram's timestamp (simulated time in the
+                      emulator). Absent when the fact did not come from a
+                      telegram.
+                    x-parser-schema-id: PlcTimestamp
+                x-parser-schema-id: <anonymous-schema-31>
+            x-parser-schema-id: <anonymous-schema-29>
+        x-parser-schema-id: StorageJobFailedEvent
+      examples:
+        - name: equipment-fault
+          summary: A queued retrieve failed because its aisle's unit was held.
+          payload:
+            specversion: '1.0'
+            id: 31111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+            subject: sj-9c02
+            time: '2026-11-20T08:06:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:StorageJobFailed:v1
+            data:
+              storage_job_id: sj-9c02
+              asrs_id: ASRS1
+              job_kind: RETRIEVE
+              container_id: C-0002
+              port_id: OUT1
+              reason: EQUIPMENT_FAULT
+              failed_at: '2026-11-20T08:06:00Z'
+              plc_timestamp: '2026-11-20T09:05:00Z'
+      messageId: asrs-control-StorageJobFailed
+    EquipmentStateChanged:
+      x-no-consumer-reason: >-
+        pending: material-flow-control (plan WCS-04, designed in warehouse-docs
+        wcs/, not built yet) is the intended consumer (WCS context map
+        relationship 5, ADR 0003 type catalogue); no fleet context declares or
+        handles this type yet.
+      name: EquipmentStateChanged
+      title: Equipment state changed
+      summary: An aisle's shuttle-and-lift unit changed its PackML state.
+      description: >-
+        `type` =
+        `com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged`;
+        subject = `<asrsId>/<unitId>`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: equipmentunit
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: >-
+                  com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+                x-parser-schema-id: <anonymous-schema-42>
+              data:
+                type: object
+                required:
+                  - asrs_id
+                  - unit_id
+                  - aisle
+                  - state
+                  - previous_state
+                  - changed_at
+                properties:
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-44>
+                  unit_id:
+                    type: string
+                    description: 'A<aisle>: the aisle''s combined shuttle-and-lift unit.'
+                    x-parser-schema-id: <anonymous-schema-45>
+                  aisle:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-46>
+                  state:
+                    type: string
+                    enum:
+                      - IDLE
+                      - EXECUTE
+                      - HELD
+                    x-parser-schema-id: <anonymous-schema-47>
+                  previous_state:
+                    type: string
+                    enum:
+                      - IDLE
+                      - EXECUTE
+                      - HELD
+                    x-parser-schema-id: <anonymous-schema-48>
+                  changed_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-49>
+                  plc_timestamp:
+                    type: string
+                    format: date-time
+                    description: >-
+                      The PLC telegram's timestamp (simulated time in the
+                      emulator). Absent when the fact did not come from a
+                      telegram.
+                    x-parser-schema-id: PlcTimestamp
+                x-parser-schema-id: <anonymous-schema-43>
+            x-parser-schema-id: <anonymous-schema-41>
+        x-parser-schema-id: EquipmentStateChangedEvent
+      examples:
+        - name: held
+          summary: Unit A1 went to HELD.
+          payload:
+            specversion: '1.0'
+            id: 41111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+            subject: ASRS1/A1
+            time: '2026-11-20T08:06:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:EquipmentStateChanged:v1
+            data:
+              asrs_id: ASRS1
+              unit_id: A1
+              aisle: 1
+              state: HELD
+              previous_state: EXECUTE
+              changed_at: '2026-11-20T08:06:00Z'
+              plc_timestamp: '2026-11-20T09:05:00Z'
+      messageId: asrs-control-EquipmentStateChanged
+    AsrsCapacityChanged:
+      x-no-consumer-reason: >-
+        pending: material-flow-control (plan WCS-04, designed in warehouse-docs
+        wcs/, not built yet) is the intended consumer, for its capacity loop
+        (ADR 0003 type catalogue); no fleet context declares or handles this
+        type yet.
+      name: AsrsCapacityChanged
+      title: AS/RS capacity changed
+      summary: Units available, free positions or open jobs of an AS/RS changed.
+      description: >-
+        `type` = `com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged`;
+        subject = the AS/RS id. Intended to feed material-flow-control's
+        SubsystemCapacityChanged (plan 04, not built yet).
+      contentType: application/cloudevents+json
+      tags:
+        - name: asrs
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+                x-parser-schema-id: <anonymous-schema-51>
+              data:
+                type: object
+                required:
+                  - asrs_id
+                  - units_total
+                  - units_available
+                  - positions_total
+                  - positions_free
+                  - open_jobs
+                  - measured_at
+                properties:
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-53>
+                  units_total:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-54>
+                  units_available:
+                    type: integer
+                    minimum: 0
+                    description: Units not HELD.
+                    x-parser-schema-id: <anonymous-schema-55>
+                  positions_total:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-56>
+                  positions_free:
+                    type: integer
+                    minimum: 0
+                    description: Positions neither occupied nor reserved.
+                    x-parser-schema-id: <anonymous-schema-57>
+                  open_jobs:
+                    type: integer
+                    minimum: 0
+                    description: Store and retrieve jobs without an outcome.
+                    x-parser-schema-id: <anonymous-schema-58>
+                  measured_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-59>
+                x-parser-schema-id: <anonymous-schema-52>
+            x-parser-schema-id: <anonymous-schema-50>
+        x-parser-schema-id: AsrsCapacityChangedEvent
+      examples:
+        - name: one-unit-held
+          summary: One of two units is held.
+          payload:
+            specversion: '1.0'
+            id: 51111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+            subject: ASRS1
+            time: '2026-11-20T08:06:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:AsrsCapacityChanged:v1
+            data:
+              asrs_id: ASRS1
+              units_total: 2
+              units_available: 1
+              positions_total: 1280
+              positions_free: 1200
+              open_jobs: 3
+              measured_at: '2026-11-20T08:06:00Z'
+      messageId: asrs-control-AsrsCapacityChanged
+    ContainerPresentedAtPortAnalytics:
+      x-no-consumer-reason: >-
+        pending: material-flow-control (plan WCS-04, designed in warehouse-docs
+        wcs/, not built yet) is the intended consumer (WCS context map
+        relationship 5, ADR 0003 type catalogue); no fleet context declares or
+        handles this type yet.
+      name: ContainerPresentedAtPort
+      title: Container presented at port
+      summary: >-
+        A retrieve job's container arrived at its output port, in request order
+        per port.
+      description: >-
+        `type` =
+        `com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort`;
+        subject = the storage job id. `scan_result` NO_READ or MISMATCH sends
+        the container to clarification (material-flow-control).
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: >-
+                  com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+                x-parser-schema-id: <anonymous-schema-19>
+              data:
+                type: object
+                required:
+                  - storage_job_id
+                  - asrs_id
+                  - container_id
+                  - port_id
+                  - scan_result
+                  - presented_at
+                properties:
+                  storage_job_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-21>
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-22>
+                  container_id:
+                    type: string
+                    description: The container the job retrieved.
+                    x-parser-schema-id: <anonymous-schema-23>
+                  port_id:
+                    type: string
+                    description: The output port.
+                    x-parser-schema-id: <anonymous-schema-24>
+                  reference:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-25>
+                  scan_result:
+                    type: string
+                    enum:
+                      - READ
+                      - NO_READ
+                      - MISMATCH
+                    x-parser-schema-id: <anonymous-schema-26>
+                  scanned_container_id:
+                    type: string
+                    description: What the port read; absent on NO_READ.
+                    x-parser-schema-id: <anonymous-schema-27>
+                  presented_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-28>
+                  plc_timestamp:
+                    type: string
+                    format: date-time
+                    description: >-
+                      The PLC telegram's timestamp (simulated time in the
+                      emulator). Absent when the fact did not come from a
+                      telegram.
+                    x-parser-schema-id: PlcTimestamp
+                x-parser-schema-id: <anonymous-schema-20>
+            x-parser-schema-id: <anonymous-schema-18>
+        x-parser-schema-id: ContainerPresentedAtPortEvent
+      examples:
+        - name: presented
+          summary: Container C-0001 presented at OUT1 and read correctly.
+          payload:
+            specversion: '1.0'
+            id: 21111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+            subject: sj-8b21
+            time: '2026-11-20T08:05:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:ContainerPresentedAtPort:v1
+            data:
+              storage_job_id: sj-8b21
+              asrs_id: ASRS1
+              container_id: C-0001
+              port_id: OUT1
+              scan_result: READ
+              scanned_container_id: C-0001
+              presented_at: '2026-11-20T08:05:00Z'
+              plc_timestamp: '2026-11-20T08:55:00Z'
+      messageId: asrs-control-ContainerPresentedAtPortAnalytics
+    StorageJobFailedAnalytics:
+      x-no-consumer-reason: >-
+        pending: material-flow-control (plan WCS-04, designed in warehouse-docs
+        wcs/, not built yet) and, for reason EQUIPMENT_FAULT,
+        exception-management (plan WCS-05b, not built yet) are the intended
+        consumers (ADR 0003 type catalogue); neither declares or handles this
+        type yet.
+      name: StorageJobFailed
+      title: Storage job failed
+      summary: A store or retrieve job ended without its outcome, or was cancelled.
+      description: >-
+        `type` = `com.warehouse.wes.asrs-control.storagejob.StorageJobFailed`;
+        subject = the storage job id. Intended for exception-management to open
+        a case for reason EQUIPMENT_FAULT (plan WCS-05b, not built yet).
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+                x-parser-schema-id: <anonymous-schema-30>
+              data:
+                type: object
+                required:
+                  - storage_job_id
+                  - asrs_id
+                  - job_kind
+                  - container_id
+                  - port_id
+                  - reason
+                  - failed_at
+                properties:
+                  storage_job_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-32>
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-33>
+                  job_kind:
+                    type: string
+                    enum:
+                      - STORE
+                      - RETRIEVE
+                    x-parser-schema-id: <anonymous-schema-34>
+                  container_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-35>
+                  port_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-36>
+                  reference:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-37>
+                  reason:
+                    type: string
+                    enum:
+                      - CANCELLED
+                      - EQUIPMENT_FAULT
+                      - EQUIPMENT_UNREACHABLE
+                      - COMMAND_REFUSED
+                      - CONTAINER_NOT_AT_PORT
+                      - STORAGE_MAP_MISMATCH
+                      - PORT_OCCUPIED
+                      - RESHUFFLE_FAILED
+                      - NO_RESHUFFLE_POSITION
+                    x-parser-schema-id: <anonymous-schema-38>
+                  plc_reason:
+                    type: string
+                    description: The PLC's bare reason code
+                    when the failure came from the PLC.: null
+                    x-parser-schema-id: <anonymous-schema-39>
+                  failed_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-40>
+                  plc_timestamp:
+                    type: string
+                    format: date-time
+                    description: >-
+                      The PLC telegram's timestamp (simulated time in the
+                      emulator). Absent when the fact did not come from a
+                      telegram.
+                    x-parser-schema-id: PlcTimestamp
+                x-parser-schema-id: <anonymous-schema-31>
+            x-parser-schema-id: <anonymous-schema-29>
+        x-parser-schema-id: StorageJobFailedEvent
+      examples:
+        - name: equipment-fault
+          summary: A queued retrieve failed because its aisle's unit was held.
+          payload:
+            specversion: '1.0'
+            id: 31111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+            subject: sj-9c02
+            time: '2026-11-20T08:06:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:StorageJobFailed:v1
+            data:
+              storage_job_id: sj-9c02
+              asrs_id: ASRS1
+              job_kind: RETRIEVE
+              container_id: C-0002
+              port_id: OUT1
+              reason: EQUIPMENT_FAULT
+              failed_at: '2026-11-20T08:06:00Z'
+              plc_timestamp: '2026-11-20T09:05:00Z'
+      messageId: asrs-control-StorageJobFailedAnalytics
+    EquipmentStateChangedAnalytics:
+      x-no-consumer-reason: >-
+        pending: material-flow-control (plan WCS-04, designed in warehouse-docs
+        wcs/, not built yet) is the intended consumer (WCS context map
+        relationship 5, ADR 0003 type catalogue); no fleet context declares or
+        handles this type yet.
+      name: EquipmentStateChanged
+      title: Equipment state changed
+      summary: An aisle's shuttle-and-lift unit changed its PackML state.
+      description: >-
+        `type` =
+        `com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged`;
+        subject = `<asrsId>/<unitId>`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: equipmentunit
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: >-
+                  com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+                x-parser-schema-id: <anonymous-schema-42>
+              data:
+                type: object
+                required:
+                  - asrs_id
+                  - unit_id
+                  - aisle
+                  - state
+                  - previous_state
+                  - changed_at
+                properties:
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-44>
+                  unit_id:
+                    type: string
+                    description: 'A<aisle>: the aisle''s combined shuttle-and-lift unit.'
+                    x-parser-schema-id: <anonymous-schema-45>
+                  aisle:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-46>
+                  state:
+                    type: string
+                    enum:
+                      - IDLE
+                      - EXECUTE
+                      - HELD
+                    x-parser-schema-id: <anonymous-schema-47>
+                  previous_state:
+                    type: string
+                    enum:
+                      - IDLE
+                      - EXECUTE
+                      - HELD
+                    x-parser-schema-id: <anonymous-schema-48>
+                  changed_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-49>
+                  plc_timestamp:
+                    type: string
+                    format: date-time
+                    description: >-
+                      The PLC telegram's timestamp (simulated time in the
+                      emulator). Absent when the fact did not come from a
+                      telegram.
+                    x-parser-schema-id: PlcTimestamp
+                x-parser-schema-id: <anonymous-schema-43>
+            x-parser-schema-id: <anonymous-schema-41>
+        x-parser-schema-id: EquipmentStateChangedEvent
+      examples:
+        - name: held
+          summary: Unit A1 went to HELD.
+          payload:
+            specversion: '1.0'
+            id: 41111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+            subject: ASRS1/A1
+            time: '2026-11-20T08:06:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:EquipmentStateChanged:v1
+            data:
+              asrs_id: ASRS1
+              unit_id: A1
+              aisle: 1
+              state: HELD
+              previous_state: EXECUTE
+              changed_at: '2026-11-20T08:06:00Z'
+              plc_timestamp: '2026-11-20T09:05:00Z'
+      messageId: asrs-control-EquipmentStateChangedAnalytics
+    AsrsCapacityChangedAnalytics:
+      x-no-consumer-reason: >-
+        pending: material-flow-control (plan WCS-04, designed in warehouse-docs
+        wcs/, not built yet) is the intended consumer, for its capacity loop
+        (ADR 0003 type catalogue); no fleet context declares or handles this
+        type yet.
+      name: AsrsCapacityChanged
+      title: AS/RS capacity changed
+      summary: Units available, free positions or open jobs of an AS/RS changed.
+      description: >-
+        `type` = `com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged`;
+        subject = the AS/RS id. Intended to feed material-flow-control's
+        SubsystemCapacityChanged (plan 04, not built yet).
+      contentType: application/cloudevents+json
+      tags:
+        - name: asrs
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                description: UUID minted once per occurrence; consumers dedupe on it.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /warehouse/asrs-control
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                type: string
+                const: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+                x-parser-schema-id: <anonymous-schema-51>
+              data:
+                type: object
+                required:
+                  - asrs_id
+                  - units_total
+                  - units_available
+                  - positions_total
+                  - positions_free
+                  - open_jobs
+                  - measured_at
+                properties:
+                  asrs_id:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-53>
+                  units_total:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-54>
+                  units_available:
+                    type: integer
+                    minimum: 0
+                    description: Units not HELD.
+                    x-parser-schema-id: <anonymous-schema-55>
+                  positions_total:
+                    type: integer
+                    minimum: 1
+                    x-parser-schema-id: <anonymous-schema-56>
+                  positions_free:
+                    type: integer
+                    minimum: 0
+                    description: Positions neither occupied nor reserved.
+                    x-parser-schema-id: <anonymous-schema-57>
+                  open_jobs:
+                    type: integer
+                    minimum: 0
+                    description: Store and retrieve jobs without an outcome.
+                    x-parser-schema-id: <anonymous-schema-58>
+                  measured_at:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-59>
+                x-parser-schema-id: <anonymous-schema-52>
+            x-parser-schema-id: <anonymous-schema-50>
+        x-parser-schema-id: AsrsCapacityChangedEvent
+      examples:
+        - name: one-unit-held
+          summary: One of two units is held.
+          payload:
+            specversion: '1.0'
+            id: 51111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+            subject: ASRS1
+            time: '2026-11-20T08:06:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:AsrsCapacityChanged:v1
+            data:
+              asrs_id: ASRS1
+              units_total: 2
+              units_available: 1
+              positions_total: 1280
+              positions_free: 1200
+              open_jobs: 3
+              measured_at: '2026-11-20T08:06:00Z'
+      messageId: asrs-control-AsrsCapacityChangedAnalytics
+  schemas:
+    CloudEventEnvelope:
+      type: object
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - dataschema
+        - data
+      properties:
+        specversion:
+          type: string
+          const: '1.0'
+          x-parser-schema-id: <anonymous-schema-1>
+        id:
+          type: string
+          description: UUID minted once per occurrence; consumers dedupe on it.
+          x-parser-schema-id: <anonymous-schema-2>
+        source:
+          type: string
+          const: /warehouse/asrs-control
+          x-parser-schema-id: <anonymous-schema-3>
+        type:
+          type: string
+          description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+          x-parser-schema-id: <anonymous-schema-4>
+        subject:
+          type: string
+          x-parser-schema-id: <anonymous-schema-5>
+        time:
+          type: string
+          format: date-time
+          x-parser-schema-id: <anonymous-schema-6>
+        datacontenttype:
+          type: string
+          const: application/json
+          x-parser-schema-id: <anonymous-schema-7>
+        dataschema:
+          type: string
+          description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+          x-parser-schema-id: <anonymous-schema-8>
+      x-parser-schema-id: CloudEventEnvelope
+    PlcTimestamp:
+      type: string
+      format: date-time
+      description: >-
+        The PLC telegram's timestamp (simulated time in the emulator). Absent
+        when the fact did not come from a telegram.
+      x-parser-schema-id: PlcTimestamp
+    ContainerStoredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              description: UUID minted once per occurrence; consumers dedupe on it.
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              const: /warehouse/asrs-control
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            type:
+              type: string
+              const: com.warehouse.wes.asrs-control.storagejob.ContainerStored
+              x-parser-schema-id: <anonymous-schema-10>
+            data:
+              type: object
+              required:
+                - storage_job_id
+                - asrs_id
+                - container_id
+                - port_id
+                - stored_at
+              properties:
+                storage_job_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-12>
+                asrs_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-13>
+                container_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-14>
+                port_id:
+                  type: string
+                  description: The input port.
+                  x-parser-schema-id: <anonymous-schema-15>
+                reference:
+                  type: string
+                  description: The caller's reference from the request
+                  when given.: null
+                  x-parser-schema-id: <anonymous-schema-16>
+                stored_at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-17>
+                plc_timestamp:
+                  type: string
+                  format: date-time
+                  description: >-
+                    The PLC telegram's timestamp (simulated time in the
+                    emulator). Absent when the fact did not come from a
+                    telegram.
+                  x-parser-schema-id: PlcTimestamp
+              x-parser-schema-id: <anonymous-schema-11>
+          x-parser-schema-id: <anonymous-schema-9>
+      x-parser-schema-id: ContainerStoredEvent
+    ContainerPresentedAtPortEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              description: UUID minted once per occurrence; consumers dedupe on it.
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              const: /warehouse/asrs-control
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            type:
+              type: string
+              const: >-
+                com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+              x-parser-schema-id: <anonymous-schema-19>
+            data:
+              type: object
+              required:
+                - storage_job_id
+                - asrs_id
+                - container_id
+                - port_id
+                - scan_result
+                - presented_at
+              properties:
+                storage_job_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-21>
+                asrs_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-22>
+                container_id:
+                  type: string
+                  description: The container the job retrieved.
+                  x-parser-schema-id: <anonymous-schema-23>
+                port_id:
+                  type: string
+                  description: The output port.
+                  x-parser-schema-id: <anonymous-schema-24>
+                reference:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-25>
+                scan_result:
+                  type: string
+                  enum:
+                    - READ
+                    - NO_READ
+                    - MISMATCH
+                  x-parser-schema-id: <anonymous-schema-26>
+                scanned_container_id:
+                  type: string
+                  description: What the port read; absent on NO_READ.
+                  x-parser-schema-id: <anonymous-schema-27>
+                presented_at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-28>
+                plc_timestamp:
+                  type: string
+                  format: date-time
+                  description: >-
+                    The PLC telegram's timestamp (simulated time in the
+                    emulator). Absent when the fact did not come from a
+                    telegram.
+                  x-parser-schema-id: PlcTimestamp
+              x-parser-schema-id: <anonymous-schema-20>
+          x-parser-schema-id: <anonymous-schema-18>
+      x-parser-schema-id: ContainerPresentedAtPortEvent
+    StorageJobFailedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              description: UUID minted once per occurrence; consumers dedupe on it.
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              const: /warehouse/asrs-control
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            type:
+              type: string
+              const: com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+              x-parser-schema-id: <anonymous-schema-30>
+            data:
+              type: object
+              required:
+                - storage_job_id
+                - asrs_id
+                - job_kind
+                - container_id
+                - port_id
+                - reason
+                - failed_at
+              properties:
+                storage_job_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-32>
+                asrs_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-33>
+                job_kind:
+                  type: string
+                  enum:
+                    - STORE
+                    - RETRIEVE
+                  x-parser-schema-id: <anonymous-schema-34>
+                container_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-35>
+                port_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-36>
+                reference:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-37>
+                reason:
+                  type: string
+                  enum:
+                    - CANCELLED
+                    - EQUIPMENT_FAULT
+                    - EQUIPMENT_UNREACHABLE
+                    - COMMAND_REFUSED
+                    - CONTAINER_NOT_AT_PORT
+                    - STORAGE_MAP_MISMATCH
+                    - PORT_OCCUPIED
+                    - RESHUFFLE_FAILED
+                    - NO_RESHUFFLE_POSITION
+                  x-parser-schema-id: <anonymous-schema-38>
+                plc_reason:
+                  type: string
+                  description: The PLC's bare reason code
+                  when the failure came from the PLC.: null
+                  x-parser-schema-id: <anonymous-schema-39>
+                failed_at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-40>
+                plc_timestamp:
+                  type: string
+                  format: date-time
+                  description: >-
+                    The PLC telegram's timestamp (simulated time in the
+                    emulator). Absent when the fact did not come from a
+                    telegram.
+                  x-parser-schema-id: PlcTimestamp
+              x-parser-schema-id: <anonymous-schema-31>
+          x-parser-schema-id: <anonymous-schema-29>
+      x-parser-schema-id: StorageJobFailedEvent
+    EquipmentStateChangedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              description: UUID minted once per occurrence; consumers dedupe on it.
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              const: /warehouse/asrs-control
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            type:
+              type: string
+              const: >-
+                com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+              x-parser-schema-id: <anonymous-schema-42>
+            data:
+              type: object
+              required:
+                - asrs_id
+                - unit_id
+                - aisle
+                - state
+                - previous_state
+                - changed_at
+              properties:
+                asrs_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-44>
+                unit_id:
+                  type: string
+                  description: 'A<aisle>: the aisle''s combined shuttle-and-lift unit.'
+                  x-parser-schema-id: <anonymous-schema-45>
+                aisle:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-46>
+                state:
+                  type: string
+                  enum:
+                    - IDLE
+                    - EXECUTE
+                    - HELD
+                  x-parser-schema-id: <anonymous-schema-47>
+                previous_state:
+                  type: string
+                  enum:
+                    - IDLE
+                    - EXECUTE
+                    - HELD
+                  x-parser-schema-id: <anonymous-schema-48>
+                changed_at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-49>
+                plc_timestamp:
+                  type: string
+                  format: date-time
+                  description: >-
+                    The PLC telegram's timestamp (simulated time in the
+                    emulator). Absent when the fact did not come from a
+                    telegram.
+                  x-parser-schema-id: PlcTimestamp
+              x-parser-schema-id: <anonymous-schema-43>
+          x-parser-schema-id: <anonymous-schema-41>
+      x-parser-schema-id: EquipmentStateChangedEvent
+    AsrsCapacityChangedEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              description: UUID minted once per occurrence; consumers dedupe on it.
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              const: /warehouse/asrs-control
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              description: com.warehouse.wes.asrs-control.<entity>.<EventName>.
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              description: urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            type:
+              type: string
+              const: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+              x-parser-schema-id: <anonymous-schema-51>
+            data:
+              type: object
+              required:
+                - asrs_id
+                - units_total
+                - units_available
+                - positions_total
+                - positions_free
+                - open_jobs
+                - measured_at
+              properties:
+                asrs_id:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-53>
+                units_total:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-54>
+                units_available:
+                  type: integer
+                  minimum: 0
+                  description: Units not HELD.
+                  x-parser-schema-id: <anonymous-schema-55>
+                positions_total:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-56>
+                positions_free:
+                  type: integer
+                  minimum: 0
+                  description: Positions neither occupied nor reserved.
+                  x-parser-schema-id: <anonymous-schema-57>
+                open_jobs:
+                  type: integer
+                  minimum: 0
+                  description: Store and retrieve jobs without an outcome.
+                  x-parser-schema-id: <anonymous-schema-58>
+                measured_at:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-59>
+              x-parser-schema-id: <anonymous-schema-52>
+          x-parser-schema-id: <anonymous-schema-50>
+      x-parser-schema-id: AsrsCapacityChangedEvent
+    TelegramPosition:
+      type: object
+      required:
+        - aisle
+        - level
+        - slot
+        - depth
+      description: One rack position; only ever on the PLC link.
+      properties:
+        aisle:
+          type: integer
+          minimum: 1
+          x-parser-schema-id: <anonymous-schema-60>
+        level:
+          type: integer
+          minimum: 1
+          x-parser-schema-id: <anonymous-schema-61>
+        slot:
+          type: integer
+          minimum: 1
+          x-parser-schema-id: <anonymous-schema-62>
+        depth:
+          type: integer
+          enum:
+            - 1
+            - 2
+          description: 1 front
+          2 back (double-deep racks only).: null
+          x-parser-schema-id: <anonymous-schema-63>
+      x-parser-schema-id: TelegramPosition
+    TelegramBase:
+      type: object
+      required:
+        - telegramId
+        - type
+        - timestamp
+      properties:
+        telegramId:
+          type: string
+          description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+          x-parser-schema-id: <anonymous-schema-64>
+        type:
+          type: string
+          x-parser-schema-id: <anonymous-schema-65>
+        timestamp:
+          type: string
+          description: >-
+            RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On up
+            telegrams it is the PLC's (simulated) time and becomes
+            `plc_timestamp` on the events.
+          x-parser-schema-id: <anonymous-schema-66>
+      x-parser-schema-id: TelegramBase
+    StoreTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          required:
+            - jobId
+            - containerId
+            - portId
+            - to
+          properties:
+            type:
+              type: string
+              const: STORE
+              x-parser-schema-id: <anonymous-schema-68>
+            jobId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-69>
+            containerId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-70>
+            portId:
+              type: string
+              description: Input port.
+              x-parser-schema-id: <anonymous-schema-71>
+            to:
+              type: object
+              required:
+                - aisle
+                - level
+                - slot
+                - depth
+              description: One rack position; only ever on the PLC link.
+              properties:
+                aisle:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-60>
+                level:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-61>
+                slot:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-62>
+                depth:
+                  type: integer
+                  enum:
+                    - 1
+                    - 2
+                  description: 1 front
+                  2 back (double-deep racks only).: null
+                  x-parser-schema-id: <anonymous-schema-63>
+              x-parser-schema-id: TelegramPosition
+          x-parser-schema-id: <anonymous-schema-67>
+      x-parser-schema-id: StoreTelegram
+    RetrieveTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          required:
+            - jobId
+            - containerId
+            - portId
+            - from
+          properties:
+            type:
+              type: string
+              const: RETRIEVE
+              x-parser-schema-id: <anonymous-schema-73>
+            jobId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-74>
+            containerId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-75>
+            portId:
+              type: string
+              description: Output port.
+              x-parser-schema-id: <anonymous-schema-76>
+            from:
+              type: object
+              required:
+                - aisle
+                - level
+                - slot
+                - depth
+              description: One rack position; only ever on the PLC link.
+              properties:
+                aisle:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-60>
+                level:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-61>
+                slot:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-62>
+                depth:
+                  type: integer
+                  enum:
+                    - 1
+                    - 2
+                  description: 1 front
+                  2 back (double-deep racks only).: null
+                  x-parser-schema-id: <anonymous-schema-63>
+              x-parser-schema-id: TelegramPosition
+          x-parser-schema-id: <anonymous-schema-72>
+      x-parser-schema-id: RetrieveTelegram
+    MoveTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          required:
+            - jobId
+            - containerId
+            - from
+            - to
+          properties:
+            type:
+              type: string
+              const: MOVE
+              x-parser-schema-id: <anonymous-schema-78>
+            jobId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-79>
+            containerId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-80>
+            from:
+              type: object
+              required:
+                - aisle
+                - level
+                - slot
+                - depth
+              description: One rack position; only ever on the PLC link.
+              properties:
+                aisle:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-60>
+                level:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-61>
+                slot:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-62>
+                depth:
+                  type: integer
+                  enum:
+                    - 1
+                    - 2
+                  description: 1 front
+                  2 back (double-deep racks only).: null
+                  x-parser-schema-id: <anonymous-schema-63>
+              x-parser-schema-id: TelegramPosition
+            to:
+              type: object
+              required:
+                - aisle
+                - level
+                - slot
+                - depth
+              description: One rack position; only ever on the PLC link.
+              properties:
+                aisle:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-60>
+                level:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-61>
+                slot:
+                  type: integer
+                  minimum: 1
+                  x-parser-schema-id: <anonymous-schema-62>
+                depth:
+                  type: integer
+                  enum:
+                    - 1
+                    - 2
+                  description: 1 front
+                  2 back (double-deep racks only).: null
+                  x-parser-schema-id: <anonymous-schema-63>
+              x-parser-schema-id: TelegramPosition
+          x-parser-schema-id: <anonymous-schema-77>
+      x-parser-schema-id: MoveTelegram
+    CancelTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          required:
+            - jobId
+          properties:
+            type:
+              type: string
+              const: CANCEL
+              x-parser-schema-id: <anonymous-schema-82>
+            jobId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-83>
+          x-parser-schema-id: <anonymous-schema-81>
+      x-parser-schema-id: CancelTelegram
+    StateRequestTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          properties:
+            type:
+              type: string
+              const: STATE_REQUEST
+              x-parser-schema-id: <anonymous-schema-85>
+          x-parser-schema-id: <anonymous-schema-84>
+      x-parser-schema-id: StateRequestTelegram
+    AckTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          required:
+            - ackTelegramId
+            - accepted
+          properties:
+            type:
+              type: string
+              const: ACK
+              x-parser-schema-id: <anonymous-schema-87>
+            ackTelegramId:
+              type: string
+              description: The telegramId being acknowledged.
+              x-parser-schema-id: <anonymous-schema-88>
+            accepted:
+              type: boolean
+              x-parser-schema-id: <anonymous-schema-89>
+            reason:
+              type: string
+              description: >-
+                Bare code, present when not accepted. asrs-control only ever
+                refuses with MALFORMED. NOT_READY from the PLC is transient (the
+                telegram is resent); every other refusal of a command fails its
+                job with COMMAND_REFUSED, and a refused CANCEL is reverted.
+              enum:
+                - UNKNOWN_PORT
+                - WRONG_PORT_KIND
+                - INVALID_POSITION
+                - DUPLICATE_JOB
+                - AISLE_MISMATCH
+                - UNKNOWN_JOB
+                - JOB_RUNNING
+                - MALFORMED
+                - NOT_READY
+              x-parser-schema-id: <anonymous-schema-90>
+          x-parser-schema-id: <anonymous-schema-86>
+      x-parser-schema-id: AckTelegram
+    JobDoneTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          required:
+            - jobId
+          properties:
+            type:
+              type: string
+              const: JOB_DONE
+              x-parser-schema-id: <anonymous-schema-92>
+            jobId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-93>
+          x-parser-schema-id: <anonymous-schema-91>
+      x-parser-schema-id: JobDoneTelegram
+    JobFailedTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          required:
+            - jobId
+            - reason
+          properties:
+            type:
+              type: string
+              const: JOB_FAILED
+              x-parser-schema-id: <anonymous-schema-95>
+            jobId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-96>
+            reason:
+              type: string
+              description: Bare code.
+              enum:
+                - CONTAINER_NOT_AT_PORT
+                - CONTAINER_NOT_AT_POSITION
+                - POSITION_OCCUPIED
+                - POSITION_BLOCKED
+                - PORT_OCCUPIED
+              x-parser-schema-id: <anonymous-schema-97>
+          x-parser-schema-id: <anonymous-schema-94>
+      x-parser-schema-id: JobFailedTelegram
+    UnitStateTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          required:
+            - unitId
+            - state
+          properties:
+            type:
+              type: string
+              const: UNIT_STATE
+              x-parser-schema-id: <anonymous-schema-99>
+            unitId:
+              type: string
+              description: A<aisle>.
+              x-parser-schema-id: <anonymous-schema-100>
+            state:
+              type: string
+              enum:
+                - IDLE
+                - EXECUTE
+                - HELD
+              description: PackML names; protocol v1 sends no other state.
+              x-parser-schema-id: <anonymous-schema-101>
+          x-parser-schema-id: <anonymous-schema-98>
+      x-parser-schema-id: UnitStateTelegram
+    PortArrivalTelegram:
+      allOf:
+        - type: object
+          required:
+            - telegramId
+            - type
+            - timestamp
+          properties:
+            telegramId:
+              type: string
+              description: A UUID; a retransmission keeps it, the receiver dedupes on it.
+              x-parser-schema-id: <anonymous-schema-64>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-65>
+            timestamp:
+              type: string
+              description: >-
+                RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On
+                up telegrams it is the PLC's (simulated) time and becomes
+                `plc_timestamp` on the events.
+              x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: TelegramBase
+        - type: object
+          required:
+            - portId
+          properties:
+            type:
+              type: string
+              const: PORT_ARRIVAL
+              x-parser-schema-id: <anonymous-schema-103>
+            containerId:
+              type: string
+              description: What the port read; absent means no-read.
+              x-parser-schema-id: <anonymous-schema-104>
+            portId:
+              type: string
+              x-parser-schema-id: <anonymous-schema-105>
+          x-parser-schema-id: <anonymous-schema-102>
+      x-parser-schema-id: PortArrivalTelegram
+x-parser-spec-parsed: true
+x-parser-api-version: 3

@@ -201,7 +201,7 @@ paths:
     post:
       operationId: proposePathPlan
       summary: Propose planned heads for a path (pure computation, not committed)
-      description: 'Computes `heads = ceil(charge / plannedRate)` for one path and raises ShiftPlanProposed for visibility — it persists nothing and commits nothing. A human must still call POST /shift-plans to commit an actual ShiftPlan. This is why the response is 200, not 201: no resource is created. When a high observed idle share (idleness-as-staffing-signal, fed back from labor-performance via `LABOR_PERFORMANCE_MODE=kafka-cache`) is available for this path''s task type and exceeds `IDLE_SHARE_TRIM_THRESHOLD` (default 0.30), the computed heads are further trimmed (floored at 1 head minimum) and `trimReason` explains why — fail-open: no idle-share signal available applies no trim.'
+      description: 'Two forms (ADR 0043). FROM THE LABOUR PLAN: omit `charge` and name `shiftId` (with `siteCode`): `proposedHeads` is the `planned_heads` warehouse-planning published for (siteCode, shiftId, pathId) in LabourPlanCommitted (this service keeps a local copy), `resolvedRate` its `rate_units_per_hour`, `rateSource` is `labour-plan` and NO idle-share trim applies; nothing published is 404 labour-plan-not-found, never zero heads. CHARGE-BASED (DEPRECATED, unchanged; removed only by a later ADR once no caller sends a charge): a request with `charge`, even one that also names `shiftId`, works as described below. Neither `charge` nor `shiftId` is 400 missing-charge. Both forms raise ShiftPlanProposed. Computes `heads = ceil(charge / plannedRate)` for one path and raises ShiftPlanProposed for visibility — it persists nothing and commits nothing. A human must still call POST /shift-plans to commit an actual ShiftPlan. This is why the response is 200, not 201: no resource is created. When a high observed idle share (idleness-as-staffing-signal, fed back from labor-performance via `LABOR_PERFORMANCE_MODE=kafka-cache`) is available for this path''s task type and exceeds `IDLE_SHARE_TRIM_THRESHOLD` (default 0.30), the computed heads are further trimmed (floored at 1 head minimum) and `trimReason` explains why — fail-open: no idle-share signal available applies no trim.'
       tags:
         - Shift Plans
       parameters:
@@ -213,10 +213,18 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ProposePathPlanRequest'
-            example:
-              siteCode: WH1
-              charge: 100
-              plannedRate: 30
+            examples:
+              fromLabourPlan:
+                summary: Heads from warehouse-planning's published labour plan (ADR 0043)
+                value:
+                  siteCode: WH1
+                  shiftId: 2026-11-18-day
+              chargeBased:
+                summary: DEPRECATED charge-based proposal (unchanged)
+                value:
+                  siteCode: WH1
+                  charge: 100
+                  plannedRate: 30
       responses:
         '200':
           headers:
@@ -234,6 +242,18 @@ paths:
                 rateSource: caller
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          description: No charge was sent and warehouse-planning has published no labour plan for (siteCode, shiftId, pathId) (labour-plan-not-found, ADR 0043). Never answered as zero heads.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://errors.workforce-management.warehouse-systems.dev/labour-plan-not-found
+                title: No labour plan has been published for this site, shift and path
+                status: 404
+                detail: 'site "WH1" shift "2026-11-18-day" path "pack": no labour plan has been published for this site, shift and path'
+                instance: /paths/pack/plan-proposals
         '409':
           $ref: '#/components/responses/IdempotencyKeyReused'
         '422':
@@ -244,7 +264,7 @@ paths:
     post:
       operationId: commitShiftPlan
       summary: Commit a shift's headcount split across paths
-      description: 'Commits a human-decided ShiftPlan: one or more PathPlan lines (path, plannedHeads, plannedRate, plannedHours), raising ShiftPlanCommitted. Validates, per line, that plannedHeads does not exceed the caller-supplied installedStations for that path (this context enforces the invariant independently — it has no dependency on Work Planning, which owns installed-station counts — the request carries the number it needs), that plannedHeads does not exceed the LIVE installed capacity fulfillment-execution reports for that path''s capability (a SEPARATE, independent check — see ADR-0014; fetched fresh on every commit, and this service fails the entire commit loud, without any fallback, if fulfillment-execution cannot be reached). The capability is resolved through the process-path catalogue, never taken from pathId: a path''s live ceiling is the number of stations registered with each of its declared requiredCapabilities (the smallest count when it declares several), so pathId PICK (or pick-zone-a) is checked against stations holding capability pick. A pathId the catalogue does not declare is rejected with 400 unknown-path-id. It also validates that plannedHours does not exceed plannedHeads * the configured max hours per shift. Naturally idempotent by the client-supplied (siteCode, shiftId) key (siteCode is the canonical name of the plan key, buildingId its deprecated alias with the same value and the same stored column; ADR 0035): the underlying repository upserts on that key. A blind retry would nevertheless re-publish ShiftPlanCommitted, so this route is also protected by the Idempotency-Key header (ADR-0027): a retried request with the same key and body replays the first response without committing or publishing again.'
+      description: 'Commits a human-decided ShiftPlan: one or more PathPlan lines (path, plannedHeads, plannedRate, plannedHours), raising ShiftPlanCommitted. Validates, per line, that plannedHeads does not exceed the caller-supplied installedStations for that path (this context enforces the invariant independently — it has no dependency on Work Planning, which owns installed-station counts — the request carries the number it needs), that plannedHeads does not exceed the LIVE installed capacity fulfillment-execution reports for that path''s capability (a SEPARATE, independent check — see ADR-0014; fetched fresh on every commit, and this service fails the entire commit loud, without any fallback, if fulfillment-execution cannot be reached). The capability is resolved through the process-path catalogue, never taken from pathId: a path''s live ceiling is the number of stations registered with each of its declared requiredCapabilities (the smallest count when it declares several), so pathId PICK (or pick-zone-a) is checked against stations holding capability pick. A pathId the catalogue does not declare is rejected with 400 unknown-path-id. It also validates that plannedHours does not exceed plannedHeads * the configured max hours per shift. Naturally idempotent by the client-supplied (siteCode, shiftId) key (siteCode is the canonical name of the plan key, buildingId its deprecated alias with the same value and the same stored column; ADR 0035): the underlying repository upserts on that key. A blind retry would nevertheless re-publish ShiftPlanCommitted, so this route is also protected by the Idempotency-Key header (ADR-0027, ADR-0044): a retried request with the same key and body replays the first response without committing or publishing again — unless the first answer was RETRYABLE (e.g. exceeds-installed-capacity, concurrent-modification), which is not stored: the key is released and the retry executes again.'
       tags:
         - Shift Plans
       parameters:
@@ -347,7 +367,7 @@ paths:
     post:
       operationId: assignLabor
       summary: Assign an associate to a path
-      description: 'Puts an associate on pathId for a new interval, raising LaborAssigned (first assignment) or LaborReassigned (an assignment was already active). The "exactly one ACTIVE assignment per associate" invariant is enforced by construction, not by rejecting a second call: if the associate already has an active assignment, it is closed first (its hours are logged against the associate''s shift) and the new one starts — this matches how rebalancing actually happens on the floor, a supervisor moves someone without first "unassigning" them. The assignment requires the associate hold the path''s required certification (by convention, the Certification with the same name as the PathId — e.g. path "pack" requires certification "pack"), and is rejected if the associate is currently on a logged break or their shift has ended. Because each call closes the prior interval and raises an event, a blind retry would double-apply it, so this route is protected by the Idempotency-Key header (ADR-0027): a retried request with the same key and body replays the first response.'
+      description: 'Puts an associate on pathId for a new interval, raising LaborAssigned (first assignment) or LaborReassigned (an assignment was already active). The "exactly one ACTIVE assignment per associate" invariant is enforced by construction, not by rejecting a second call: if the associate already has an active assignment, it is closed first (its hours are logged against the associate''s shift) and the new one starts — this matches how rebalancing actually happens on the floor, a supervisor moves someone without first "unassigning" them. The assignment requires the associate hold the path''s required certification (by convention, the Certification with the same name as the PathId — e.g. path "pack" requires certification "pack"), and is rejected if the associate is currently on a logged break or their shift has ended. Because each call closes the prior interval and raises an event, a blind retry would double-apply it, so this route is protected by the Idempotency-Key header (ADR-0027, ADR-0044): a retried request with the same key and body replays the first response — unless the first answer was RETRYABLE (e.g. certification-required, associate-on-break, concurrent-modification), which is not stored: the key is released and the retry executes again once the state allows it.'
       tags:
         - Assignments
       parameters:
@@ -751,7 +771,7 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: 'Caller-generated key (e.g. a UUID v4) that makes a retried request safe (ADR-0027). Required on every POST: the service runs on Postgres in every deployment (ADR-0038) and rejects a request without it with 400 idempotency-key-required. Reuse the SAME key for retries of one logical request (same body) — the first response, success or business error, is stored and replayed byte-for-byte for the key''s TTL (24h by default) — and a NEW key for each new logical request. Reusing a key with a different request (method, path or body) is rejected with 409 idempotency-key-reused. A key that is not 1-128 printable ASCII characters that start and end with a visible character is a 400 idempotency-key-invalid. The pattern describes the header as sent on the wire (ADR-0042): the key itself (1-128 characters, visible first and last character), optionally followed by spaces or tabs. That trailing whitespace is HTTP optional whitespace (RFC 9112 field-line grammar): the HTTP stack drops it before the service reads the value (RFC 9110 section 5.5), so it is never part of the key. Leading whitespace is not in the pattern because HTTP clients do not send it. Every POST of this service takes the key; the key is global (looked up by key alone), so one key must never be reused across routes.'
+      description: 'Caller-generated key (e.g. a UUID v4) that makes a retried request safe (ADR-0027). Required on every POST: the service runs on Postgres in every deployment (ADR-0038) and rejects a request without it with 400 idempotency-key-required. Reuse the SAME key for retries of one logical request (same body) — the first response is stored and replayed byte-for-byte for the key''s TTL (24h by default) when it is final for that request: a 2xx, a request-shape 400/422, or a FINAL conflict whose every operand the request itself carries (planned-heads-exceed-installed, planned-hours-exceed-capacity) — and a NEW key for each new logical request. A RETRYABLE refusal (404 resource-not-found or labour-plan-not-found, 400 unknown-path-id, the associate-state 409s, exceeds-installed-capacity, concurrent-modification) is NOT stored (ADR-0044): the key is released, so the same key and body executes again once the state allows it — and a different body under that key is a new request, not a 409. A 5xx answer is never stored: the request''s writes and the key roll back, so a retry with the same key runs again. Reusing a key with a different request (method, path or body) is rejected with 409 idempotency-key-reused. A key that is not 1-128 printable ASCII characters that start and end with a visible character is a 400 idempotency-key-invalid. The pattern describes the header as sent on the wire (ADR-0042): the key itself (1-128 characters, visible first and last character), optionally followed by spaces or tabs. That trailing whitespace is HTTP optional whitespace (RFC 9112 field-line grammar): the HTTP stack drops it before the service reads the value (RFC 9110 section 5.5), so it is never part of the key. Leading whitespace is not in the pattern because HTTP clients do not send it. Every POST of this service takes the key; the key is global (looked up by key alone), so one key must never be reused across routes.'
       schema:
         type: string
         minLength: 1
@@ -918,9 +938,7 @@ components:
           example: hazmat
     ProposePathPlanRequest:
       type: object
-      description: The ShiftPlan key is the canonical `siteCode`; `buildingId` is its DEPRECATED alias (same value; ADR 0035). Send at least one. Both present with different values is rejected with 422 conflicting-site-and-building.
-      required:
-        - charge
+      description: The ShiftPlan key is the canonical `siteCode`; `buildingId` is its DEPRECATED alias (same value; ADR 0035). Send at least one. Both present with different values is rejected with 422 conflicting-site-and-building. Send `charge` (the DEPRECATED charge-based proposal) or omit it and name `shiftId` (the proposal from warehouse-planning's published labour plan, ADR 0043).
       anyOf:
         - required:
             - siteCode
@@ -938,10 +956,15 @@ components:
           deprecated: true
           description: DEPRECATED -- use siteCode. Alias of siteCode with the same value. Required only when siteCode is not sent.
           example: WH1
+        shiftId:
+          type: string
+          description: 'OPTIONAL (ADR 0043). The shift whose published labour plan to read. Used only when `charge` is omitted: the proposal is then the heads warehouse-planning published for (siteCode, shiftId, pathId), untrimmed; nothing published is 404 labour-plan-not-found. Ignored when `charge` is sent.'
+          example: 2026-11-18-day
         charge:
           type: number
           format: double
-          description: 'The volume of work (units) to be covered on this path. Required: omitting it (or sending null) is rejected with a 400 missing-charge problem; an explicit 0 is a valid "nothing to do" charge.'
+          deprecated: true
+          description: 'DEPRECATED (ADR 0043 decision 3): the volume of work (units) to be covered on this path; a request with it behaves exactly as before. Omit it and name `shiftId` to get the published requirement instead. Omitting both `charge` and `shiftId` (or sending a null charge without a shiftId) is rejected with a 400 missing-charge problem; an explicit 0 is a valid "nothing to do" charge.'
           example: 100
         plannedRate:
           type: number
@@ -961,7 +984,7 @@ components:
           example: pack
         proposedHeads:
           type: integer
-          description: ceil(charge / resolvedRate), further trimmed when a high observed idle share exceeds IDLE_SHARE_TRIM_THRESHOLD (see trimReason). Not committed.
+          description: 'Charge-based: ceil(charge / resolvedRate), further trimmed when a high observed idle share exceeds IDLE_SHARE_TRIM_THRESHOLD (see trimReason). From the labour plan (rateSource labour-plan): the published planned_heads, never trimmed. Not committed.'
           example: 4
         resolvedRate:
           type: number
@@ -973,7 +996,8 @@ components:
           enum:
             - caller
             - measured
-          description: 'Where resolvedRate came from: "caller" (a supplied plannedRate, or no rate was available at all) or "measured" (fed back from labor-performance). Lets a human see why proposedHeads came back 0 (no rate from either source) rather than guessing.'
+            - labour-plan
+          description: 'Where resolvedRate came from: "caller" (a supplied plannedRate, or no rate was available at all), "measured" (fed back from labor-performance) or "labour-plan" (ADR 0043: heads and rate as warehouse-planning published them; clients must tolerate unknown values). Lets a human see why proposedHeads came back 0 (no rate from either source) rather than guessing.'
           example: caller
         trimReason:
           type: string
@@ -1064,6 +1088,11 @@ components:
           type: number
           format: double
           example: 24
+        requiredHeads:
+          type: integer
+          minimum: 0
+          description: 'ADDITIVE (ADR 0043 decision 4). The heads warehouse-planning published for this line''s (siteCode, shiftId, pathId) in LabourPlanCommitted, shown next to the committed plannedHeads. Omitted when nothing was published. Never enforced: a line committing fewer heads than required is accepted.'
+          example: 4
     ShiftPlanResponse:
       type: object
       required:
@@ -1164,3 +1193,8 @@ components:
           type: string
           description: 'ADDITIVE (ADR 0034, canonical since ADR 0035). Echoed only when the request was scoped by site (siteCode given): the canonical site the activeHeads were counted at. Omitted when unscoped -- a call that gives only the legacy buildingId is NOT scoped -- i.e. the gap is fleet-wide across every site; consumers must treat absence as "unscoped", never as a particular site.'
           example: WH1
+        requiredHeads:
+          type: integer
+          minimum: 0
+          description: ADDITIVE (ADR 0043 decision 4). The heads warehouse-planning published for this line's plan key (the plan's site code), shift and path in LabourPlanCommitted, next to the committed plannedHeads. Omitted when nothing was published; understaffed still compares activeHeads with plannedHeads.
+          example: 4

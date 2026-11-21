@@ -56,9 +56,13 @@ info:
     from fulfillment-execution (`TaskAvailable` and `TaskClaimed` have been
     published on
 
-    its integration topic since its ADR 0049; `TaskAvailable` is announced only
+    its integration topic since its ADR 0049; `TaskAvailable` is announced for
+    RELOCATE and
 
-    for the task types that carry bins, RELOCATE and REPLENISH, ADR 0050), and
+    REPLENISH tasks, ADR 0050, and for a PICK task whose plan carries both the
+    site and the
+
+    pick face, ADR 0062; PACK, SLAM and REBIN are not announced), and
     `ZoneRegistered`,
 
     `LocationSlotRegistered`, `LocationSlotDecommissioned` and
@@ -374,7 +378,7 @@ channels:
                     task_type: REPLENISH
                     location: WH1-FWD-A02-01-01-A
                     detour_m: 12
-        messageId: InterleavingHintIssued
+        messageId: task-interleaving-InterleavingHintIssued
   warehouse.task-interleaving.analytics:
     description: >
       This service's analytics topic. Written by the SAME outbox relay, from
@@ -632,7 +636,7 @@ channels:
                         task_type: REPLENISH
                         location: WH1-FWD-A02-01-01-A
                         detour_m: 12
-            messageId: InterleavingHintIssuedAnalytics
+            messageId: task-interleaving-InterleavingHintIssuedAnalytics
           - name: InterleavingHintConsumed
             title: Interleaving hint consumed (analytics only)
             summary: >-
@@ -780,7 +784,7 @@ channels:
                     rank: 1
                     detour_m: 4.5
                     consumed_at: '2026-10-17T12:00:20Z'
-            messageId: InterleavingHintConsumed
+            messageId: task-interleaving-InterleavingHintConsumed
           - name: InterleavingHintExpired
             title: Interleaving hint expired (analytics only)
             summary: A hint reached its expires_at without a candidate being claimed.
@@ -904,7 +908,7 @@ channels:
                     station_id: STN-07
                     site_id: SITE-1
                     expires_at: '2026-10-17T12:01:30Z'
-            messageId: InterleavingHintExpired
+            messageId: task-interleaving-InterleavingHintExpired
           - name: InterleavingPolicyDeclared
             title: Interleaving policy declared (analytics only)
             summary: An operator declared or replaced a site's interleaving policy.
@@ -1069,7 +1073,7 @@ channels:
                     vertical_weight: 1.5
                     version: 2
                     declared_at: '2026-10-17T11:00:00Z'
-            messageId: InterleavingPolicyDeclared
+            messageId: task-interleaving-InterleavingPolicyDeclared
   warehouse.fulfillment.events:
     description: >-
       Integration events published by Fulfillment Execution, keyed by aggregate
@@ -1084,9 +1088,12 @@ channels:
         `TaskClaimed` removes it (both are published on the integration topic
         since
 
-        fulfillment-execution's ADR 0049; `TaskAvailable` only for RELOCATE and
+        fulfillment-execution's ADR 0049; `TaskAvailable` for RELOCATE and
 
-        REPLENISH tasks, ADR 0050). `TaskCompleted` (verified on
+        REPLENISH tasks, ADR 0050, and for a PICK task whose plan carries both
+        the
+
+        site and the pick face, ADR 0062). `TaskCompleted` (verified on
 
         fulfillment-execution's `origin/develop`) records the completion at the
 
@@ -1107,17 +1114,22 @@ channels:
             title: TaskAvailable (consumed, fulfillment-execution)
             summary: A task entered or re-entered the open-task pool.
             description: >
-              Published by fulfillment-execution since its ADR 0049 (only for
-              tasks that
+              Published by fulfillment-execution since its ADR 0049, for the
+              tasks whose
 
-              carry bins: RELOCATE and REPLENISH, ADR 0050; a PICK, PACK, SLAM
-              or REBIN
+              location it knows: RELOCATE and REPLENISH tasks carry bins (ADR
+              0050) and a
 
-              task has no location there and is not announced, so the per-type
-              location
+              PICK task whose plan carries both the site and the pick face is
+              announced too
 
-              rules below describe what this consumer accepts, not what is sent
-              today).
+              (ADR 0062); a pick missing either, and PACK, SLAM and REBIN tasks,
+              are not
+
+              announced, so the PACK, SLAM and REBIN location rules below
+              describe what
+
+              this consumer accepts, not what is sent today).
 
               This contract was pinned here consumer-first. `type` =
               `com.warehouse.wes.fulfillment-execution.task.TaskAvailable`,
@@ -1299,7 +1311,7 @@ channels:
                     cpt: '2026-10-17T18:00:00Z'
                     priority_band: band-1
                     available_at: '2026-10-17T11:58:00Z'
-            messageId: TaskAvailable
+            messageId: fulfillment-execution-TaskAvailable
           - name: TaskClaimed
             title: TaskClaimed (consumed, fulfillment-execution)
             summary: A station claimed a task; it left the pool.
@@ -1438,7 +1450,7 @@ channels:
                     task_type: PICK
                     station_id: STN-07
                     claimed_at: '2026-10-17T12:00:20Z'
-            messageId: TaskClaimed
+            messageId: fulfillment-execution-TaskClaimed
           - name: TaskCompleted
             title: TaskCompleted (consumed, fulfillment-execution)
             summary: A station finished a claimed task.
@@ -1584,7 +1596,7 @@ channels:
                     task_type: PICK
                     order_ref: order-8a1f
                     line_no: 2
-            messageId: TaskCompleted
+            messageId: fulfillment-execution-TaskCompleted
   warehouse.facility.events:
     description: >
       The single outbound integration topic for this bounded context, named
@@ -1742,7 +1754,7 @@ channels:
                     zoneCode: FWD
                     temperatureClass: Ambient
                     hazmat: false
-            messageId: ZoneRegistered
+            messageId: facility-layout-ZoneRegistered
           - name: LocationSlotRegistered
             title: LocationSlotRegistered (consumed, facility-layout)
             summary: A coded leaf slot now exists on the warehouse map.
@@ -1865,7 +1877,7 @@ channels:
                     role: Storage
                     maxWeightKg: 40
                     maxVolumeM3: 0.5
-            messageId: LocationSlotRegistered
+            messageId: facility-layout-LocationSlotRegistered
           - name: LocationSlotDecommissioned
             title: LocationSlotDecommissioned (consumed, facility-layout)
             summary: A coded slot was permanently retired.
@@ -1975,7 +1987,7 @@ channels:
                       com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
                     occurredAt: '2026-10-01T08:00:00Z'
                     locationCode: WH1-FWD-A01-01-03-A
-            messageId: LocationSlotDecommissioned
+            messageId: facility-layout-LocationSlotDecommissioned
           - name: LocationGeometryUpdated
             title: LocationGeometryUpdated (consumed, facility-layout)
             summary: A coded slot's physical position and footprint was set or changed.
@@ -2115,7 +2127,7 @@ channels:
                     widthM: 0.8
                     depthM: 0.6
                     heightM: 0.5
-            messageId: LocationGeometryUpdated
+            messageId: facility-layout-LocationGeometryUpdated
 components:
   messages:
     InterleavingHintIssued:
@@ -2322,7 +2334,7 @@ components:
                   task_type: REPLENISH
                   location: WH1-FWD-A02-01-01-A
                   detour_m: 12
-      messageId: InterleavingHintIssued
+      messageId: task-interleaving-InterleavingHintIssued
     InterleavingHintIssuedAnalytics:
       name: InterleavingHintIssuedAnalytics
       title: Interleaving hint issued (analytics stream)
@@ -2514,7 +2526,7 @@ components:
                   task_type: REPLENISH
                   location: WH1-FWD-A02-01-01-A
                   detour_m: 12
-      messageId: InterleavingHintIssuedAnalytics
+      messageId: task-interleaving-InterleavingHintIssuedAnalytics
     InterleavingHintConsumed:
       name: InterleavingHintConsumed
       title: Interleaving hint consumed (analytics only)
@@ -2662,7 +2674,7 @@ components:
               rank: 1
               detour_m: 4.5
               consumed_at: '2026-10-17T12:00:20Z'
-      messageId: InterleavingHintConsumed
+      messageId: task-interleaving-InterleavingHintConsumed
     InterleavingHintExpired:
       name: InterleavingHintExpired
       title: Interleaving hint expired (analytics only)
@@ -2785,7 +2797,7 @@ components:
               station_id: STN-07
               site_id: SITE-1
               expires_at: '2026-10-17T12:01:30Z'
-      messageId: InterleavingHintExpired
+      messageId: task-interleaving-InterleavingHintExpired
     InterleavingPolicyDeclared:
       name: InterleavingPolicyDeclared
       title: Interleaving policy declared (analytics only)
@@ -2949,23 +2961,28 @@ components:
               vertical_weight: 1.5
               version: 2
               declared_at: '2026-10-17T11:00:00Z'
-      messageId: InterleavingPolicyDeclared
+      messageId: task-interleaving-InterleavingPolicyDeclared
     TaskAvailable:
       name: TaskAvailable
       title: TaskAvailable (consumed, fulfillment-execution)
       summary: A task entered or re-entered the open-task pool.
       description: >
-        Published by fulfillment-execution since its ADR 0049 (only for tasks
-        that
+        Published by fulfillment-execution since its ADR 0049, for the tasks
+        whose
 
-        carry bins: RELOCATE and REPLENISH, ADR 0050; a PICK, PACK, SLAM or
-        REBIN
+        location it knows: RELOCATE and REPLENISH tasks carry bins (ADR 0050)
+        and a
 
-        task has no location there and is not announced, so the per-type
-        location
+        PICK task whose plan carries both the site and the pick face is
+        announced too
 
-        rules below describe what this consumer accepts, not what is sent
-        today).
+        (ADR 0062); a pick missing either, and PACK, SLAM and REBIN tasks, are
+        not
+
+        announced, so the PACK, SLAM and REBIN location rules below describe
+        what
+
+        this consumer accepts, not what is sent today).
 
         This contract was pinned here consumer-first. `type` =
         `com.warehouse.wes.fulfillment-execution.task.TaskAvailable`,
@@ -3141,7 +3158,7 @@ components:
               cpt: '2026-10-17T18:00:00Z'
               priority_band: band-1
               available_at: '2026-10-17T11:58:00Z'
-      messageId: TaskAvailable
+      messageId: fulfillment-execution-TaskAvailable
     TaskClaimed:
       name: TaskClaimed
       title: TaskClaimed (consumed, fulfillment-execution)
@@ -3273,7 +3290,7 @@ components:
               task_type: PICK
               station_id: STN-07
               claimed_at: '2026-10-17T12:00:20Z'
-      messageId: TaskClaimed
+      messageId: fulfillment-execution-TaskClaimed
     TaskCompleted:
       name: TaskCompleted
       title: TaskCompleted (consumed, fulfillment-execution)
@@ -3412,7 +3429,7 @@ components:
               task_type: PICK
               order_ref: order-8a1f
               line_no: 2
-      messageId: TaskCompleted
+      messageId: fulfillment-execution-TaskCompleted
     ZoneRegistered:
       name: ZoneRegistered
       title: ZoneRegistered (consumed, facility-layout)
@@ -3534,7 +3551,7 @@ components:
               zoneCode: FWD
               temperatureClass: Ambient
               hazmat: false
-      messageId: ZoneRegistered
+      messageId: facility-layout-ZoneRegistered
     LocationSlotRegistered:
       name: LocationSlotRegistered
       title: LocationSlotRegistered (consumed, facility-layout)
@@ -3655,7 +3672,7 @@ components:
               role: Storage
               maxWeightKg: 40
               maxVolumeM3: 0.5
-      messageId: LocationSlotRegistered
+      messageId: facility-layout-LocationSlotRegistered
     LocationSlotDecommissioned:
       name: LocationSlotDecommissioned
       title: LocationSlotDecommissioned (consumed, facility-layout)
@@ -3764,7 +3781,7 @@ components:
                 com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
               occurredAt: '2026-10-01T08:00:00Z'
               locationCode: WH1-FWD-A01-01-03-A
-      messageId: LocationSlotDecommissioned
+      messageId: facility-layout-LocationSlotDecommissioned
     LocationGeometryUpdated:
       name: LocationGeometryUpdated
       title: LocationGeometryUpdated (consumed, facility-layout)
@@ -3900,7 +3917,7 @@ components:
               widthM: 0.8
               depthM: 0.6
               heightM: 0.5
-      messageId: LocationGeometryUpdated
+      messageId: facility-layout-LocationGeometryUpdated
   schemas:
     CloudEventEnvelope:
       type: object

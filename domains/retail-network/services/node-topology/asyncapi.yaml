@@ -39,7 +39,8 @@ info:
 
     them to Kafka (at-least-once; the CloudEvents `id` is stored with the outbox
 
-    row, so a retry republishes the same `id`). The ten types are catalogued in
+    row, so a retry republishes the same `id`). The eleven types are catalogued
+    in
 
     ADR 0004.
 
@@ -104,7 +105,7 @@ channels:
       the CloudEvents content-type header. Dispatch on the full `type`, ignore
       unknown types, dedupe on `id`.
     messages:
-      NodeRegistered:
+      node-topology-NodeRegistered:
         name: NodeRegistered
         title: Node registered
         summary: A node was registered in state PROPOSED.
@@ -115,6 +116,8 @@ channels:
           not on the wire: derive them from `nodeType` (policy
           DefaultCapabilitiesByType). `subtype`, `vendorId` and `vendorNodeCode`
           are null when not applicable (network-operated nodes have no vendor).
+          `servingStationNodeId` is null unless the node is a PICKUP_POINT (ADR
+          0017).
         contentType: application/cloudevents+json
         tags:
           - name: node
@@ -176,6 +179,7 @@ channels:
                     - operator
                     - vendorId
                     - vendorNodeCode
+                    - servingStationNodeId
                     - regionId
                     - timezone
                     - postalCode
@@ -193,6 +197,7 @@ channels:
                         - SORTATION_CENTER
                         - DELIVERY_STATION
                         - AIR_HUB
+                        - PICKUP_POINT
                       x-parser-schema-id: NodeType
                     subtype:
                       description: >-
@@ -217,6 +222,7 @@ channels:
                       enum:
                         - NETWORK
                         - VENDOR
+                        - PARTNER
                       x-parser-schema-id: NodeOperator
                     vendorId:
                       type:
@@ -232,20 +238,28 @@ channels:
                         The vendor's own code of the node; set when operator is
                         VENDOR; null otherwise.
                       x-parser-schema-id: <anonymous-schema-15>
+                    servingStationNodeId:
+                      type:
+                        - string
+                        - 'null'
+                      description: >-
+                        The serving delivery station of a PICKUP_POINT; null for
+                        every other node type (ADR 0017).
+                      x-parser-schema-id: <anonymous-schema-16>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-16>
+                      x-parser-schema-id: <anonymous-schema-17>
                     timezone:
                       type: string
                       description: IANA time zone of the building.
-                      x-parser-schema-id: <anonymous-schema-17>
+                      x-parser-schema-id: <anonymous-schema-18>
                     postalCode:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-18>
+                      x-parser-schema-id: <anonymous-schema-19>
                     countryCode:
                       type: string
                       description: ISO 3166-1 alpha-2.
-                      x-parser-schema-id: <anonymous-schema-19>
+                      x-parser-schema-id: <anonymous-schema-20>
                   x-parser-schema-id: <anonymous-schema-10>
               x-parser-schema-id: <anonymous-schema-9>
           x-parser-schema-id: NodeRegisteredEvent
@@ -272,8 +286,8 @@ channels:
                 timezone: America/Sao_Paulo
                 postalCode: 07750-000
                 countryCode: BR
-        x-parser-unique-object-id: NodeRegistered
-      NodeOperationalProfileDeclared:
+        x-parser-unique-object-id: node-topology-NodeRegistered
+      node-topology-NodeOperationalProfileDeclared:
         name: NodeOperationalProfileDeclared
         title: Node operational profile declared
         summary: A new operational profile revision was stored for a node.
@@ -357,16 +371,16 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-22>
+                      x-parser-schema-id: <anonymous-schema-23>
                     profileRevision:
                       type: integer
                       minimum: 1
                       description: Strictly increasing per node.
-                      x-parser-schema-id: <anonymous-schema-23>
+                      x-parser-schema-id: <anonymous-schema-24>
                     timezone:
                       type: string
                       description: IANA time zone the local times are in.
-                      x-parser-schema-id: <anonymous-schema-24>
+                      x-parser-schema-id: <anonymous-schema-25>
                     operatingHoursByDay:
                       type: object
                       description: >-
@@ -385,13 +399,13 @@ channels:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         tuesday:
                           type: object
@@ -404,13 +418,13 @@ channels:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         wednesday:
                           type: object
@@ -423,13 +437,13 @@ channels:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         thursday:
                           type: object
@@ -442,13 +456,13 @@ channels:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         friday:
                           type: object
@@ -461,13 +475,13 @@ channels:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         saturday:
                           type: object
@@ -480,13 +494,13 @@ channels:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         sunday:
                           type: object
@@ -499,13 +513,13 @@ channels:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                       x-parser-schema-id: OperatingHoursByDay
                     holidays:
@@ -514,15 +528,15 @@ channels:
                       items:
                         type: string
                         format: date
-                        x-parser-schema-id: <anonymous-schema-28>
-                      x-parser-schema-id: <anonymous-schema-27>
+                        x-parser-schema-id: <anonymous-schema-29>
+                      x-parser-schema-id: <anonymous-schema-28>
                     handlingTimeMinutes:
                       type: integer
                       minimum: 0
                       description: >-
                         Declared time from order release to a package ready for
                         handover.
-                      x-parser-schema-id: <anonymous-schema-29>
+                      x-parser-schema-id: <anonymous-schema-30>
                     cutoffs:
                       type: array
                       items:
@@ -536,7 +550,7 @@ channels:
                             description: >-
                               Local time HH:mm by which packages are ready for
                               handover.
-                            x-parser-schema-id: <anonymous-schema-31>
+                            x-parser-schema-id: <anonymous-schema-32>
                           days:
                             type: array
                             description: >-
@@ -555,13 +569,13 @@ channels:
                                 - saturday
                                 - sunday
                               x-parser-schema-id: Weekday
-                            x-parser-schema-id: <anonymous-schema-32>
+                            x-parser-schema-id: <anonymous-schema-33>
                           maxOrders:
                             type: integer
                             minimum: 1
-                            x-parser-schema-id: <anonymous-schema-33>
+                            x-parser-schema-id: <anonymous-schema-34>
                         x-parser-schema-id: CutoffSlot
-                      x-parser-schema-id: <anonymous-schema-30>
+                      x-parser-schema-id: <anonymous-schema-31>
                     throughputCap:
                       type: object
                       required:
@@ -572,17 +586,17 @@ channels:
                         value:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: <anonymous-schema-35>
                         timeUnit:
                           type: string
                           enum:
                             - HOUR
                             - DAY
-                          x-parser-schema-id: <anonymous-schema-35>
+                          x-parser-schema-id: <anonymous-schema-36>
                         unit:
                           type: string
                           const: ORDER
-                          x-parser-schema-id: <anonymous-schema-36>
+                          x-parser-schema-id: <anonymous-schema-37>
                       x-parser-schema-id: ThroughputCap
                     sortDwellMinutes:
                       type: integer
@@ -590,7 +604,7 @@ channels:
                       description: >-
                         Omitted unless the node is a SORTATION_CENTER or an
                         AIR_HUB.
-                      x-parser-schema-id: <anonymous-schema-37>
+                      x-parser-schema-id: <anonymous-schema-38>
                     inbound:
                       type: object
                       description: >-
@@ -603,7 +617,7 @@ channels:
                           minimum: 1
                           description: The heaviest carton the node accepts
                           in grams.: null
-                          x-parser-schema-id: <anonymous-schema-38>
+                          x-parser-schema-id: <anonymous-schema-39>
                         maxCartonDimsMm:
                           type: object
                           description: >-
@@ -617,33 +631,41 @@ channels:
                             l:
                               type: integer
                               minimum: 1
-                              x-parser-schema-id: <anonymous-schema-40>
+                              x-parser-schema-id: <anonymous-schema-41>
                             w:
                               type: integer
                               minimum: 1
-                              x-parser-schema-id: <anonymous-schema-41>
+                              x-parser-schema-id: <anonymous-schema-42>
                             h:
                               type: integer
                               minimum: 1
-                              x-parser-schema-id: <anonymous-schema-42>
-                          x-parser-schema-id: <anonymous-schema-39>
+                              x-parser-schema-id: <anonymous-schema-43>
+                          x-parser-schema-id: <anonymous-schema-40>
                         acceptsPallets:
                           type: boolean
                           description: Whether the node receives pallets.
-                          x-parser-schema-id: <anonymous-schema-43>
+                          x-parser-schema-id: <anonymous-schema-44>
                         requiresSscc:
                           type: boolean
                           description: Whether every inbound carton must carry an SSCC.
-                          x-parser-schema-id: <anonymous-schema-44>
+                          x-parser-schema-id: <anonymous-schema-45>
+                        monthlyVolumeDm3:
+                          type: integer
+                          minimum: 1
+                          description: >-
+                            The inbound volume the node accepts per calendar
+                            month, in cubic decimetres (ADR 0019); absent means
+                            not declared.
+                          x-parser-schema-id: <anonymous-schema-46>
                       x-parser-schema-id: InboundLimits
                     declaredBy:
                       type: string
                       enum:
                         - VENDOR
                         - NETWORK_OPS
-                      x-parser-schema-id: <anonymous-schema-45>
-                  x-parser-schema-id: <anonymous-schema-21>
-              x-parser-schema-id: <anonymous-schema-20>
+                      x-parser-schema-id: <anonymous-schema-47>
+                  x-parser-schema-id: <anonymous-schema-22>
+              x-parser-schema-id: <anonymous-schema-21>
           x-parser-schema-id: NodeOperationalProfileDeclaredEvent
         examples:
           - name: nodeOperationalProfileDeclared
@@ -740,8 +762,8 @@ channels:
                   acceptsPallets: true
                   requiresSscc: false
                 declaredBy: VENDOR
-        x-parser-unique-object-id: NodeOperationalProfileDeclared
-      NodeActivated:
+        x-parser-unique-object-id: node-topology-NodeOperationalProfileDeclared
+      node-topology-NodeActivated:
         name: NodeActivated
         title: Node activated
         summary: A node became ACTIVE (from PROPOSED or SUSPENDED).
@@ -810,13 +832,13 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-48>
+                      x-parser-schema-id: <anonymous-schema-50>
                     activatedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-49>
-                  x-parser-schema-id: <anonymous-schema-47>
-              x-parser-schema-id: <anonymous-schema-46>
+                      x-parser-schema-id: <anonymous-schema-51>
+                  x-parser-schema-id: <anonymous-schema-49>
+              x-parser-schema-id: <anonymous-schema-48>
           x-parser-schema-id: NodeActivatedEvent
         examples:
           - name: nodeActivated
@@ -833,8 +855,8 @@ channels:
               data:
                 nodeId: node-0f3a91
                 activatedAt: '2026-10-22T14:00:00Z'
-        x-parser-unique-object-id: NodeActivated
-      NodeSuspended:
+        x-parser-unique-object-id: node-topology-NodeActivated
+      node-topology-NodeSuspended:
         name: NodeSuspended
         title: Node suspended
         summary: An ACTIVE node became SUSPENDED.
@@ -906,17 +928,17 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-52>
+                      x-parser-schema-id: <anonymous-schema-54>
                     reason:
                       type: string
                       description: Why the planner suspended the node.
-                      x-parser-schema-id: <anonymous-schema-53>
+                      x-parser-schema-id: <anonymous-schema-55>
                     suspendedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-54>
-                  x-parser-schema-id: <anonymous-schema-51>
-              x-parser-schema-id: <anonymous-schema-50>
+                      x-parser-schema-id: <anonymous-schema-56>
+                  x-parser-schema-id: <anonymous-schema-53>
+              x-parser-schema-id: <anonymous-schema-52>
           x-parser-schema-id: NodeSuspendedEvent
         examples:
           - name: nodeSuspended
@@ -934,8 +956,8 @@ channels:
                 nodeId: node-0f3a91
                 reason: carrier strike at the dock
                 suspendedAt: '2026-10-23T08:30:00Z'
-        x-parser-unique-object-id: NodeSuspended
-      NodeRetired:
+        x-parser-unique-object-id: node-topology-NodeSuspended
+      node-topology-NodeRetired:
         name: NodeRetired
         title: Node retired
         summary: A node became RETIRED, which is terminal.
@@ -1004,13 +1026,13 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-57>
+                      x-parser-schema-id: <anonymous-schema-59>
                     retiredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-58>
-                  x-parser-schema-id: <anonymous-schema-56>
-              x-parser-schema-id: <anonymous-schema-55>
+                      x-parser-schema-id: <anonymous-schema-60>
+                  x-parser-schema-id: <anonymous-schema-58>
+              x-parser-schema-id: <anonymous-schema-57>
           x-parser-schema-id: NodeRetiredEvent
         examples:
           - name: nodeRetired
@@ -1027,8 +1049,8 @@ channels:
               data:
                 nodeId: node-0f3a91
                 retiredAt: '2026-11-30T23:59:00Z'
-        x-parser-unique-object-id: NodeRetired
-      LaneOpened:
+        x-parser-unique-object-id: node-topology-NodeRetired
+      node-topology-LaneOpened:
         name: LaneOpened
         title: Lane opened
         summary: A directed lane between two nodes was opened.
@@ -1099,13 +1121,13 @@ channels:
                   properties:
                     laneId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-63>
                     originNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-62>
+                      x-parser-schema-id: <anonymous-schema-64>
                     destinationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-63>
+                      x-parser-schema-id: <anonymous-schema-65>
                     mode:
                       type: string
                       enum:
@@ -1115,9 +1137,9 @@ channels:
                     nominalTransitMinutes:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-64>
-                  x-parser-schema-id: <anonymous-schema-60>
-              x-parser-schema-id: <anonymous-schema-59>
+                      x-parser-schema-id: <anonymous-schema-66>
+                  x-parser-schema-id: <anonymous-schema-62>
+              x-parser-schema-id: <anonymous-schema-61>
           x-parser-schema-id: LaneOpenedEvent
         examples:
           - name: laneOpened
@@ -1137,8 +1159,8 @@ channels:
                 destinationNodeId: node-9b7e02
                 mode: GROUND
                 nominalTransitMinutes: 180
-        x-parser-unique-object-id: LaneOpened
-      LaneClosed:
+        x-parser-unique-object-id: node-topology-LaneOpened
+      node-topology-LaneClosed:
         name: LaneClosed
         title: Lane closed
         summary: A lane was closed.
@@ -1206,13 +1228,13 @@ channels:
                   properties:
                     laneId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-67>
+                      x-parser-schema-id: <anonymous-schema-69>
                     closedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-68>
-                  x-parser-schema-id: <anonymous-schema-66>
-              x-parser-schema-id: <anonymous-schema-65>
+                      x-parser-schema-id: <anonymous-schema-70>
+                  x-parser-schema-id: <anonymous-schema-68>
+              x-parser-schema-id: <anonymous-schema-67>
           x-parser-schema-id: LaneClosedEvent
         examples:
           - name: laneClosed
@@ -1229,8 +1251,8 @@ channels:
               data:
                 laneId: lane-5c21d8
                 closedAt: '2026-11-02T10:00:00Z'
-        x-parser-unique-object-id: LaneClosed
-      LaneCostDeclared:
+        x-parser-unique-object-id: node-topology-LaneClosed
+      node-topology-LaneCostDeclared:
         name: LaneCostDeclared
         title: Lane cost declared
         summary: >-
@@ -1309,7 +1331,7 @@ channels:
                   properties:
                     laneId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-73>
                     costPerUnitCents:
                       type: integer
                       format: int64
@@ -1319,13 +1341,13 @@ channels:
                         The planner's declared marginal cost of moving ONE
                         package-unit across this lane on one departure, integer
                         cents.
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-74>
                     declaredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-73>
-                  x-parser-schema-id: <anonymous-schema-70>
-              x-parser-schema-id: <anonymous-schema-69>
+                      x-parser-schema-id: <anonymous-schema-75>
+                  x-parser-schema-id: <anonymous-schema-72>
+              x-parser-schema-id: <anonymous-schema-71>
           x-parser-schema-id: LaneCostDeclaredEvent
         examples:
           - name: laneCostDeclared
@@ -1345,8 +1367,125 @@ channels:
                 laneId: lane-5c21d8
                 costPerUnitCents: 320
                 declaredAt: '2026-11-05T09:30:00Z'
-        x-parser-unique-object-id: LaneCostDeclared
-      ServiceAreaAssigned:
+        x-parser-unique-object-id: node-topology-LaneCostDeclared
+      node-topology-LaneEmissionDeclared:
+        name: LaneEmissionDeclared
+        title: Lane emission declared
+        summary: >-
+          The planner declared the carbon emission of moving one package-unit
+          across the lane.
+        description: >-
+          `type` =
+          `com.retailnetwork.logistics.node-topology.lane.LaneEmissionDeclared`;
+          subject and key = the laneId. Raised by DeclareLaneEmission, on every
+          declaration (a newer declaration supersedes the previous value).
+          `gCo2ePerUnit` is the declared carbon emission of moving ONE
+          package-unit across the lane on one departure, grams of
+          CO2-equivalent, 0 to 10000000; 0 is legal (zero declared emission). A
+          lane with no declaration publishes nothing. Consumed by
+          order-sourcing, which keeps the latest declaration per laneId and
+          records it beside the declared cents in its estimate (roadmap C9, ADR
+          0018); ranking is unchanged.
+        contentType: application/cloudevents+json
+        tags:
+          - name: lane
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-1>
+                id:
+                  type: string
+                  format: uuid
+                  x-parser-schema-id: <anonymous-schema-2>
+                source:
+                  type: string
+                  const: /retailnetwork/node-topology
+                  x-parser-schema-id: <anonymous-schema-3>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-4>
+                subject:
+                  type: string
+                  description: The aggregate root id (nodeId
+                  laneId: null
+                  postalPrefix or regionId).: null
+                  x-parser-schema-id: <anonymous-schema-5>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-6>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-7>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-8>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - laneId
+                    - gCo2ePerUnit
+                    - declaredAt
+                  properties:
+                    laneId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-78>
+                    gCo2ePerUnit:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 10000000
+                      description: >-
+                        The planner's declared carbon emission of moving ONE
+                        package-unit across this lane on one departure, grams of
+                        CO2-equivalent.
+                      x-parser-schema-id: <anonymous-schema-79>
+                    declaredAt:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-80>
+                  x-parser-schema-id: <anonymous-schema-77>
+              x-parser-schema-id: <anonymous-schema-76>
+          x-parser-schema-id: LaneEmissionDeclaredEvent
+        examples:
+          - name: laneEmissionDeclared
+            summary: >-
+              The planner declared the carbon emission of moving one
+              package-unit across the lane.
+            payload:
+              specversion: '1.0'
+              id: 8a4d3f1e-2c5b-4e8a-b1d7-6f9c0e3a5b7d
+              source: /retailnetwork/node-topology
+              type: >-
+                com.retailnetwork.logistics.node-topology.lane.LaneEmissionDeclared
+              subject: lane-5c21d8
+              time: '2026-11-14T09:30:00Z'
+              datacontenttype: application/json
+              dataschema: urn:retailnetwork:node-topology:events:LaneEmissionDeclared:v1
+              data:
+                laneId: lane-5c21d8
+                gCo2ePerUnit: 410
+                declaredAt: '2026-11-14T09:30:00Z'
+        x-parser-unique-object-id: node-topology-LaneEmissionDeclared
+      node-topology-ServiceAreaAssigned:
         name: ServiceAreaAssigned
         title: Service area assigned
         summary: >-
@@ -1359,6 +1498,12 @@ channels:
           first assignment and on every reassignment. Subject and Kafka key are
           the postalPrefix. `assignmentVersion` strictly increases per prefix;
           consumers keep the highest. `regionId` is the station's region.
+          `deliveryMode` and `carriers` are optional (ADR 0016): omitted on a
+          NETWORK_ROUTE area, so a consumer that predates the delivery mode
+          decodes the event with its old meaning; a CARRIER_HANDOFF area carries
+          1 to 4 options, each with carrierId, handoffNodeId,
+          costPerPackageCents and transitMinutes, the handoff node an ACTIVE
+          DELIVERY_STATION or SORTATION_CENTER.
         contentType: application/cloudevents+json
         tags:
           - name: servicearea
@@ -1421,20 +1566,76 @@ channels:
                   properties:
                     postalPrefix:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-76>
+                      x-parser-schema-id: <anonymous-schema-83>
                     deliveryStationNodeId:
                       type: string
                       description: The DELIVERY_STATION that serves the prefix.
-                      x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-84>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-78>
+                      x-parser-schema-id: <anonymous-schema-85>
                     assignmentVersion:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-79>
-                  x-parser-schema-id: <anonymous-schema-75>
-              x-parser-schema-id: <anonymous-schema-74>
+                      x-parser-schema-id: <anonymous-schema-86>
+                    deliveryMode:
+                      type: string
+                      enum:
+                        - NETWORK_ROUTE
+                        - CARRIER_HANDOFF
+                      description: >-
+                        How the area's last mile is served (ADR 0016); omitted
+                        on a NETWORK_ROUTE area, which a consumer decodes as the
+                        mode it always assumed.
+                      x-parser-schema-id: <anonymous-schema-87>
+                    carriers:
+                      type: array
+                      description: >-
+                        The declared carrier options of a CARRIER_HANDOFF area;
+                        omitted on a NETWORK_ROUTE area.
+                      items:
+                        type: object
+                        description: >-
+                          One declared external carrier of a CARRIER_HANDOFF
+                          service area (ADR 0016).
+                        required:
+                          - carrierId
+                          - handoffNodeId
+                          - costPerPackageCents
+                          - transitMinutes
+                        properties:
+                          carrierId:
+                            type: string
+                            description: The carrier's own identifier
+                            unique within the area.: null
+                            x-parser-schema-id: <anonymous-schema-89>
+                          handoffNodeId:
+                            type: string
+                            description: >-
+                              An ACTIVE DELIVERY_STATION or SORTATION_CENTER the
+                              network hands packages over at.
+                            x-parser-schema-id: <anonymous-schema-90>
+                          costPerPackageCents:
+                            type: integer
+                            minimum: 0
+                            maximum: 10000000
+                            description: >-
+                              The carrier's declared cost of delivering one
+                              package
+                            integer cents.: null
+                            x-parser-schema-id: <anonymous-schema-91>
+                          transitMinutes:
+                            type: integer
+                            minimum: 1
+                            description: >-
+                              The carrier's declared transit from the handoff
+                              node to the doorstep
+                            in minutes.: null
+                            x-parser-schema-id: <anonymous-schema-92>
+                        x-parser-schema-id: CarrierOption
+                      x-parser-schema-id: <anonymous-schema-88>
+                  x-parser-schema-id: <anonymous-schema-82>
+              x-parser-schema-id: <anonymous-schema-81>
           x-parser-schema-id: ServiceAreaAssignedEvent
         examples:
           - name: serviceAreaAssigned
@@ -1456,8 +1657,37 @@ channels:
                 deliveryStationNodeId: node-9b7e02
                 regionId: region-se
                 assignmentVersion: 2
-        x-parser-unique-object-id: ServiceAreaAssigned
-      RegionDefined:
+          - name: serviceAreaAssignedCarrierHandoff
+            summary: >-
+              A postal prefix was assigned for carrier handoff with two declared
+              options (ADR 0016).
+            payload:
+              specversion: '1.0'
+              id: 7a1c4e8b-2d4f-4a63-9e55-1b0c9a4e5f21
+              source: /retailnetwork/node-topology
+              type: >-
+                com.retailnetwork.logistics.node-topology.servicearea.ServiceAreaAssigned
+              subject: '01310'
+              time: '2026-11-13T09:00:00Z'
+              datacontenttype: application/json
+              dataschema: urn:retailnetwork:node-topology:events:ServiceAreaAssigned:v1
+              data:
+                postalPrefix: '01310'
+                deliveryStationNodeId: node-9b7e02
+                regionId: region-se
+                assignmentVersion: 3
+                deliveryMode: CARRIER_HANDOFF
+                carriers:
+                  - carrierId: carrier-a
+                    handoffNodeId: node-5c21d8
+                    costPerPackageCents: 320
+                    transitMinutes: 95
+                  - carrierId: carrier-b
+                    handoffNodeId: node-9b7e02
+                    costPerPackageCents: 400
+                    transitMinutes: 60
+        x-parser-unique-object-id: node-topology-ServiceAreaAssigned
+      node-topology-RegionDefined:
         name: RegionDefined
         title: Region defined
         summary: A region was defined.
@@ -1527,16 +1757,16 @@ channels:
                   properties:
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-82>
+                      x-parser-schema-id: <anonymous-schema-95>
                     code:
                       type: string
                       description: Unique short code.
-                      x-parser-schema-id: <anonymous-schema-83>
+                      x-parser-schema-id: <anonymous-schema-96>
                     name:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-84>
-                  x-parser-schema-id: <anonymous-schema-81>
-              x-parser-schema-id: <anonymous-schema-80>
+                      x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-94>
+              x-parser-schema-id: <anonymous-schema-93>
           x-parser-schema-id: RegionDefinedEvent
         examples:
           - name: regionDefined
@@ -1554,14 +1784,14 @@ channels:
                 regionId: region-se
                 code: SE
                 name: Southeast
-        x-parser-unique-object-id: RegionDefined
+        x-parser-unique-object-id: node-topology-RegionDefined
     x-eventcatalog-channel-version: 1.0.0
     x-parser-unique-object-id: nodeTopologyEvents
 operations:
   publishNodeTopologyEvents:
     action: send
     title: Publish node-topology events
-    summary: Publish the ten node-topology events through the transactional outbox.
+    summary: Publish the eleven node-topology events through the transactional outbox.
     description: |
       The service sends every event of its four aggregates (Node, Lane,
       ServiceArea, Region) to `retailnetwork.node-topology.events`. Consumers
@@ -1581,7 +1811,7 @@ operations:
 
         unknown types, dedupe on `id`.
       messages:
-        NodeRegistered:
+        node-topology-NodeRegistered:
           name: NodeRegistered
           title: Node registered
           summary: A node was registered in state PROPOSED.
@@ -1592,7 +1822,8 @@ operations:
             are not on the wire: derive them from `nodeType` (policy
             DefaultCapabilitiesByType). `subtype`, `vendorId` and
             `vendorNodeCode` are null when not applicable (network-operated
-            nodes have no vendor).
+            nodes have no vendor). `servingStationNodeId` is null unless the
+            node is a PICKUP_POINT (ADR 0017).
           contentType: application/cloudevents+json
           tags:
             - name: node
@@ -1654,6 +1885,7 @@ operations:
                       - operator
                       - vendorId
                       - vendorNodeCode
+                      - servingStationNodeId
                       - regionId
                       - timezone
                       - postalCode
@@ -1671,6 +1903,7 @@ operations:
                           - SORTATION_CENTER
                           - DELIVERY_STATION
                           - AIR_HUB
+                          - PICKUP_POINT
                         x-parser-schema-id: NodeType
                       subtype:
                         description: >-
@@ -1695,6 +1928,7 @@ operations:
                         enum:
                           - NETWORK
                           - VENDOR
+                          - PARTNER
                         x-parser-schema-id: NodeOperator
                       vendorId:
                         type:
@@ -1710,20 +1944,28 @@ operations:
                           The vendor's own code of the node; set when operator
                           is VENDOR; null otherwise.
                         x-parser-schema-id: <anonymous-schema-15>
+                      servingStationNodeId:
+                        type:
+                          - string
+                          - 'null'
+                        description: >-
+                          The serving delivery station of a PICKUP_POINT; null
+                          for every other node type (ADR 0017).
+                        x-parser-schema-id: <anonymous-schema-16>
                       regionId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-16>
+                        x-parser-schema-id: <anonymous-schema-17>
                       timezone:
                         type: string
                         description: IANA time zone of the building.
-                        x-parser-schema-id: <anonymous-schema-17>
+                        x-parser-schema-id: <anonymous-schema-18>
                       postalCode:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-18>
+                        x-parser-schema-id: <anonymous-schema-19>
                       countryCode:
                         type: string
                         description: ISO 3166-1 alpha-2.
-                        x-parser-schema-id: <anonymous-schema-19>
+                        x-parser-schema-id: <anonymous-schema-20>
                     x-parser-schema-id: <anonymous-schema-10>
                 x-parser-schema-id: <anonymous-schema-9>
             x-parser-schema-id: NodeRegisteredEvent
@@ -1750,8 +1992,8 @@ operations:
                   timezone: America/Sao_Paulo
                   postalCode: 07750-000
                   countryCode: BR
-          x-parser-unique-object-id: NodeRegistered
-        NodeOperationalProfileDeclared:
+          x-parser-unique-object-id: node-topology-NodeRegistered
+        node-topology-NodeOperationalProfileDeclared:
           name: NodeOperationalProfileDeclared
           title: Node operational profile declared
           summary: A new operational profile revision was stored for a node.
@@ -1835,16 +2077,16 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-22>
+                        x-parser-schema-id: <anonymous-schema-23>
                       profileRevision:
                         type: integer
                         minimum: 1
                         description: Strictly increasing per node.
-                        x-parser-schema-id: <anonymous-schema-23>
+                        x-parser-schema-id: <anonymous-schema-24>
                       timezone:
                         type: string
                         description: IANA time zone the local times are in.
-                        x-parser-schema-id: <anonymous-schema-24>
+                        x-parser-schema-id: <anonymous-schema-25>
                       operatingHoursByDay:
                         type: object
                         description: >-
@@ -1863,13 +2105,13 @@ operations:
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local opening time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-25>
+                                x-parser-schema-id: <anonymous-schema-26>
                               end:
                                 type: string
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local closing time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-26>
+                                x-parser-schema-id: <anonymous-schema-27>
                             x-parser-schema-id: DayHours
                           tuesday:
                             type: object
@@ -1882,13 +2124,13 @@ operations:
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local opening time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-25>
+                                x-parser-schema-id: <anonymous-schema-26>
                               end:
                                 type: string
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local closing time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-26>
+                                x-parser-schema-id: <anonymous-schema-27>
                             x-parser-schema-id: DayHours
                           wednesday:
                             type: object
@@ -1901,13 +2143,13 @@ operations:
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local opening time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-25>
+                                x-parser-schema-id: <anonymous-schema-26>
                               end:
                                 type: string
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local closing time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-26>
+                                x-parser-schema-id: <anonymous-schema-27>
                             x-parser-schema-id: DayHours
                           thursday:
                             type: object
@@ -1920,13 +2162,13 @@ operations:
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local opening time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-25>
+                                x-parser-schema-id: <anonymous-schema-26>
                               end:
                                 type: string
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local closing time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-26>
+                                x-parser-schema-id: <anonymous-schema-27>
                             x-parser-schema-id: DayHours
                           friday:
                             type: object
@@ -1939,13 +2181,13 @@ operations:
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local opening time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-25>
+                                x-parser-schema-id: <anonymous-schema-26>
                               end:
                                 type: string
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local closing time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-26>
+                                x-parser-schema-id: <anonymous-schema-27>
                             x-parser-schema-id: DayHours
                           saturday:
                             type: object
@@ -1958,13 +2200,13 @@ operations:
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local opening time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-25>
+                                x-parser-schema-id: <anonymous-schema-26>
                               end:
                                 type: string
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local closing time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-26>
+                                x-parser-schema-id: <anonymous-schema-27>
                             x-parser-schema-id: DayHours
                           sunday:
                             type: object
@@ -1977,13 +2219,13 @@ operations:
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local opening time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-25>
+                                x-parser-schema-id: <anonymous-schema-26>
                               end:
                                 type: string
                                 pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                                 description: Local closing time
                                 HH:mm.: null
-                                x-parser-schema-id: <anonymous-schema-26>
+                                x-parser-schema-id: <anonymous-schema-27>
                             x-parser-schema-id: DayHours
                         x-parser-schema-id: OperatingHoursByDay
                       holidays:
@@ -1992,15 +2234,15 @@ operations:
                         items:
                           type: string
                           format: date
-                          x-parser-schema-id: <anonymous-schema-28>
-                        x-parser-schema-id: <anonymous-schema-27>
+                          x-parser-schema-id: <anonymous-schema-29>
+                        x-parser-schema-id: <anonymous-schema-28>
                       handlingTimeMinutes:
                         type: integer
                         minimum: 0
                         description: >-
                           Declared time from order release to a package ready
                           for handover.
-                        x-parser-schema-id: <anonymous-schema-29>
+                        x-parser-schema-id: <anonymous-schema-30>
                       cutoffs:
                         type: array
                         items:
@@ -2014,7 +2256,7 @@ operations:
                               description: >-
                                 Local time HH:mm by which packages are ready for
                                 handover.
-                              x-parser-schema-id: <anonymous-schema-31>
+                              x-parser-schema-id: <anonymous-schema-32>
                             days:
                               type: array
                               description: >-
@@ -2033,13 +2275,13 @@ operations:
                                   - saturday
                                   - sunday
                                 x-parser-schema-id: Weekday
-                              x-parser-schema-id: <anonymous-schema-32>
+                              x-parser-schema-id: <anonymous-schema-33>
                             maxOrders:
                               type: integer
                               minimum: 1
-                              x-parser-schema-id: <anonymous-schema-33>
+                              x-parser-schema-id: <anonymous-schema-34>
                           x-parser-schema-id: CutoffSlot
-                        x-parser-schema-id: <anonymous-schema-30>
+                        x-parser-schema-id: <anonymous-schema-31>
                       throughputCap:
                         type: object
                         required:
@@ -2050,17 +2292,17 @@ operations:
                           value:
                             type: integer
                             minimum: 1
-                            x-parser-schema-id: <anonymous-schema-34>
+                            x-parser-schema-id: <anonymous-schema-35>
                           timeUnit:
                             type: string
                             enum:
                               - HOUR
                               - DAY
-                            x-parser-schema-id: <anonymous-schema-35>
+                            x-parser-schema-id: <anonymous-schema-36>
                           unit:
                             type: string
                             const: ORDER
-                            x-parser-schema-id: <anonymous-schema-36>
+                            x-parser-schema-id: <anonymous-schema-37>
                         x-parser-schema-id: ThroughputCap
                       sortDwellMinutes:
                         type: integer
@@ -2068,7 +2310,7 @@ operations:
                         description: >-
                           Omitted unless the node is a SORTATION_CENTER or an
                           AIR_HUB.
-                        x-parser-schema-id: <anonymous-schema-37>
+                        x-parser-schema-id: <anonymous-schema-38>
                       inbound:
                         type: object
                         description: >-
@@ -2082,7 +2324,7 @@ operations:
                             minimum: 1
                             description: The heaviest carton the node accepts
                             in grams.: null
-                            x-parser-schema-id: <anonymous-schema-38>
+                            x-parser-schema-id: <anonymous-schema-39>
                           maxCartonDimsMm:
                             type: object
                             description: >-
@@ -2096,33 +2338,41 @@ operations:
                               l:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-40>
+                                x-parser-schema-id: <anonymous-schema-41>
                               w:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-41>
+                                x-parser-schema-id: <anonymous-schema-42>
                               h:
                                 type: integer
                                 minimum: 1
-                                x-parser-schema-id: <anonymous-schema-42>
-                            x-parser-schema-id: <anonymous-schema-39>
+                                x-parser-schema-id: <anonymous-schema-43>
+                            x-parser-schema-id: <anonymous-schema-40>
                           acceptsPallets:
                             type: boolean
                             description: Whether the node receives pallets.
-                            x-parser-schema-id: <anonymous-schema-43>
+                            x-parser-schema-id: <anonymous-schema-44>
                           requiresSscc:
                             type: boolean
                             description: Whether every inbound carton must carry an SSCC.
-                            x-parser-schema-id: <anonymous-schema-44>
+                            x-parser-schema-id: <anonymous-schema-45>
+                          monthlyVolumeDm3:
+                            type: integer
+                            minimum: 1
+                            description: >-
+                              The inbound volume the node accepts per calendar
+                              month, in cubic decimetres (ADR 0019); absent
+                              means not declared.
+                            x-parser-schema-id: <anonymous-schema-46>
                         x-parser-schema-id: InboundLimits
                       declaredBy:
                         type: string
                         enum:
                           - VENDOR
                           - NETWORK_OPS
-                        x-parser-schema-id: <anonymous-schema-45>
-                    x-parser-schema-id: <anonymous-schema-21>
-                x-parser-schema-id: <anonymous-schema-20>
+                        x-parser-schema-id: <anonymous-schema-47>
+                    x-parser-schema-id: <anonymous-schema-22>
+                x-parser-schema-id: <anonymous-schema-21>
             x-parser-schema-id: NodeOperationalProfileDeclaredEvent
           examples:
             - name: nodeOperationalProfileDeclared
@@ -2219,8 +2469,8 @@ operations:
                     acceptsPallets: true
                     requiresSscc: false
                   declaredBy: VENDOR
-          x-parser-unique-object-id: NodeOperationalProfileDeclared
-        NodeActivated:
+          x-parser-unique-object-id: node-topology-NodeOperationalProfileDeclared
+        node-topology-NodeActivated:
           name: NodeActivated
           title: Node activated
           summary: A node became ACTIVE (from PROPOSED or SUSPENDED).
@@ -2289,13 +2539,13 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-48>
+                        x-parser-schema-id: <anonymous-schema-50>
                       activatedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-49>
-                    x-parser-schema-id: <anonymous-schema-47>
-                x-parser-schema-id: <anonymous-schema-46>
+                        x-parser-schema-id: <anonymous-schema-51>
+                    x-parser-schema-id: <anonymous-schema-49>
+                x-parser-schema-id: <anonymous-schema-48>
             x-parser-schema-id: NodeActivatedEvent
           examples:
             - name: nodeActivated
@@ -2312,8 +2562,8 @@ operations:
                 data:
                   nodeId: node-0f3a91
                   activatedAt: '2026-10-22T14:00:00Z'
-          x-parser-unique-object-id: NodeActivated
-        NodeSuspended:
+          x-parser-unique-object-id: node-topology-NodeActivated
+        node-topology-NodeSuspended:
           name: NodeSuspended
           title: Node suspended
           summary: An ACTIVE node became SUSPENDED.
@@ -2385,17 +2635,17 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-52>
+                        x-parser-schema-id: <anonymous-schema-54>
                       reason:
                         type: string
                         description: Why the planner suspended the node.
-                        x-parser-schema-id: <anonymous-schema-53>
+                        x-parser-schema-id: <anonymous-schema-55>
                       suspendedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-54>
-                    x-parser-schema-id: <anonymous-schema-51>
-                x-parser-schema-id: <anonymous-schema-50>
+                        x-parser-schema-id: <anonymous-schema-56>
+                    x-parser-schema-id: <anonymous-schema-53>
+                x-parser-schema-id: <anonymous-schema-52>
             x-parser-schema-id: NodeSuspendedEvent
           examples:
             - name: nodeSuspended
@@ -2413,8 +2663,8 @@ operations:
                   nodeId: node-0f3a91
                   reason: carrier strike at the dock
                   suspendedAt: '2026-10-23T08:30:00Z'
-          x-parser-unique-object-id: NodeSuspended
-        NodeRetired:
+          x-parser-unique-object-id: node-topology-NodeSuspended
+        node-topology-NodeRetired:
           name: NodeRetired
           title: Node retired
           summary: A node became RETIRED, which is terminal.
@@ -2484,13 +2734,13 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-57>
+                        x-parser-schema-id: <anonymous-schema-59>
                       retiredAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-58>
-                    x-parser-schema-id: <anonymous-schema-56>
-                x-parser-schema-id: <anonymous-schema-55>
+                        x-parser-schema-id: <anonymous-schema-60>
+                    x-parser-schema-id: <anonymous-schema-58>
+                x-parser-schema-id: <anonymous-schema-57>
             x-parser-schema-id: NodeRetiredEvent
           examples:
             - name: nodeRetired
@@ -2507,8 +2757,8 @@ operations:
                 data:
                   nodeId: node-0f3a91
                   retiredAt: '2026-11-30T23:59:00Z'
-          x-parser-unique-object-id: NodeRetired
-        LaneOpened:
+          x-parser-unique-object-id: node-topology-NodeRetired
+        node-topology-LaneOpened:
           name: LaneOpened
           title: Lane opened
           summary: A directed lane between two nodes was opened.
@@ -2580,13 +2830,13 @@ operations:
                     properties:
                       laneId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-61>
+                        x-parser-schema-id: <anonymous-schema-63>
                       originNodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-62>
+                        x-parser-schema-id: <anonymous-schema-64>
                       destinationNodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-63>
+                        x-parser-schema-id: <anonymous-schema-65>
                       mode:
                         type: string
                         enum:
@@ -2596,9 +2846,9 @@ operations:
                       nominalTransitMinutes:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-64>
-                    x-parser-schema-id: <anonymous-schema-60>
-                x-parser-schema-id: <anonymous-schema-59>
+                        x-parser-schema-id: <anonymous-schema-66>
+                    x-parser-schema-id: <anonymous-schema-62>
+                x-parser-schema-id: <anonymous-schema-61>
             x-parser-schema-id: LaneOpenedEvent
           examples:
             - name: laneOpened
@@ -2618,8 +2868,8 @@ operations:
                   destinationNodeId: node-9b7e02
                   mode: GROUND
                   nominalTransitMinutes: 180
-          x-parser-unique-object-id: LaneOpened
-        LaneClosed:
+          x-parser-unique-object-id: node-topology-LaneOpened
+        node-topology-LaneClosed:
           name: LaneClosed
           title: Lane closed
           summary: A lane was closed.
@@ -2688,13 +2938,13 @@ operations:
                     properties:
                       laneId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-67>
+                        x-parser-schema-id: <anonymous-schema-69>
                       closedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-68>
-                    x-parser-schema-id: <anonymous-schema-66>
-                x-parser-schema-id: <anonymous-schema-65>
+                        x-parser-schema-id: <anonymous-schema-70>
+                    x-parser-schema-id: <anonymous-schema-68>
+                x-parser-schema-id: <anonymous-schema-67>
             x-parser-schema-id: LaneClosedEvent
           examples:
             - name: laneClosed
@@ -2711,8 +2961,8 @@ operations:
                 data:
                   laneId: lane-5c21d8
                   closedAt: '2026-11-02T10:00:00Z'
-          x-parser-unique-object-id: LaneClosed
-        LaneCostDeclared:
+          x-parser-unique-object-id: node-topology-LaneClosed
+        node-topology-LaneCostDeclared:
           name: LaneCostDeclared
           title: Lane cost declared
           summary: >-
@@ -2791,7 +3041,7 @@ operations:
                     properties:
                       laneId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-71>
+                        x-parser-schema-id: <anonymous-schema-73>
                       costPerUnitCents:
                         type: integer
                         format: int64
@@ -2801,13 +3051,13 @@ operations:
                           The planner's declared marginal cost of moving ONE
                           package-unit across this lane on one departure,
                           integer cents.
-                        x-parser-schema-id: <anonymous-schema-72>
+                        x-parser-schema-id: <anonymous-schema-74>
                       declaredAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-73>
-                    x-parser-schema-id: <anonymous-schema-70>
-                x-parser-schema-id: <anonymous-schema-69>
+                        x-parser-schema-id: <anonymous-schema-75>
+                    x-parser-schema-id: <anonymous-schema-72>
+                x-parser-schema-id: <anonymous-schema-71>
             x-parser-schema-id: LaneCostDeclaredEvent
           examples:
             - name: laneCostDeclared
@@ -2828,8 +3078,125 @@ operations:
                   laneId: lane-5c21d8
                   costPerUnitCents: 320
                   declaredAt: '2026-11-05T09:30:00Z'
-          x-parser-unique-object-id: LaneCostDeclared
-        ServiceAreaAssigned:
+          x-parser-unique-object-id: node-topology-LaneCostDeclared
+        node-topology-LaneEmissionDeclared:
+          name: LaneEmissionDeclared
+          title: Lane emission declared
+          summary: >-
+            The planner declared the carbon emission of moving one package-unit
+            across the lane.
+          description: >-
+            `type` =
+            `com.retailnetwork.logistics.node-topology.lane.LaneEmissionDeclared`;
+            subject and key = the laneId. Raised by DeclareLaneEmission, on
+            every declaration (a newer declaration supersedes the previous
+            value). `gCo2ePerUnit` is the declared carbon emission of moving ONE
+            package-unit across the lane on one departure, grams of
+            CO2-equivalent, 0 to 10000000; 0 is legal (zero declared emission).
+            A lane with no declaration publishes nothing. Consumed by
+            order-sourcing, which keeps the latest declaration per laneId and
+            records it beside the declared cents in its estimate (roadmap C9,
+            ADR 0018); ranking is unchanged.
+          contentType: application/cloudevents+json
+          tags:
+            - name: lane
+          payload:
+            allOf:
+              - type: object
+                required:
+                  - specversion
+                  - id
+                  - source
+                  - type
+                  - subject
+                  - time
+                  - datacontenttype
+                  - dataschema
+                  - data
+                properties:
+                  specversion:
+                    type: string
+                    const: '1.0'
+                    x-parser-schema-id: <anonymous-schema-1>
+                  id:
+                    type: string
+                    format: uuid
+                    x-parser-schema-id: <anonymous-schema-2>
+                  source:
+                    type: string
+                    const: /retailnetwork/node-topology
+                    x-parser-schema-id: <anonymous-schema-3>
+                  type:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-4>
+                  subject:
+                    type: string
+                    description: The aggregate root id (nodeId
+                    laneId: null
+                    postalPrefix or regionId).: null
+                    x-parser-schema-id: <anonymous-schema-5>
+                  time:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-6>
+                  datacontenttype:
+                    type: string
+                    const: application/json
+                    x-parser-schema-id: <anonymous-schema-7>
+                  dataschema:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-8>
+                x-parser-schema-id: CloudEventEnvelope
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - laneId
+                      - gCo2ePerUnit
+                      - declaredAt
+                    properties:
+                      laneId:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-78>
+                      gCo2ePerUnit:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                        maximum: 10000000
+                        description: >-
+                          The planner's declared carbon emission of moving ONE
+                          package-unit across this lane on one departure, grams
+                          of CO2-equivalent.
+                        x-parser-schema-id: <anonymous-schema-79>
+                      declaredAt:
+                        type: string
+                        format: date-time
+                        x-parser-schema-id: <anonymous-schema-80>
+                    x-parser-schema-id: <anonymous-schema-77>
+                x-parser-schema-id: <anonymous-schema-76>
+            x-parser-schema-id: LaneEmissionDeclaredEvent
+          examples:
+            - name: laneEmissionDeclared
+              summary: >-
+                The planner declared the carbon emission of moving one
+                package-unit across the lane.
+              payload:
+                specversion: '1.0'
+                id: 8a4d3f1e-2c5b-4e8a-b1d7-6f9c0e3a5b7d
+                source: /retailnetwork/node-topology
+                type: >-
+                  com.retailnetwork.logistics.node-topology.lane.LaneEmissionDeclared
+                subject: lane-5c21d8
+                time: '2026-11-14T09:30:00Z'
+                datacontenttype: application/json
+                dataschema: urn:retailnetwork:node-topology:events:LaneEmissionDeclared:v1
+                data:
+                  laneId: lane-5c21d8
+                  gCo2ePerUnit: 410
+                  declaredAt: '2026-11-14T09:30:00Z'
+          x-parser-unique-object-id: node-topology-LaneEmissionDeclared
+        node-topology-ServiceAreaAssigned:
           name: ServiceAreaAssigned
           title: Service area assigned
           summary: >-
@@ -2842,7 +3209,12 @@ operations:
             first assignment and on every reassignment. Subject and Kafka key
             are the postalPrefix. `assignmentVersion` strictly increases per
             prefix; consumers keep the highest. `regionId` is the station's
-            region.
+            region. `deliveryMode` and `carriers` are optional (ADR 0016):
+            omitted on a NETWORK_ROUTE area, so a consumer that predates the
+            delivery mode decodes the event with its old meaning; a
+            CARRIER_HANDOFF area carries 1 to 4 options, each with carrierId,
+            handoffNodeId, costPerPackageCents and transitMinutes, the handoff
+            node an ACTIVE DELIVERY_STATION or SORTATION_CENTER.
           contentType: application/cloudevents+json
           tags:
             - name: servicearea
@@ -2905,20 +3277,76 @@ operations:
                     properties:
                       postalPrefix:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-76>
+                        x-parser-schema-id: <anonymous-schema-83>
                       deliveryStationNodeId:
                         type: string
                         description: The DELIVERY_STATION that serves the prefix.
-                        x-parser-schema-id: <anonymous-schema-77>
+                        x-parser-schema-id: <anonymous-schema-84>
                       regionId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-78>
+                        x-parser-schema-id: <anonymous-schema-85>
                       assignmentVersion:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-79>
-                    x-parser-schema-id: <anonymous-schema-75>
-                x-parser-schema-id: <anonymous-schema-74>
+                        x-parser-schema-id: <anonymous-schema-86>
+                      deliveryMode:
+                        type: string
+                        enum:
+                          - NETWORK_ROUTE
+                          - CARRIER_HANDOFF
+                        description: >-
+                          How the area's last mile is served (ADR 0016); omitted
+                          on a NETWORK_ROUTE area, which a consumer decodes as
+                          the mode it always assumed.
+                        x-parser-schema-id: <anonymous-schema-87>
+                      carriers:
+                        type: array
+                        description: >-
+                          The declared carrier options of a CARRIER_HANDOFF
+                          area; omitted on a NETWORK_ROUTE area.
+                        items:
+                          type: object
+                          description: >-
+                            One declared external carrier of a CARRIER_HANDOFF
+                            service area (ADR 0016).
+                          required:
+                            - carrierId
+                            - handoffNodeId
+                            - costPerPackageCents
+                            - transitMinutes
+                          properties:
+                            carrierId:
+                              type: string
+                              description: The carrier's own identifier
+                              unique within the area.: null
+                              x-parser-schema-id: <anonymous-schema-89>
+                            handoffNodeId:
+                              type: string
+                              description: >-
+                                An ACTIVE DELIVERY_STATION or SORTATION_CENTER
+                                the network hands packages over at.
+                              x-parser-schema-id: <anonymous-schema-90>
+                            costPerPackageCents:
+                              type: integer
+                              minimum: 0
+                              maximum: 10000000
+                              description: >-
+                                The carrier's declared cost of delivering one
+                                package
+                              integer cents.: null
+                              x-parser-schema-id: <anonymous-schema-91>
+                            transitMinutes:
+                              type: integer
+                              minimum: 1
+                              description: >-
+                                The carrier's declared transit from the handoff
+                                node to the doorstep
+                              in minutes.: null
+                              x-parser-schema-id: <anonymous-schema-92>
+                          x-parser-schema-id: CarrierOption
+                        x-parser-schema-id: <anonymous-schema-88>
+                    x-parser-schema-id: <anonymous-schema-82>
+                x-parser-schema-id: <anonymous-schema-81>
             x-parser-schema-id: ServiceAreaAssignedEvent
           examples:
             - name: serviceAreaAssigned
@@ -2940,8 +3368,37 @@ operations:
                   deliveryStationNodeId: node-9b7e02
                   regionId: region-se
                   assignmentVersion: 2
-          x-parser-unique-object-id: ServiceAreaAssigned
-        RegionDefined:
+            - name: serviceAreaAssignedCarrierHandoff
+              summary: >-
+                A postal prefix was assigned for carrier handoff with two
+                declared options (ADR 0016).
+              payload:
+                specversion: '1.0'
+                id: 7a1c4e8b-2d4f-4a63-9e55-1b0c9a4e5f21
+                source: /retailnetwork/node-topology
+                type: >-
+                  com.retailnetwork.logistics.node-topology.servicearea.ServiceAreaAssigned
+                subject: '01310'
+                time: '2026-11-13T09:00:00Z'
+                datacontenttype: application/json
+                dataschema: urn:retailnetwork:node-topology:events:ServiceAreaAssigned:v1
+                data:
+                  postalPrefix: '01310'
+                  deliveryStationNodeId: node-9b7e02
+                  regionId: region-se
+                  assignmentVersion: 3
+                  deliveryMode: CARRIER_HANDOFF
+                  carriers:
+                    - carrierId: carrier-a
+                      handoffNodeId: node-5c21d8
+                      costPerPackageCents: 320
+                      transitMinutes: 95
+                    - carrierId: carrier-b
+                      handoffNodeId: node-9b7e02
+                      costPerPackageCents: 400
+                      transitMinutes: 60
+          x-parser-unique-object-id: node-topology-ServiceAreaAssigned
+        node-topology-RegionDefined:
           name: RegionDefined
           title: Region defined
           summary: A region was defined.
@@ -3011,16 +3468,16 @@ operations:
                     properties:
                       regionId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-82>
+                        x-parser-schema-id: <anonymous-schema-95>
                       code:
                         type: string
                         description: Unique short code.
-                        x-parser-schema-id: <anonymous-schema-83>
+                        x-parser-schema-id: <anonymous-schema-96>
                       name:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-84>
-                    x-parser-schema-id: <anonymous-schema-81>
-                x-parser-schema-id: <anonymous-schema-80>
+                        x-parser-schema-id: <anonymous-schema-97>
+                    x-parser-schema-id: <anonymous-schema-94>
+                x-parser-schema-id: <anonymous-schema-93>
             x-parser-schema-id: RegionDefinedEvent
           examples:
             - name: regionDefined
@@ -3038,7 +3495,7 @@ operations:
                   regionId: region-se
                   code: SE
                   name: Southeast
-          x-parser-unique-object-id: RegionDefined
+          x-parser-unique-object-id: node-topology-RegionDefined
       x-eventcatalog-channel-version: 1.0.0
       x-parser-unique-object-id: nodeTopologyEvents
     messages:
@@ -3052,6 +3509,8 @@ operations:
           not on the wire: derive them from `nodeType` (policy
           DefaultCapabilitiesByType). `subtype`, `vendorId` and `vendorNodeCode`
           are null when not applicable (network-operated nodes have no vendor).
+          `servingStationNodeId` is null unless the node is a PICKUP_POINT (ADR
+          0017).
         contentType: application/cloudevents+json
         tags:
           - name: node
@@ -3113,6 +3572,7 @@ operations:
                     - operator
                     - vendorId
                     - vendorNodeCode
+                    - servingStationNodeId
                     - regionId
                     - timezone
                     - postalCode
@@ -3130,6 +3590,7 @@ operations:
                         - SORTATION_CENTER
                         - DELIVERY_STATION
                         - AIR_HUB
+                        - PICKUP_POINT
                       x-parser-schema-id: NodeType
                     subtype:
                       description: >-
@@ -3154,6 +3615,7 @@ operations:
                       enum:
                         - NETWORK
                         - VENDOR
+                        - PARTNER
                       x-parser-schema-id: NodeOperator
                     vendorId:
                       type:
@@ -3169,20 +3631,28 @@ operations:
                         The vendor's own code of the node; set when operator is
                         VENDOR; null otherwise.
                       x-parser-schema-id: <anonymous-schema-15>
+                    servingStationNodeId:
+                      type:
+                        - string
+                        - 'null'
+                      description: >-
+                        The serving delivery station of a PICKUP_POINT; null for
+                        every other node type (ADR 0017).
+                      x-parser-schema-id: <anonymous-schema-16>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-16>
+                      x-parser-schema-id: <anonymous-schema-17>
                     timezone:
                       type: string
                       description: IANA time zone of the building.
-                      x-parser-schema-id: <anonymous-schema-17>
+                      x-parser-schema-id: <anonymous-schema-18>
                     postalCode:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-18>
+                      x-parser-schema-id: <anonymous-schema-19>
                     countryCode:
                       type: string
                       description: ISO 3166-1 alpha-2.
-                      x-parser-schema-id: <anonymous-schema-19>
+                      x-parser-schema-id: <anonymous-schema-20>
                   x-parser-schema-id: <anonymous-schema-10>
               x-parser-schema-id: <anonymous-schema-9>
           x-parser-schema-id: NodeRegisteredEvent
@@ -3209,7 +3679,7 @@ operations:
                 timezone: America/Sao_Paulo
                 postalCode: 07750-000
                 countryCode: BR
-        x-parser-unique-object-id: NodeRegistered
+        x-parser-unique-object-id: node-topology-NodeRegistered
       - name: NodeOperationalProfileDeclared
         title: Node operational profile declared
         summary: A new operational profile revision was stored for a node.
@@ -3293,16 +3763,16 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-22>
+                      x-parser-schema-id: <anonymous-schema-23>
                     profileRevision:
                       type: integer
                       minimum: 1
                       description: Strictly increasing per node.
-                      x-parser-schema-id: <anonymous-schema-23>
+                      x-parser-schema-id: <anonymous-schema-24>
                     timezone:
                       type: string
                       description: IANA time zone the local times are in.
-                      x-parser-schema-id: <anonymous-schema-24>
+                      x-parser-schema-id: <anonymous-schema-25>
                     operatingHoursByDay:
                       type: object
                       description: >-
@@ -3321,13 +3791,13 @@ operations:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         tuesday:
                           type: object
@@ -3340,13 +3810,13 @@ operations:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         wednesday:
                           type: object
@@ -3359,13 +3829,13 @@ operations:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         thursday:
                           type: object
@@ -3378,13 +3848,13 @@ operations:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         friday:
                           type: object
@@ -3397,13 +3867,13 @@ operations:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         saturday:
                           type: object
@@ -3416,13 +3886,13 @@ operations:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                         sunday:
                           type: object
@@ -3435,13 +3905,13 @@ operations:
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local opening time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-25>
+                              x-parser-schema-id: <anonymous-schema-26>
                             end:
                               type: string
                               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                               description: Local closing time
                               HH:mm.: null
-                              x-parser-schema-id: <anonymous-schema-26>
+                              x-parser-schema-id: <anonymous-schema-27>
                           x-parser-schema-id: DayHours
                       x-parser-schema-id: OperatingHoursByDay
                     holidays:
@@ -3450,15 +3920,15 @@ operations:
                       items:
                         type: string
                         format: date
-                        x-parser-schema-id: <anonymous-schema-28>
-                      x-parser-schema-id: <anonymous-schema-27>
+                        x-parser-schema-id: <anonymous-schema-29>
+                      x-parser-schema-id: <anonymous-schema-28>
                     handlingTimeMinutes:
                       type: integer
                       minimum: 0
                       description: >-
                         Declared time from order release to a package ready for
                         handover.
-                      x-parser-schema-id: <anonymous-schema-29>
+                      x-parser-schema-id: <anonymous-schema-30>
                     cutoffs:
                       type: array
                       items:
@@ -3472,7 +3942,7 @@ operations:
                             description: >-
                               Local time HH:mm by which packages are ready for
                               handover.
-                            x-parser-schema-id: <anonymous-schema-31>
+                            x-parser-schema-id: <anonymous-schema-32>
                           days:
                             type: array
                             description: >-
@@ -3491,13 +3961,13 @@ operations:
                                 - saturday
                                 - sunday
                               x-parser-schema-id: Weekday
-                            x-parser-schema-id: <anonymous-schema-32>
+                            x-parser-schema-id: <anonymous-schema-33>
                           maxOrders:
                             type: integer
                             minimum: 1
-                            x-parser-schema-id: <anonymous-schema-33>
+                            x-parser-schema-id: <anonymous-schema-34>
                         x-parser-schema-id: CutoffSlot
-                      x-parser-schema-id: <anonymous-schema-30>
+                      x-parser-schema-id: <anonymous-schema-31>
                     throughputCap:
                       type: object
                       required:
@@ -3508,17 +3978,17 @@ operations:
                         value:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-34>
+                          x-parser-schema-id: <anonymous-schema-35>
                         timeUnit:
                           type: string
                           enum:
                             - HOUR
                             - DAY
-                          x-parser-schema-id: <anonymous-schema-35>
+                          x-parser-schema-id: <anonymous-schema-36>
                         unit:
                           type: string
                           const: ORDER
-                          x-parser-schema-id: <anonymous-schema-36>
+                          x-parser-schema-id: <anonymous-schema-37>
                       x-parser-schema-id: ThroughputCap
                     sortDwellMinutes:
                       type: integer
@@ -3526,7 +3996,7 @@ operations:
                       description: >-
                         Omitted unless the node is a SORTATION_CENTER or an
                         AIR_HUB.
-                      x-parser-schema-id: <anonymous-schema-37>
+                      x-parser-schema-id: <anonymous-schema-38>
                     inbound:
                       type: object
                       description: >-
@@ -3539,7 +4009,7 @@ operations:
                           minimum: 1
                           description: The heaviest carton the node accepts
                           in grams.: null
-                          x-parser-schema-id: <anonymous-schema-38>
+                          x-parser-schema-id: <anonymous-schema-39>
                         maxCartonDimsMm:
                           type: object
                           description: >-
@@ -3553,33 +4023,41 @@ operations:
                             l:
                               type: integer
                               minimum: 1
-                              x-parser-schema-id: <anonymous-schema-40>
+                              x-parser-schema-id: <anonymous-schema-41>
                             w:
                               type: integer
                               minimum: 1
-                              x-parser-schema-id: <anonymous-schema-41>
+                              x-parser-schema-id: <anonymous-schema-42>
                             h:
                               type: integer
                               minimum: 1
-                              x-parser-schema-id: <anonymous-schema-42>
-                          x-parser-schema-id: <anonymous-schema-39>
+                              x-parser-schema-id: <anonymous-schema-43>
+                          x-parser-schema-id: <anonymous-schema-40>
                         acceptsPallets:
                           type: boolean
                           description: Whether the node receives pallets.
-                          x-parser-schema-id: <anonymous-schema-43>
+                          x-parser-schema-id: <anonymous-schema-44>
                         requiresSscc:
                           type: boolean
                           description: Whether every inbound carton must carry an SSCC.
-                          x-parser-schema-id: <anonymous-schema-44>
+                          x-parser-schema-id: <anonymous-schema-45>
+                        monthlyVolumeDm3:
+                          type: integer
+                          minimum: 1
+                          description: >-
+                            The inbound volume the node accepts per calendar
+                            month, in cubic decimetres (ADR 0019); absent means
+                            not declared.
+                          x-parser-schema-id: <anonymous-schema-46>
                       x-parser-schema-id: InboundLimits
                     declaredBy:
                       type: string
                       enum:
                         - VENDOR
                         - NETWORK_OPS
-                      x-parser-schema-id: <anonymous-schema-45>
-                  x-parser-schema-id: <anonymous-schema-21>
-              x-parser-schema-id: <anonymous-schema-20>
+                      x-parser-schema-id: <anonymous-schema-47>
+                  x-parser-schema-id: <anonymous-schema-22>
+              x-parser-schema-id: <anonymous-schema-21>
           x-parser-schema-id: NodeOperationalProfileDeclaredEvent
         examples:
           - name: nodeOperationalProfileDeclared
@@ -3676,7 +4154,7 @@ operations:
                   acceptsPallets: true
                   requiresSscc: false
                 declaredBy: VENDOR
-        x-parser-unique-object-id: NodeOperationalProfileDeclared
+        x-parser-unique-object-id: node-topology-NodeOperationalProfileDeclared
       - name: NodeActivated
         title: Node activated
         summary: A node became ACTIVE (from PROPOSED or SUSPENDED).
@@ -3745,13 +4223,13 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-48>
+                      x-parser-schema-id: <anonymous-schema-50>
                     activatedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-49>
-                  x-parser-schema-id: <anonymous-schema-47>
-              x-parser-schema-id: <anonymous-schema-46>
+                      x-parser-schema-id: <anonymous-schema-51>
+                  x-parser-schema-id: <anonymous-schema-49>
+              x-parser-schema-id: <anonymous-schema-48>
           x-parser-schema-id: NodeActivatedEvent
         examples:
           - name: nodeActivated
@@ -3768,7 +4246,7 @@ operations:
               data:
                 nodeId: node-0f3a91
                 activatedAt: '2026-10-22T14:00:00Z'
-        x-parser-unique-object-id: NodeActivated
+        x-parser-unique-object-id: node-topology-NodeActivated
       - name: NodeSuspended
         title: Node suspended
         summary: An ACTIVE node became SUSPENDED.
@@ -3840,17 +4318,17 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-52>
+                      x-parser-schema-id: <anonymous-schema-54>
                     reason:
                       type: string
                       description: Why the planner suspended the node.
-                      x-parser-schema-id: <anonymous-schema-53>
+                      x-parser-schema-id: <anonymous-schema-55>
                     suspendedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-54>
-                  x-parser-schema-id: <anonymous-schema-51>
-              x-parser-schema-id: <anonymous-schema-50>
+                      x-parser-schema-id: <anonymous-schema-56>
+                  x-parser-schema-id: <anonymous-schema-53>
+              x-parser-schema-id: <anonymous-schema-52>
           x-parser-schema-id: NodeSuspendedEvent
         examples:
           - name: nodeSuspended
@@ -3868,7 +4346,7 @@ operations:
                 nodeId: node-0f3a91
                 reason: carrier strike at the dock
                 suspendedAt: '2026-10-23T08:30:00Z'
-        x-parser-unique-object-id: NodeSuspended
+        x-parser-unique-object-id: node-topology-NodeSuspended
       - name: NodeRetired
         title: Node retired
         summary: A node became RETIRED, which is terminal.
@@ -3937,13 +4415,13 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-57>
+                      x-parser-schema-id: <anonymous-schema-59>
                     retiredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-58>
-                  x-parser-schema-id: <anonymous-schema-56>
-              x-parser-schema-id: <anonymous-schema-55>
+                      x-parser-schema-id: <anonymous-schema-60>
+                  x-parser-schema-id: <anonymous-schema-58>
+              x-parser-schema-id: <anonymous-schema-57>
           x-parser-schema-id: NodeRetiredEvent
         examples:
           - name: nodeRetired
@@ -3960,7 +4438,7 @@ operations:
               data:
                 nodeId: node-0f3a91
                 retiredAt: '2026-11-30T23:59:00Z'
-        x-parser-unique-object-id: NodeRetired
+        x-parser-unique-object-id: node-topology-NodeRetired
       - name: LaneOpened
         title: Lane opened
         summary: A directed lane between two nodes was opened.
@@ -4031,13 +4509,13 @@ operations:
                   properties:
                     laneId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-61>
+                      x-parser-schema-id: <anonymous-schema-63>
                     originNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-62>
+                      x-parser-schema-id: <anonymous-schema-64>
                     destinationNodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-63>
+                      x-parser-schema-id: <anonymous-schema-65>
                     mode:
                       type: string
                       enum:
@@ -4047,9 +4525,9 @@ operations:
                     nominalTransitMinutes:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-64>
-                  x-parser-schema-id: <anonymous-schema-60>
-              x-parser-schema-id: <anonymous-schema-59>
+                      x-parser-schema-id: <anonymous-schema-66>
+                  x-parser-schema-id: <anonymous-schema-62>
+              x-parser-schema-id: <anonymous-schema-61>
           x-parser-schema-id: LaneOpenedEvent
         examples:
           - name: laneOpened
@@ -4069,7 +4547,7 @@ operations:
                 destinationNodeId: node-9b7e02
                 mode: GROUND
                 nominalTransitMinutes: 180
-        x-parser-unique-object-id: LaneOpened
+        x-parser-unique-object-id: node-topology-LaneOpened
       - name: LaneClosed
         title: Lane closed
         summary: A lane was closed.
@@ -4137,13 +4615,13 @@ operations:
                   properties:
                     laneId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-67>
+                      x-parser-schema-id: <anonymous-schema-69>
                     closedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-68>
-                  x-parser-schema-id: <anonymous-schema-66>
-              x-parser-schema-id: <anonymous-schema-65>
+                      x-parser-schema-id: <anonymous-schema-70>
+                  x-parser-schema-id: <anonymous-schema-68>
+              x-parser-schema-id: <anonymous-schema-67>
           x-parser-schema-id: LaneClosedEvent
         examples:
           - name: laneClosed
@@ -4160,7 +4638,7 @@ operations:
               data:
                 laneId: lane-5c21d8
                 closedAt: '2026-11-02T10:00:00Z'
-        x-parser-unique-object-id: LaneClosed
+        x-parser-unique-object-id: node-topology-LaneClosed
       - name: LaneCostDeclared
         title: Lane cost declared
         summary: >-
@@ -4239,7 +4717,7 @@ operations:
                   properties:
                     laneId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-71>
+                      x-parser-schema-id: <anonymous-schema-73>
                     costPerUnitCents:
                       type: integer
                       format: int64
@@ -4249,13 +4727,13 @@ operations:
                         The planner's declared marginal cost of moving ONE
                         package-unit across this lane on one departure, integer
                         cents.
-                      x-parser-schema-id: <anonymous-schema-72>
+                      x-parser-schema-id: <anonymous-schema-74>
                     declaredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-73>
-                  x-parser-schema-id: <anonymous-schema-70>
-              x-parser-schema-id: <anonymous-schema-69>
+                      x-parser-schema-id: <anonymous-schema-75>
+                  x-parser-schema-id: <anonymous-schema-72>
+              x-parser-schema-id: <anonymous-schema-71>
           x-parser-schema-id: LaneCostDeclaredEvent
         examples:
           - name: laneCostDeclared
@@ -4275,7 +4753,123 @@ operations:
                 laneId: lane-5c21d8
                 costPerUnitCents: 320
                 declaredAt: '2026-11-05T09:30:00Z'
-        x-parser-unique-object-id: LaneCostDeclared
+        x-parser-unique-object-id: node-topology-LaneCostDeclared
+      - name: LaneEmissionDeclared
+        title: Lane emission declared
+        summary: >-
+          The planner declared the carbon emission of moving one package-unit
+          across the lane.
+        description: >-
+          `type` =
+          `com.retailnetwork.logistics.node-topology.lane.LaneEmissionDeclared`;
+          subject and key = the laneId. Raised by DeclareLaneEmission, on every
+          declaration (a newer declaration supersedes the previous value).
+          `gCo2ePerUnit` is the declared carbon emission of moving ONE
+          package-unit across the lane on one departure, grams of
+          CO2-equivalent, 0 to 10000000; 0 is legal (zero declared emission). A
+          lane with no declaration publishes nothing. Consumed by
+          order-sourcing, which keeps the latest declaration per laneId and
+          records it beside the declared cents in its estimate (roadmap C9, ADR
+          0018); ranking is unchanged.
+        contentType: application/cloudevents+json
+        tags:
+          - name: lane
+        payload:
+          allOf:
+            - type: object
+              required:
+                - specversion
+                - id
+                - source
+                - type
+                - subject
+                - time
+                - datacontenttype
+                - dataschema
+                - data
+              properties:
+                specversion:
+                  type: string
+                  const: '1.0'
+                  x-parser-schema-id: <anonymous-schema-1>
+                id:
+                  type: string
+                  format: uuid
+                  x-parser-schema-id: <anonymous-schema-2>
+                source:
+                  type: string
+                  const: /retailnetwork/node-topology
+                  x-parser-schema-id: <anonymous-schema-3>
+                type:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-4>
+                subject:
+                  type: string
+                  description: The aggregate root id (nodeId
+                  laneId: null
+                  postalPrefix or regionId).: null
+                  x-parser-schema-id: <anonymous-schema-5>
+                time:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-6>
+                datacontenttype:
+                  type: string
+                  const: application/json
+                  x-parser-schema-id: <anonymous-schema-7>
+                dataschema:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-8>
+              x-parser-schema-id: CloudEventEnvelope
+            - type: object
+              properties:
+                data:
+                  type: object
+                  required:
+                    - laneId
+                    - gCo2ePerUnit
+                    - declaredAt
+                  properties:
+                    laneId:
+                      type: string
+                      x-parser-schema-id: <anonymous-schema-78>
+                    gCo2ePerUnit:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 10000000
+                      description: >-
+                        The planner's declared carbon emission of moving ONE
+                        package-unit across this lane on one departure, grams of
+                        CO2-equivalent.
+                      x-parser-schema-id: <anonymous-schema-79>
+                    declaredAt:
+                      type: string
+                      format: date-time
+                      x-parser-schema-id: <anonymous-schema-80>
+                  x-parser-schema-id: <anonymous-schema-77>
+              x-parser-schema-id: <anonymous-schema-76>
+          x-parser-schema-id: LaneEmissionDeclaredEvent
+        examples:
+          - name: laneEmissionDeclared
+            summary: >-
+              The planner declared the carbon emission of moving one
+              package-unit across the lane.
+            payload:
+              specversion: '1.0'
+              id: 8a4d3f1e-2c5b-4e8a-b1d7-6f9c0e3a5b7d
+              source: /retailnetwork/node-topology
+              type: >-
+                com.retailnetwork.logistics.node-topology.lane.LaneEmissionDeclared
+              subject: lane-5c21d8
+              time: '2026-11-14T09:30:00Z'
+              datacontenttype: application/json
+              dataschema: urn:retailnetwork:node-topology:events:LaneEmissionDeclared:v1
+              data:
+                laneId: lane-5c21d8
+                gCo2ePerUnit: 410
+                declaredAt: '2026-11-14T09:30:00Z'
+        x-parser-unique-object-id: node-topology-LaneEmissionDeclared
       - name: ServiceAreaAssigned
         title: Service area assigned
         summary: >-
@@ -4288,6 +4882,12 @@ operations:
           first assignment and on every reassignment. Subject and Kafka key are
           the postalPrefix. `assignmentVersion` strictly increases per prefix;
           consumers keep the highest. `regionId` is the station's region.
+          `deliveryMode` and `carriers` are optional (ADR 0016): omitted on a
+          NETWORK_ROUTE area, so a consumer that predates the delivery mode
+          decodes the event with its old meaning; a CARRIER_HANDOFF area carries
+          1 to 4 options, each with carrierId, handoffNodeId,
+          costPerPackageCents and transitMinutes, the handoff node an ACTIVE
+          DELIVERY_STATION or SORTATION_CENTER.
         contentType: application/cloudevents+json
         tags:
           - name: servicearea
@@ -4350,20 +4950,76 @@ operations:
                   properties:
                     postalPrefix:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-76>
+                      x-parser-schema-id: <anonymous-schema-83>
                     deliveryStationNodeId:
                       type: string
                       description: The DELIVERY_STATION that serves the prefix.
-                      x-parser-schema-id: <anonymous-schema-77>
+                      x-parser-schema-id: <anonymous-schema-84>
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-78>
+                      x-parser-schema-id: <anonymous-schema-85>
                     assignmentVersion:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-79>
-                  x-parser-schema-id: <anonymous-schema-75>
-              x-parser-schema-id: <anonymous-schema-74>
+                      x-parser-schema-id: <anonymous-schema-86>
+                    deliveryMode:
+                      type: string
+                      enum:
+                        - NETWORK_ROUTE
+                        - CARRIER_HANDOFF
+                      description: >-
+                        How the area's last mile is served (ADR 0016); omitted
+                        on a NETWORK_ROUTE area, which a consumer decodes as the
+                        mode it always assumed.
+                      x-parser-schema-id: <anonymous-schema-87>
+                    carriers:
+                      type: array
+                      description: >-
+                        The declared carrier options of a CARRIER_HANDOFF area;
+                        omitted on a NETWORK_ROUTE area.
+                      items:
+                        type: object
+                        description: >-
+                          One declared external carrier of a CARRIER_HANDOFF
+                          service area (ADR 0016).
+                        required:
+                          - carrierId
+                          - handoffNodeId
+                          - costPerPackageCents
+                          - transitMinutes
+                        properties:
+                          carrierId:
+                            type: string
+                            description: The carrier's own identifier
+                            unique within the area.: null
+                            x-parser-schema-id: <anonymous-schema-89>
+                          handoffNodeId:
+                            type: string
+                            description: >-
+                              An ACTIVE DELIVERY_STATION or SORTATION_CENTER the
+                              network hands packages over at.
+                            x-parser-schema-id: <anonymous-schema-90>
+                          costPerPackageCents:
+                            type: integer
+                            minimum: 0
+                            maximum: 10000000
+                            description: >-
+                              The carrier's declared cost of delivering one
+                              package
+                            integer cents.: null
+                            x-parser-schema-id: <anonymous-schema-91>
+                          transitMinutes:
+                            type: integer
+                            minimum: 1
+                            description: >-
+                              The carrier's declared transit from the handoff
+                              node to the doorstep
+                            in minutes.: null
+                            x-parser-schema-id: <anonymous-schema-92>
+                        x-parser-schema-id: CarrierOption
+                      x-parser-schema-id: <anonymous-schema-88>
+                  x-parser-schema-id: <anonymous-schema-82>
+              x-parser-schema-id: <anonymous-schema-81>
           x-parser-schema-id: ServiceAreaAssignedEvent
         examples:
           - name: serviceAreaAssigned
@@ -4385,7 +5041,36 @@ operations:
                 deliveryStationNodeId: node-9b7e02
                 regionId: region-se
                 assignmentVersion: 2
-        x-parser-unique-object-id: ServiceAreaAssigned
+          - name: serviceAreaAssignedCarrierHandoff
+            summary: >-
+              A postal prefix was assigned for carrier handoff with two declared
+              options (ADR 0016).
+            payload:
+              specversion: '1.0'
+              id: 7a1c4e8b-2d4f-4a63-9e55-1b0c9a4e5f21
+              source: /retailnetwork/node-topology
+              type: >-
+                com.retailnetwork.logistics.node-topology.servicearea.ServiceAreaAssigned
+              subject: '01310'
+              time: '2026-11-13T09:00:00Z'
+              datacontenttype: application/json
+              dataschema: urn:retailnetwork:node-topology:events:ServiceAreaAssigned:v1
+              data:
+                postalPrefix: '01310'
+                deliveryStationNodeId: node-9b7e02
+                regionId: region-se
+                assignmentVersion: 3
+                deliveryMode: CARRIER_HANDOFF
+                carriers:
+                  - carrierId: carrier-a
+                    handoffNodeId: node-5c21d8
+                    costPerPackageCents: 320
+                    transitMinutes: 95
+                  - carrierId: carrier-b
+                    handoffNodeId: node-9b7e02
+                    costPerPackageCents: 400
+                    transitMinutes: 60
+        x-parser-unique-object-id: node-topology-ServiceAreaAssigned
       - name: RegionDefined
         title: Region defined
         summary: A region was defined.
@@ -4455,16 +5140,16 @@ operations:
                   properties:
                     regionId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-82>
+                      x-parser-schema-id: <anonymous-schema-95>
                     code:
                       type: string
                       description: Unique short code.
-                      x-parser-schema-id: <anonymous-schema-83>
+                      x-parser-schema-id: <anonymous-schema-96>
                     name:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-84>
-                  x-parser-schema-id: <anonymous-schema-81>
-              x-parser-schema-id: <anonymous-schema-80>
+                      x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-94>
+              x-parser-schema-id: <anonymous-schema-93>
           x-parser-schema-id: RegionDefinedEvent
         examples:
           - name: regionDefined
@@ -4482,11 +5167,11 @@ operations:
                 regionId: region-se
                 code: SE
                 name: Southeast
-        x-parser-unique-object-id: RegionDefined
+        x-parser-unique-object-id: node-topology-RegionDefined
     x-parser-unique-object-id: publishNodeTopologyEvents
 components:
   messages:
-    NodeRegistered:
+    node-topology-NodeRegistered:
       name: NodeRegistered
       title: Node registered
       summary: A node was registered in state PROPOSED.
@@ -4497,6 +5182,8 @@ components:
         the wire: derive them from `nodeType` (policy
         DefaultCapabilitiesByType). `subtype`, `vendorId` and `vendorNodeCode`
         are null when not applicable (network-operated nodes have no vendor).
+        `servingStationNodeId` is null unless the node is a PICKUP_POINT (ADR
+        0017).
       contentType: application/cloudevents+json
       tags:
         - name: node
@@ -4558,6 +5245,7 @@ components:
                   - operator
                   - vendorId
                   - vendorNodeCode
+                  - servingStationNodeId
                   - regionId
                   - timezone
                   - postalCode
@@ -4575,6 +5263,7 @@ components:
                       - SORTATION_CENTER
                       - DELIVERY_STATION
                       - AIR_HUB
+                      - PICKUP_POINT
                     x-parser-schema-id: NodeType
                   subtype:
                     description: >-
@@ -4599,6 +5288,7 @@ components:
                     enum:
                       - NETWORK
                       - VENDOR
+                      - PARTNER
                     x-parser-schema-id: NodeOperator
                   vendorId:
                     type:
@@ -4614,20 +5304,28 @@ components:
                       The vendor's own code of the node; set when operator is
                       VENDOR; null otherwise.
                     x-parser-schema-id: <anonymous-schema-15>
+                  servingStationNodeId:
+                    type:
+                      - string
+                      - 'null'
+                    description: >-
+                      The serving delivery station of a PICKUP_POINT; null for
+                      every other node type (ADR 0017).
+                    x-parser-schema-id: <anonymous-schema-16>
                   regionId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-16>
+                    x-parser-schema-id: <anonymous-schema-17>
                   timezone:
                     type: string
                     description: IANA time zone of the building.
-                    x-parser-schema-id: <anonymous-schema-17>
+                    x-parser-schema-id: <anonymous-schema-18>
                   postalCode:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-18>
+                    x-parser-schema-id: <anonymous-schema-19>
                   countryCode:
                     type: string
                     description: ISO 3166-1 alpha-2.
-                    x-parser-schema-id: <anonymous-schema-19>
+                    x-parser-schema-id: <anonymous-schema-20>
                 x-parser-schema-id: <anonymous-schema-10>
             x-parser-schema-id: <anonymous-schema-9>
         x-parser-schema-id: NodeRegisteredEvent
@@ -4654,8 +5352,8 @@ components:
               timezone: America/Sao_Paulo
               postalCode: 07750-000
               countryCode: BR
-      x-parser-unique-object-id: NodeRegistered
-    NodeOperationalProfileDeclared:
+      x-parser-unique-object-id: node-topology-NodeRegistered
+    node-topology-NodeOperationalProfileDeclared:
       name: NodeOperationalProfileDeclared
       title: Node operational profile declared
       summary: A new operational profile revision was stored for a node.
@@ -4739,16 +5437,16 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-22>
+                    x-parser-schema-id: <anonymous-schema-23>
                   profileRevision:
                     type: integer
                     minimum: 1
                     description: Strictly increasing per node.
-                    x-parser-schema-id: <anonymous-schema-23>
+                    x-parser-schema-id: <anonymous-schema-24>
                   timezone:
                     type: string
                     description: IANA time zone the local times are in.
-                    x-parser-schema-id: <anonymous-schema-24>
+                    x-parser-schema-id: <anonymous-schema-25>
                   operatingHoursByDay:
                     type: object
                     description: >-
@@ -4767,13 +5465,13 @@ components:
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local opening time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-25>
+                            x-parser-schema-id: <anonymous-schema-26>
                           end:
                             type: string
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local closing time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-26>
+                            x-parser-schema-id: <anonymous-schema-27>
                         x-parser-schema-id: DayHours
                       tuesday:
                         type: object
@@ -4786,13 +5484,13 @@ components:
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local opening time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-25>
+                            x-parser-schema-id: <anonymous-schema-26>
                           end:
                             type: string
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local closing time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-26>
+                            x-parser-schema-id: <anonymous-schema-27>
                         x-parser-schema-id: DayHours
                       wednesday:
                         type: object
@@ -4805,13 +5503,13 @@ components:
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local opening time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-25>
+                            x-parser-schema-id: <anonymous-schema-26>
                           end:
                             type: string
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local closing time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-26>
+                            x-parser-schema-id: <anonymous-schema-27>
                         x-parser-schema-id: DayHours
                       thursday:
                         type: object
@@ -4824,13 +5522,13 @@ components:
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local opening time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-25>
+                            x-parser-schema-id: <anonymous-schema-26>
                           end:
                             type: string
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local closing time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-26>
+                            x-parser-schema-id: <anonymous-schema-27>
                         x-parser-schema-id: DayHours
                       friday:
                         type: object
@@ -4843,13 +5541,13 @@ components:
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local opening time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-25>
+                            x-parser-schema-id: <anonymous-schema-26>
                           end:
                             type: string
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local closing time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-26>
+                            x-parser-schema-id: <anonymous-schema-27>
                         x-parser-schema-id: DayHours
                       saturday:
                         type: object
@@ -4862,13 +5560,13 @@ components:
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local opening time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-25>
+                            x-parser-schema-id: <anonymous-schema-26>
                           end:
                             type: string
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local closing time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-26>
+                            x-parser-schema-id: <anonymous-schema-27>
                         x-parser-schema-id: DayHours
                       sunday:
                         type: object
@@ -4881,13 +5579,13 @@ components:
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local opening time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-25>
+                            x-parser-schema-id: <anonymous-schema-26>
                           end:
                             type: string
                             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                             description: Local closing time
                             HH:mm.: null
-                            x-parser-schema-id: <anonymous-schema-26>
+                            x-parser-schema-id: <anonymous-schema-27>
                         x-parser-schema-id: DayHours
                     x-parser-schema-id: OperatingHoursByDay
                   holidays:
@@ -4896,15 +5594,15 @@ components:
                     items:
                       type: string
                       format: date
-                      x-parser-schema-id: <anonymous-schema-28>
-                    x-parser-schema-id: <anonymous-schema-27>
+                      x-parser-schema-id: <anonymous-schema-29>
+                    x-parser-schema-id: <anonymous-schema-28>
                   handlingTimeMinutes:
                     type: integer
                     minimum: 0
                     description: >-
                       Declared time from order release to a package ready for
                       handover.
-                    x-parser-schema-id: <anonymous-schema-29>
+                    x-parser-schema-id: <anonymous-schema-30>
                   cutoffs:
                     type: array
                     items:
@@ -4918,7 +5616,7 @@ components:
                           description: >-
                             Local time HH:mm by which packages are ready for
                             handover.
-                          x-parser-schema-id: <anonymous-schema-31>
+                          x-parser-schema-id: <anonymous-schema-32>
                         days:
                           type: array
                           description: >-
@@ -4937,13 +5635,13 @@ components:
                               - saturday
                               - sunday
                             x-parser-schema-id: Weekday
-                          x-parser-schema-id: <anonymous-schema-32>
+                          x-parser-schema-id: <anonymous-schema-33>
                         maxOrders:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-33>
+                          x-parser-schema-id: <anonymous-schema-34>
                       x-parser-schema-id: CutoffSlot
-                    x-parser-schema-id: <anonymous-schema-30>
+                    x-parser-schema-id: <anonymous-schema-31>
                   throughputCap:
                     type: object
                     required:
@@ -4954,17 +5652,17 @@ components:
                       value:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-34>
+                        x-parser-schema-id: <anonymous-schema-35>
                       timeUnit:
                         type: string
                         enum:
                           - HOUR
                           - DAY
-                        x-parser-schema-id: <anonymous-schema-35>
+                        x-parser-schema-id: <anonymous-schema-36>
                       unit:
                         type: string
                         const: ORDER
-                        x-parser-schema-id: <anonymous-schema-36>
+                        x-parser-schema-id: <anonymous-schema-37>
                     x-parser-schema-id: ThroughputCap
                   sortDwellMinutes:
                     type: integer
@@ -4972,7 +5670,7 @@ components:
                     description: >-
                       Omitted unless the node is a SORTATION_CENTER or an
                       AIR_HUB.
-                    x-parser-schema-id: <anonymous-schema-37>
+                    x-parser-schema-id: <anonymous-schema-38>
                   inbound:
                     type: object
                     description: >-
@@ -4985,7 +5683,7 @@ components:
                         minimum: 1
                         description: The heaviest carton the node accepts
                         in grams.: null
-                        x-parser-schema-id: <anonymous-schema-38>
+                        x-parser-schema-id: <anonymous-schema-39>
                       maxCartonDimsMm:
                         type: object
                         description: >-
@@ -4999,33 +5697,41 @@ components:
                           l:
                             type: integer
                             minimum: 1
-                            x-parser-schema-id: <anonymous-schema-40>
+                            x-parser-schema-id: <anonymous-schema-41>
                           w:
                             type: integer
                             minimum: 1
-                            x-parser-schema-id: <anonymous-schema-41>
+                            x-parser-schema-id: <anonymous-schema-42>
                           h:
                             type: integer
                             minimum: 1
-                            x-parser-schema-id: <anonymous-schema-42>
-                        x-parser-schema-id: <anonymous-schema-39>
+                            x-parser-schema-id: <anonymous-schema-43>
+                        x-parser-schema-id: <anonymous-schema-40>
                       acceptsPallets:
                         type: boolean
                         description: Whether the node receives pallets.
-                        x-parser-schema-id: <anonymous-schema-43>
+                        x-parser-schema-id: <anonymous-schema-44>
                       requiresSscc:
                         type: boolean
                         description: Whether every inbound carton must carry an SSCC.
-                        x-parser-schema-id: <anonymous-schema-44>
+                        x-parser-schema-id: <anonymous-schema-45>
+                      monthlyVolumeDm3:
+                        type: integer
+                        minimum: 1
+                        description: >-
+                          The inbound volume the node accepts per calendar
+                          month, in cubic decimetres (ADR 0019); absent means
+                          not declared.
+                        x-parser-schema-id: <anonymous-schema-46>
                     x-parser-schema-id: InboundLimits
                   declaredBy:
                     type: string
                     enum:
                       - VENDOR
                       - NETWORK_OPS
-                    x-parser-schema-id: <anonymous-schema-45>
-                x-parser-schema-id: <anonymous-schema-21>
-            x-parser-schema-id: <anonymous-schema-20>
+                    x-parser-schema-id: <anonymous-schema-47>
+                x-parser-schema-id: <anonymous-schema-22>
+            x-parser-schema-id: <anonymous-schema-21>
         x-parser-schema-id: NodeOperationalProfileDeclaredEvent
       examples:
         - name: nodeOperationalProfileDeclared
@@ -5122,8 +5828,8 @@ components:
                 acceptsPallets: true
                 requiresSscc: false
               declaredBy: VENDOR
-      x-parser-unique-object-id: NodeOperationalProfileDeclared
-    NodeActivated:
+      x-parser-unique-object-id: node-topology-NodeOperationalProfileDeclared
+    node-topology-NodeActivated:
       name: NodeActivated
       title: Node activated
       summary: A node became ACTIVE (from PROPOSED or SUSPENDED).
@@ -5191,13 +5897,13 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-48>
+                    x-parser-schema-id: <anonymous-schema-50>
                   activatedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-49>
-                x-parser-schema-id: <anonymous-schema-47>
-            x-parser-schema-id: <anonymous-schema-46>
+                    x-parser-schema-id: <anonymous-schema-51>
+                x-parser-schema-id: <anonymous-schema-49>
+            x-parser-schema-id: <anonymous-schema-48>
         x-parser-schema-id: NodeActivatedEvent
       examples:
         - name: nodeActivated
@@ -5214,8 +5920,8 @@ components:
             data:
               nodeId: node-0f3a91
               activatedAt: '2026-10-22T14:00:00Z'
-      x-parser-unique-object-id: NodeActivated
-    NodeSuspended:
+      x-parser-unique-object-id: node-topology-NodeActivated
+    node-topology-NodeSuspended:
       name: NodeSuspended
       title: Node suspended
       summary: An ACTIVE node became SUSPENDED.
@@ -5286,17 +5992,17 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-52>
+                    x-parser-schema-id: <anonymous-schema-54>
                   reason:
                     type: string
                     description: Why the planner suspended the node.
-                    x-parser-schema-id: <anonymous-schema-53>
+                    x-parser-schema-id: <anonymous-schema-55>
                   suspendedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-54>
-                x-parser-schema-id: <anonymous-schema-51>
-            x-parser-schema-id: <anonymous-schema-50>
+                    x-parser-schema-id: <anonymous-schema-56>
+                x-parser-schema-id: <anonymous-schema-53>
+            x-parser-schema-id: <anonymous-schema-52>
         x-parser-schema-id: NodeSuspendedEvent
       examples:
         - name: nodeSuspended
@@ -5314,8 +6020,8 @@ components:
               nodeId: node-0f3a91
               reason: carrier strike at the dock
               suspendedAt: '2026-10-23T08:30:00Z'
-      x-parser-unique-object-id: NodeSuspended
-    NodeRetired:
+      x-parser-unique-object-id: node-topology-NodeSuspended
+    node-topology-NodeRetired:
       name: NodeRetired
       title: Node retired
       summary: A node became RETIRED, which is terminal.
@@ -5384,13 +6090,13 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-57>
+                    x-parser-schema-id: <anonymous-schema-59>
                   retiredAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-58>
-                x-parser-schema-id: <anonymous-schema-56>
-            x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-60>
+                x-parser-schema-id: <anonymous-schema-58>
+            x-parser-schema-id: <anonymous-schema-57>
         x-parser-schema-id: NodeRetiredEvent
       examples:
         - name: nodeRetired
@@ -5407,8 +6113,8 @@ components:
             data:
               nodeId: node-0f3a91
               retiredAt: '2026-11-30T23:59:00Z'
-      x-parser-unique-object-id: NodeRetired
-    LaneOpened:
+      x-parser-unique-object-id: node-topology-NodeRetired
+    node-topology-LaneOpened:
       name: LaneOpened
       title: Lane opened
       summary: A directed lane between two nodes was opened.
@@ -5479,13 +6185,13 @@ components:
                 properties:
                   laneId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-61>
+                    x-parser-schema-id: <anonymous-schema-63>
                   originNodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-64>
                   destinationNodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-63>
+                    x-parser-schema-id: <anonymous-schema-65>
                   mode:
                     type: string
                     enum:
@@ -5495,9 +6201,9 @@ components:
                   nominalTransitMinutes:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-64>
-                x-parser-schema-id: <anonymous-schema-60>
-            x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-66>
+                x-parser-schema-id: <anonymous-schema-62>
+            x-parser-schema-id: <anonymous-schema-61>
         x-parser-schema-id: LaneOpenedEvent
       examples:
         - name: laneOpened
@@ -5517,8 +6223,8 @@ components:
               destinationNodeId: node-9b7e02
               mode: GROUND
               nominalTransitMinutes: 180
-      x-parser-unique-object-id: LaneOpened
-    LaneClosed:
+      x-parser-unique-object-id: node-topology-LaneOpened
+    node-topology-LaneClosed:
       name: LaneClosed
       title: Lane closed
       summary: A lane was closed.
@@ -5586,13 +6292,13 @@ components:
                 properties:
                   laneId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-67>
+                    x-parser-schema-id: <anonymous-schema-69>
                   closedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-68>
-                x-parser-schema-id: <anonymous-schema-66>
-            x-parser-schema-id: <anonymous-schema-65>
+                    x-parser-schema-id: <anonymous-schema-70>
+                x-parser-schema-id: <anonymous-schema-68>
+            x-parser-schema-id: <anonymous-schema-67>
         x-parser-schema-id: LaneClosedEvent
       examples:
         - name: laneClosed
@@ -5609,8 +6315,8 @@ components:
             data:
               laneId: lane-5c21d8
               closedAt: '2026-11-02T10:00:00Z'
-      x-parser-unique-object-id: LaneClosed
-    LaneCostDeclared:
+      x-parser-unique-object-id: node-topology-LaneClosed
+    node-topology-LaneCostDeclared:
       name: LaneCostDeclared
       title: Lane cost declared
       summary: >-
@@ -5688,7 +6394,7 @@ components:
                 properties:
                   laneId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-71>
+                    x-parser-schema-id: <anonymous-schema-73>
                   costPerUnitCents:
                     type: integer
                     format: int64
@@ -5698,13 +6404,13 @@ components:
                       The planner's declared marginal cost of moving ONE
                       package-unit across this lane on one departure, integer
                       cents.
-                    x-parser-schema-id: <anonymous-schema-72>
+                    x-parser-schema-id: <anonymous-schema-74>
                   declaredAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-73>
-                x-parser-schema-id: <anonymous-schema-70>
-            x-parser-schema-id: <anonymous-schema-69>
+                    x-parser-schema-id: <anonymous-schema-75>
+                x-parser-schema-id: <anonymous-schema-72>
+            x-parser-schema-id: <anonymous-schema-71>
         x-parser-schema-id: LaneCostDeclaredEvent
       examples:
         - name: laneCostDeclared
@@ -5724,8 +6430,124 @@ components:
               laneId: lane-5c21d8
               costPerUnitCents: 320
               declaredAt: '2026-11-05T09:30:00Z'
-      x-parser-unique-object-id: LaneCostDeclared
-    ServiceAreaAssigned:
+      x-parser-unique-object-id: node-topology-LaneCostDeclared
+    node-topology-LaneEmissionDeclared:
+      name: LaneEmissionDeclared
+      title: Lane emission declared
+      summary: >-
+        The planner declared the carbon emission of moving one package-unit
+        across the lane.
+      description: >-
+        `type` =
+        `com.retailnetwork.logistics.node-topology.lane.LaneEmissionDeclared`;
+        subject and key = the laneId. Raised by DeclareLaneEmission, on every
+        declaration (a newer declaration supersedes the previous value).
+        `gCo2ePerUnit` is the declared carbon emission of moving ONE
+        package-unit across the lane on one departure, grams of CO2-equivalent,
+        0 to 10000000; 0 is legal (zero declared emission). A lane with no
+        declaration publishes nothing. Consumed by order-sourcing, which keeps
+        the latest declaration per laneId and records it beside the declared
+        cents in its estimate (roadmap C9, ADR 0018); ranking is unchanged.
+      contentType: application/cloudevents+json
+      tags:
+        - name: lane
+      payload:
+        allOf:
+          - type: object
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                const: /retailnetwork/node-topology
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                description: The aggregate root id (nodeId
+                laneId: null
+                postalPrefix or regionId).: null
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                x-parser-schema-id: <anonymous-schema-8>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              data:
+                type: object
+                required:
+                  - laneId
+                  - gCo2ePerUnit
+                  - declaredAt
+                properties:
+                  laneId:
+                    type: string
+                    x-parser-schema-id: <anonymous-schema-78>
+                  gCo2ePerUnit:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 10000000
+                    description: >-
+                      The planner's declared carbon emission of moving ONE
+                      package-unit across this lane on one departure, grams of
+                      CO2-equivalent.
+                    x-parser-schema-id: <anonymous-schema-79>
+                  declaredAt:
+                    type: string
+                    format: date-time
+                    x-parser-schema-id: <anonymous-schema-80>
+                x-parser-schema-id: <anonymous-schema-77>
+            x-parser-schema-id: <anonymous-schema-76>
+        x-parser-schema-id: LaneEmissionDeclaredEvent
+      examples:
+        - name: laneEmissionDeclared
+          summary: >-
+            The planner declared the carbon emission of moving one package-unit
+            across the lane.
+          payload:
+            specversion: '1.0'
+            id: 8a4d3f1e-2c5b-4e8a-b1d7-6f9c0e3a5b7d
+            source: /retailnetwork/node-topology
+            type: >-
+              com.retailnetwork.logistics.node-topology.lane.LaneEmissionDeclared
+            subject: lane-5c21d8
+            time: '2026-11-14T09:30:00Z'
+            datacontenttype: application/json
+            dataschema: urn:retailnetwork:node-topology:events:LaneEmissionDeclared:v1
+            data:
+              laneId: lane-5c21d8
+              gCo2ePerUnit: 410
+              declaredAt: '2026-11-14T09:30:00Z'
+      x-parser-unique-object-id: node-topology-LaneEmissionDeclared
+    node-topology-ServiceAreaAssigned:
       name: ServiceAreaAssigned
       title: Service area assigned
       summary: >-
@@ -5738,6 +6560,12 @@ components:
         first assignment and on every reassignment. Subject and Kafka key are
         the postalPrefix. `assignmentVersion` strictly increases per prefix;
         consumers keep the highest. `regionId` is the station's region.
+        `deliveryMode` and `carriers` are optional (ADR 0016): omitted on a
+        NETWORK_ROUTE area, so a consumer that predates the delivery mode
+        decodes the event with its old meaning; a CARRIER_HANDOFF area carries 1
+        to 4 options, each with carrierId, handoffNodeId, costPerPackageCents
+        and transitMinutes, the handoff node an ACTIVE DELIVERY_STATION or
+        SORTATION_CENTER.
       contentType: application/cloudevents+json
       tags:
         - name: servicearea
@@ -5800,20 +6628,76 @@ components:
                 properties:
                   postalPrefix:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-76>
+                    x-parser-schema-id: <anonymous-schema-83>
                   deliveryStationNodeId:
                     type: string
                     description: The DELIVERY_STATION that serves the prefix.
-                    x-parser-schema-id: <anonymous-schema-77>
+                    x-parser-schema-id: <anonymous-schema-84>
                   regionId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-78>
+                    x-parser-schema-id: <anonymous-schema-85>
                   assignmentVersion:
                     type: integer
                     minimum: 1
-                    x-parser-schema-id: <anonymous-schema-79>
-                x-parser-schema-id: <anonymous-schema-75>
-            x-parser-schema-id: <anonymous-schema-74>
+                    x-parser-schema-id: <anonymous-schema-86>
+                  deliveryMode:
+                    type: string
+                    enum:
+                      - NETWORK_ROUTE
+                      - CARRIER_HANDOFF
+                    description: >-
+                      How the area's last mile is served (ADR 0016); omitted on
+                      a NETWORK_ROUTE area, which a consumer decodes as the mode
+                      it always assumed.
+                    x-parser-schema-id: <anonymous-schema-87>
+                  carriers:
+                    type: array
+                    description: >-
+                      The declared carrier options of a CARRIER_HANDOFF area;
+                      omitted on a NETWORK_ROUTE area.
+                    items:
+                      type: object
+                      description: >-
+                        One declared external carrier of a CARRIER_HANDOFF
+                        service area (ADR 0016).
+                      required:
+                        - carrierId
+                        - handoffNodeId
+                        - costPerPackageCents
+                        - transitMinutes
+                      properties:
+                        carrierId:
+                          type: string
+                          description: The carrier's own identifier
+                          unique within the area.: null
+                          x-parser-schema-id: <anonymous-schema-89>
+                        handoffNodeId:
+                          type: string
+                          description: >-
+                            An ACTIVE DELIVERY_STATION or SORTATION_CENTER the
+                            network hands packages over at.
+                          x-parser-schema-id: <anonymous-schema-90>
+                        costPerPackageCents:
+                          type: integer
+                          minimum: 0
+                          maximum: 10000000
+                          description: >-
+                            The carrier's declared cost of delivering one
+                            package
+                          integer cents.: null
+                          x-parser-schema-id: <anonymous-schema-91>
+                        transitMinutes:
+                          type: integer
+                          minimum: 1
+                          description: >-
+                            The carrier's declared transit from the handoff node
+                            to the doorstep
+                          in minutes.: null
+                          x-parser-schema-id: <anonymous-schema-92>
+                      x-parser-schema-id: CarrierOption
+                    x-parser-schema-id: <anonymous-schema-88>
+                x-parser-schema-id: <anonymous-schema-82>
+            x-parser-schema-id: <anonymous-schema-81>
         x-parser-schema-id: ServiceAreaAssignedEvent
       examples:
         - name: serviceAreaAssigned
@@ -5835,8 +6719,37 @@ components:
               deliveryStationNodeId: node-9b7e02
               regionId: region-se
               assignmentVersion: 2
-      x-parser-unique-object-id: ServiceAreaAssigned
-    RegionDefined:
+        - name: serviceAreaAssignedCarrierHandoff
+          summary: >-
+            A postal prefix was assigned for carrier handoff with two declared
+            options (ADR 0016).
+          payload:
+            specversion: '1.0'
+            id: 7a1c4e8b-2d4f-4a63-9e55-1b0c9a4e5f21
+            source: /retailnetwork/node-topology
+            type: >-
+              com.retailnetwork.logistics.node-topology.servicearea.ServiceAreaAssigned
+            subject: '01310'
+            time: '2026-11-13T09:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:retailnetwork:node-topology:events:ServiceAreaAssigned:v1
+            data:
+              postalPrefix: '01310'
+              deliveryStationNodeId: node-9b7e02
+              regionId: region-se
+              assignmentVersion: 3
+              deliveryMode: CARRIER_HANDOFF
+              carriers:
+                - carrierId: carrier-a
+                  handoffNodeId: node-5c21d8
+                  costPerPackageCents: 320
+                  transitMinutes: 95
+                - carrierId: carrier-b
+                  handoffNodeId: node-9b7e02
+                  costPerPackageCents: 400
+                  transitMinutes: 60
+      x-parser-unique-object-id: node-topology-ServiceAreaAssigned
+    node-topology-RegionDefined:
       name: RegionDefined
       title: Region defined
       summary: A region was defined.
@@ -5906,16 +6819,16 @@ components:
                 properties:
                   regionId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-82>
+                    x-parser-schema-id: <anonymous-schema-95>
                   code:
                     type: string
                     description: Unique short code.
-                    x-parser-schema-id: <anonymous-schema-83>
+                    x-parser-schema-id: <anonymous-schema-96>
                   name:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-84>
-                x-parser-schema-id: <anonymous-schema-81>
-            x-parser-schema-id: <anonymous-schema-80>
+                    x-parser-schema-id: <anonymous-schema-97>
+                x-parser-schema-id: <anonymous-schema-94>
+            x-parser-schema-id: <anonymous-schema-93>
         x-parser-schema-id: RegionDefinedEvent
       examples:
         - name: regionDefined
@@ -5933,7 +6846,7 @@ components:
               regionId: region-se
               code: SE
               name: Southeast
-      x-parser-unique-object-id: RegionDefined
+      x-parser-unique-object-id: node-topology-RegionDefined
   schemas:
     CloudEventEnvelope:
       type: object
@@ -5990,6 +6903,7 @@ components:
         - SORTATION_CENTER
         - DELIVERY_STATION
         - AIR_HUB
+        - PICKUP_POINT
       x-parser-schema-id: NodeType
     NodeSubtype:
       type: string
@@ -6007,6 +6921,7 @@ components:
       enum:
         - NETWORK
         - VENDOR
+        - PARTNER
       x-parser-schema-id: NodeOperator
     LaneMode:
       type: string
@@ -6036,13 +6951,13 @@ components:
           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
           description: Local opening time
           HH:mm.: null
-          x-parser-schema-id: <anonymous-schema-25>
+          x-parser-schema-id: <anonymous-schema-26>
         end:
           type: string
           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
           description: Local closing time
           HH:mm.: null
-          x-parser-schema-id: <anonymous-schema-26>
+          x-parser-schema-id: <anonymous-schema-27>
       x-parser-schema-id: DayHours
     OperatingHoursByDay:
       type: object
@@ -6060,13 +6975,13 @@ components:
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local opening time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-25>
+              x-parser-schema-id: <anonymous-schema-26>
             end:
               type: string
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local closing time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-26>
+              x-parser-schema-id: <anonymous-schema-27>
           x-parser-schema-id: DayHours
         tuesday:
           type: object
@@ -6079,13 +6994,13 @@ components:
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local opening time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-25>
+              x-parser-schema-id: <anonymous-schema-26>
             end:
               type: string
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local closing time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-26>
+              x-parser-schema-id: <anonymous-schema-27>
           x-parser-schema-id: DayHours
         wednesday:
           type: object
@@ -6098,13 +7013,13 @@ components:
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local opening time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-25>
+              x-parser-schema-id: <anonymous-schema-26>
             end:
               type: string
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local closing time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-26>
+              x-parser-schema-id: <anonymous-schema-27>
           x-parser-schema-id: DayHours
         thursday:
           type: object
@@ -6117,13 +7032,13 @@ components:
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local opening time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-25>
+              x-parser-schema-id: <anonymous-schema-26>
             end:
               type: string
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local closing time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-26>
+              x-parser-schema-id: <anonymous-schema-27>
           x-parser-schema-id: DayHours
         friday:
           type: object
@@ -6136,13 +7051,13 @@ components:
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local opening time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-25>
+              x-parser-schema-id: <anonymous-schema-26>
             end:
               type: string
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local closing time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-26>
+              x-parser-schema-id: <anonymous-schema-27>
           x-parser-schema-id: DayHours
         saturday:
           type: object
@@ -6155,13 +7070,13 @@ components:
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local opening time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-25>
+              x-parser-schema-id: <anonymous-schema-26>
             end:
               type: string
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local closing time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-26>
+              x-parser-schema-id: <anonymous-schema-27>
           x-parser-schema-id: DayHours
         sunday:
           type: object
@@ -6174,13 +7089,13 @@ components:
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local opening time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-25>
+              x-parser-schema-id: <anonymous-schema-26>
             end:
               type: string
               pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
               description: Local closing time
               HH:mm.: null
-              x-parser-schema-id: <anonymous-schema-26>
+              x-parser-schema-id: <anonymous-schema-27>
           x-parser-schema-id: DayHours
       x-parser-schema-id: OperatingHoursByDay
     CutoffSlot:
@@ -6192,7 +7107,7 @@ components:
           type: string
           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
           description: Local time HH:mm by which packages are ready for handover.
-          x-parser-schema-id: <anonymous-schema-31>
+          x-parser-schema-id: <anonymous-schema-32>
         days:
           type: array
           description: >-
@@ -6211,11 +7126,11 @@ components:
               - saturday
               - sunday
             x-parser-schema-id: Weekday
-          x-parser-schema-id: <anonymous-schema-32>
+          x-parser-schema-id: <anonymous-schema-33>
         maxOrders:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-33>
+          x-parser-schema-id: <anonymous-schema-34>
       x-parser-schema-id: CutoffSlot
     ThroughputCap:
       type: object
@@ -6227,17 +7142,17 @@ components:
         value:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-34>
+          x-parser-schema-id: <anonymous-schema-35>
         timeUnit:
           type: string
           enum:
             - HOUR
             - DAY
-          x-parser-schema-id: <anonymous-schema-35>
+          x-parser-schema-id: <anonymous-schema-36>
         unit:
           type: string
           const: ORDER
-          x-parser-schema-id: <anonymous-schema-36>
+          x-parser-schema-id: <anonymous-schema-37>
       x-parser-schema-id: ThroughputCap
     NodeRegisteredEvent:
       allOf:
@@ -6297,6 +7212,7 @@ components:
                 - operator
                 - vendorId
                 - vendorNodeCode
+                - servingStationNodeId
                 - regionId
                 - timezone
                 - postalCode
@@ -6314,6 +7230,7 @@ components:
                     - SORTATION_CENTER
                     - DELIVERY_STATION
                     - AIR_HUB
+                    - PICKUP_POINT
                   x-parser-schema-id: NodeType
                 subtype:
                   description: >-
@@ -6338,6 +7255,7 @@ components:
                   enum:
                     - NETWORK
                     - VENDOR
+                    - PARTNER
                   x-parser-schema-id: NodeOperator
                 vendorId:
                   type:
@@ -6353,20 +7271,28 @@ components:
                     The vendor's own code of the node; set when operator is
                     VENDOR; null otherwise.
                   x-parser-schema-id: <anonymous-schema-15>
+                servingStationNodeId:
+                  type:
+                    - string
+                    - 'null'
+                  description: >-
+                    The serving delivery station of a PICKUP_POINT; null for
+                    every other node type (ADR 0017).
+                  x-parser-schema-id: <anonymous-schema-16>
                 regionId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-16>
+                  x-parser-schema-id: <anonymous-schema-17>
                 timezone:
                   type: string
                   description: IANA time zone of the building.
-                  x-parser-schema-id: <anonymous-schema-17>
+                  x-parser-schema-id: <anonymous-schema-18>
                 postalCode:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-18>
+                  x-parser-schema-id: <anonymous-schema-19>
                 countryCode:
                   type: string
                   description: ISO 3166-1 alpha-2.
-                  x-parser-schema-id: <anonymous-schema-19>
+                  x-parser-schema-id: <anonymous-schema-20>
               x-parser-schema-id: <anonymous-schema-10>
           x-parser-schema-id: <anonymous-schema-9>
       x-parser-schema-id: NodeRegisteredEvent
@@ -6382,7 +7308,7 @@ components:
           minimum: 1
           description: The heaviest carton the node accepts
           in grams.: null
-          x-parser-schema-id: <anonymous-schema-38>
+          x-parser-schema-id: <anonymous-schema-39>
         maxCartonDimsMm:
           type: object
           description: >-
@@ -6396,24 +7322,31 @@ components:
             l:
               type: integer
               minimum: 1
-              x-parser-schema-id: <anonymous-schema-40>
+              x-parser-schema-id: <anonymous-schema-41>
             w:
               type: integer
               minimum: 1
-              x-parser-schema-id: <anonymous-schema-41>
+              x-parser-schema-id: <anonymous-schema-42>
             h:
               type: integer
               minimum: 1
-              x-parser-schema-id: <anonymous-schema-42>
-          x-parser-schema-id: <anonymous-schema-39>
+              x-parser-schema-id: <anonymous-schema-43>
+          x-parser-schema-id: <anonymous-schema-40>
         acceptsPallets:
           type: boolean
           description: Whether the node receives pallets.
-          x-parser-schema-id: <anonymous-schema-43>
+          x-parser-schema-id: <anonymous-schema-44>
         requiresSscc:
           type: boolean
           description: Whether every inbound carton must carry an SSCC.
-          x-parser-schema-id: <anonymous-schema-44>
+          x-parser-schema-id: <anonymous-schema-45>
+        monthlyVolumeDm3:
+          type: integer
+          minimum: 1
+          description: >-
+            The inbound volume the node accepts per calendar month, in cubic
+            decimetres (ADR 0019); absent means not declared.
+          x-parser-schema-id: <anonymous-schema-46>
       x-parser-schema-id: InboundLimits
     NodeOperationalProfileDeclaredEvent:
       allOf:
@@ -6479,16 +7412,16 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-22>
+                  x-parser-schema-id: <anonymous-schema-23>
                 profileRevision:
                   type: integer
                   minimum: 1
                   description: Strictly increasing per node.
-                  x-parser-schema-id: <anonymous-schema-23>
+                  x-parser-schema-id: <anonymous-schema-24>
                 timezone:
                   type: string
                   description: IANA time zone the local times are in.
-                  x-parser-schema-id: <anonymous-schema-24>
+                  x-parser-schema-id: <anonymous-schema-25>
                 operatingHoursByDay:
                   type: object
                   description: >-
@@ -6507,13 +7440,13 @@ components:
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local opening time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-25>
+                          x-parser-schema-id: <anonymous-schema-26>
                         end:
                           type: string
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local closing time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-26>
+                          x-parser-schema-id: <anonymous-schema-27>
                       x-parser-schema-id: DayHours
                     tuesday:
                       type: object
@@ -6526,13 +7459,13 @@ components:
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local opening time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-25>
+                          x-parser-schema-id: <anonymous-schema-26>
                         end:
                           type: string
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local closing time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-26>
+                          x-parser-schema-id: <anonymous-schema-27>
                       x-parser-schema-id: DayHours
                     wednesday:
                       type: object
@@ -6545,13 +7478,13 @@ components:
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local opening time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-25>
+                          x-parser-schema-id: <anonymous-schema-26>
                         end:
                           type: string
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local closing time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-26>
+                          x-parser-schema-id: <anonymous-schema-27>
                       x-parser-schema-id: DayHours
                     thursday:
                       type: object
@@ -6564,13 +7497,13 @@ components:
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local opening time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-25>
+                          x-parser-schema-id: <anonymous-schema-26>
                         end:
                           type: string
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local closing time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-26>
+                          x-parser-schema-id: <anonymous-schema-27>
                       x-parser-schema-id: DayHours
                     friday:
                       type: object
@@ -6583,13 +7516,13 @@ components:
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local opening time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-25>
+                          x-parser-schema-id: <anonymous-schema-26>
                         end:
                           type: string
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local closing time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-26>
+                          x-parser-schema-id: <anonymous-schema-27>
                       x-parser-schema-id: DayHours
                     saturday:
                       type: object
@@ -6602,13 +7535,13 @@ components:
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local opening time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-25>
+                          x-parser-schema-id: <anonymous-schema-26>
                         end:
                           type: string
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local closing time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-26>
+                          x-parser-schema-id: <anonymous-schema-27>
                       x-parser-schema-id: DayHours
                     sunday:
                       type: object
@@ -6621,13 +7554,13 @@ components:
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local opening time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-25>
+                          x-parser-schema-id: <anonymous-schema-26>
                         end:
                           type: string
                           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
                           description: Local closing time
                           HH:mm.: null
-                          x-parser-schema-id: <anonymous-schema-26>
+                          x-parser-schema-id: <anonymous-schema-27>
                       x-parser-schema-id: DayHours
                   x-parser-schema-id: OperatingHoursByDay
                 holidays:
@@ -6636,15 +7569,15 @@ components:
                   items:
                     type: string
                     format: date
-                    x-parser-schema-id: <anonymous-schema-28>
-                  x-parser-schema-id: <anonymous-schema-27>
+                    x-parser-schema-id: <anonymous-schema-29>
+                  x-parser-schema-id: <anonymous-schema-28>
                 handlingTimeMinutes:
                   type: integer
                   minimum: 0
                   description: >-
                     Declared time from order release to a package ready for
                     handover.
-                  x-parser-schema-id: <anonymous-schema-29>
+                  x-parser-schema-id: <anonymous-schema-30>
                 cutoffs:
                   type: array
                   items:
@@ -6658,7 +7591,7 @@ components:
                         description: >-
                           Local time HH:mm by which packages are ready for
                           handover.
-                        x-parser-schema-id: <anonymous-schema-31>
+                        x-parser-schema-id: <anonymous-schema-32>
                       days:
                         type: array
                         description: >-
@@ -6677,13 +7610,13 @@ components:
                             - saturday
                             - sunday
                           x-parser-schema-id: Weekday
-                        x-parser-schema-id: <anonymous-schema-32>
+                        x-parser-schema-id: <anonymous-schema-33>
                       maxOrders:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-33>
+                        x-parser-schema-id: <anonymous-schema-34>
                     x-parser-schema-id: CutoffSlot
-                  x-parser-schema-id: <anonymous-schema-30>
+                  x-parser-schema-id: <anonymous-schema-31>
                 throughputCap:
                   type: object
                   required:
@@ -6694,23 +7627,23 @@ components:
                     value:
                       type: integer
                       minimum: 1
-                      x-parser-schema-id: <anonymous-schema-34>
+                      x-parser-schema-id: <anonymous-schema-35>
                     timeUnit:
                       type: string
                       enum:
                         - HOUR
                         - DAY
-                      x-parser-schema-id: <anonymous-schema-35>
+                      x-parser-schema-id: <anonymous-schema-36>
                     unit:
                       type: string
                       const: ORDER
-                      x-parser-schema-id: <anonymous-schema-36>
+                      x-parser-schema-id: <anonymous-schema-37>
                   x-parser-schema-id: ThroughputCap
                 sortDwellMinutes:
                   type: integer
                   minimum: 0
                   description: Omitted unless the node is a SORTATION_CENTER or an AIR_HUB.
-                  x-parser-schema-id: <anonymous-schema-37>
+                  x-parser-schema-id: <anonymous-schema-38>
                 inbound:
                   type: object
                   description: >-
@@ -6723,7 +7656,7 @@ components:
                       minimum: 1
                       description: The heaviest carton the node accepts
                       in grams.: null
-                      x-parser-schema-id: <anonymous-schema-38>
+                      x-parser-schema-id: <anonymous-schema-39>
                     maxCartonDimsMm:
                       type: object
                       description: >-
@@ -6737,33 +7670,41 @@ components:
                         l:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-40>
+                          x-parser-schema-id: <anonymous-schema-41>
                         w:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-41>
+                          x-parser-schema-id: <anonymous-schema-42>
                         h:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-42>
-                      x-parser-schema-id: <anonymous-schema-39>
+                          x-parser-schema-id: <anonymous-schema-43>
+                      x-parser-schema-id: <anonymous-schema-40>
                     acceptsPallets:
                       type: boolean
                       description: Whether the node receives pallets.
-                      x-parser-schema-id: <anonymous-schema-43>
+                      x-parser-schema-id: <anonymous-schema-44>
                     requiresSscc:
                       type: boolean
                       description: Whether every inbound carton must carry an SSCC.
-                      x-parser-schema-id: <anonymous-schema-44>
+                      x-parser-schema-id: <anonymous-schema-45>
+                    monthlyVolumeDm3:
+                      type: integer
+                      minimum: 1
+                      description: >-
+                        The inbound volume the node accepts per calendar month,
+                        in cubic decimetres (ADR 0019); absent means not
+                        declared.
+                      x-parser-schema-id: <anonymous-schema-46>
                   x-parser-schema-id: InboundLimits
                 declaredBy:
                   type: string
                   enum:
                     - VENDOR
                     - NETWORK_OPS
-                  x-parser-schema-id: <anonymous-schema-45>
-              x-parser-schema-id: <anonymous-schema-21>
-          x-parser-schema-id: <anonymous-schema-20>
+                  x-parser-schema-id: <anonymous-schema-47>
+              x-parser-schema-id: <anonymous-schema-22>
+          x-parser-schema-id: <anonymous-schema-21>
       x-parser-schema-id: NodeOperationalProfileDeclaredEvent
     NodeActivatedEvent:
       allOf:
@@ -6822,13 +7763,13 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-48>
+                  x-parser-schema-id: <anonymous-schema-50>
                 activatedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-49>
-              x-parser-schema-id: <anonymous-schema-47>
-          x-parser-schema-id: <anonymous-schema-46>
+                  x-parser-schema-id: <anonymous-schema-51>
+              x-parser-schema-id: <anonymous-schema-49>
+          x-parser-schema-id: <anonymous-schema-48>
       x-parser-schema-id: NodeActivatedEvent
     NodeSuspendedEvent:
       allOf:
@@ -6888,17 +7829,17 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-52>
+                  x-parser-schema-id: <anonymous-schema-54>
                 reason:
                   type: string
                   description: Why the planner suspended the node.
-                  x-parser-schema-id: <anonymous-schema-53>
+                  x-parser-schema-id: <anonymous-schema-55>
                 suspendedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-54>
-              x-parser-schema-id: <anonymous-schema-51>
-          x-parser-schema-id: <anonymous-schema-50>
+                  x-parser-schema-id: <anonymous-schema-56>
+              x-parser-schema-id: <anonymous-schema-53>
+          x-parser-schema-id: <anonymous-schema-52>
       x-parser-schema-id: NodeSuspendedEvent
     NodeRetiredEvent:
       allOf:
@@ -6957,13 +7898,13 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-57>
+                  x-parser-schema-id: <anonymous-schema-59>
                 retiredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-58>
-              x-parser-schema-id: <anonymous-schema-56>
-          x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-60>
+              x-parser-schema-id: <anonymous-schema-58>
+          x-parser-schema-id: <anonymous-schema-57>
       x-parser-schema-id: NodeRetiredEvent
     LaneOpenedEvent:
       allOf:
@@ -7025,13 +7966,13 @@ components:
               properties:
                 laneId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-61>
+                  x-parser-schema-id: <anonymous-schema-63>
                 originNodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-64>
                 destinationNodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-63>
+                  x-parser-schema-id: <anonymous-schema-65>
                 mode:
                   type: string
                   enum:
@@ -7041,9 +7982,9 @@ components:
                 nominalTransitMinutes:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-64>
-              x-parser-schema-id: <anonymous-schema-60>
-          x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-66>
+              x-parser-schema-id: <anonymous-schema-62>
+          x-parser-schema-id: <anonymous-schema-61>
       x-parser-schema-id: LaneOpenedEvent
     LaneClosedEvent:
       allOf:
@@ -7102,13 +8043,13 @@ components:
               properties:
                 laneId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-67>
+                  x-parser-schema-id: <anonymous-schema-69>
                 closedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-68>
-              x-parser-schema-id: <anonymous-schema-66>
-          x-parser-schema-id: <anonymous-schema-65>
+                  x-parser-schema-id: <anonymous-schema-70>
+              x-parser-schema-id: <anonymous-schema-68>
+          x-parser-schema-id: <anonymous-schema-67>
       x-parser-schema-id: LaneClosedEvent
     LaneCostDeclaredEvent:
       allOf:
@@ -7168,7 +8109,7 @@ components:
               properties:
                 laneId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-71>
+                  x-parser-schema-id: <anonymous-schema-73>
                 costPerUnitCents:
                   type: integer
                   format: int64
@@ -7178,14 +8119,90 @@ components:
                     The planner's declared marginal cost of moving ONE
                     package-unit across this lane on one departure, integer
                     cents.
-                  x-parser-schema-id: <anonymous-schema-72>
+                  x-parser-schema-id: <anonymous-schema-74>
                 declaredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-73>
-              x-parser-schema-id: <anonymous-schema-70>
-          x-parser-schema-id: <anonymous-schema-69>
+                  x-parser-schema-id: <anonymous-schema-75>
+              x-parser-schema-id: <anonymous-schema-72>
+          x-parser-schema-id: <anonymous-schema-71>
       x-parser-schema-id: LaneCostDeclaredEvent
+    LaneEmissionDeclaredEvent:
+      allOf:
+        - type: object
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              const: /retailnetwork/node-topology
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              description: The aggregate root id (nodeId
+              laneId: null
+              postalPrefix or regionId).: null
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              x-parser-schema-id: <anonymous-schema-8>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                - laneId
+                - gCo2ePerUnit
+                - declaredAt
+              properties:
+                laneId:
+                  type: string
+                  x-parser-schema-id: <anonymous-schema-78>
+                gCo2ePerUnit:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  maximum: 10000000
+                  description: >-
+                    The planner's declared carbon emission of moving ONE
+                    package-unit across this lane on one departure, grams of
+                    CO2-equivalent.
+                  x-parser-schema-id: <anonymous-schema-79>
+                declaredAt:
+                  type: string
+                  format: date-time
+                  x-parser-schema-id: <anonymous-schema-80>
+              x-parser-schema-id: <anonymous-schema-77>
+          x-parser-schema-id: <anonymous-schema-76>
+      x-parser-schema-id: LaneEmissionDeclaredEvent
     ServiceAreaAssignedEvent:
       allOf:
         - type: object
@@ -7245,21 +8262,111 @@ components:
               properties:
                 postalPrefix:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-76>
+                  x-parser-schema-id: <anonymous-schema-83>
                 deliveryStationNodeId:
                   type: string
                   description: The DELIVERY_STATION that serves the prefix.
-                  x-parser-schema-id: <anonymous-schema-77>
+                  x-parser-schema-id: <anonymous-schema-84>
                 regionId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-78>
+                  x-parser-schema-id: <anonymous-schema-85>
                 assignmentVersion:
                   type: integer
                   minimum: 1
-                  x-parser-schema-id: <anonymous-schema-79>
-              x-parser-schema-id: <anonymous-schema-75>
-          x-parser-schema-id: <anonymous-schema-74>
+                  x-parser-schema-id: <anonymous-schema-86>
+                deliveryMode:
+                  type: string
+                  enum:
+                    - NETWORK_ROUTE
+                    - CARRIER_HANDOFF
+                  description: >-
+                    How the area's last mile is served (ADR 0016); omitted on a
+                    NETWORK_ROUTE area, which a consumer decodes as the mode it
+                    always assumed.
+                  x-parser-schema-id: <anonymous-schema-87>
+                carriers:
+                  type: array
+                  description: >-
+                    The declared carrier options of a CARRIER_HANDOFF area;
+                    omitted on a NETWORK_ROUTE area.
+                  items:
+                    type: object
+                    description: >-
+                      One declared external carrier of a CARRIER_HANDOFF service
+                      area (ADR 0016).
+                    required:
+                      - carrierId
+                      - handoffNodeId
+                      - costPerPackageCents
+                      - transitMinutes
+                    properties:
+                      carrierId:
+                        type: string
+                        description: The carrier's own identifier
+                        unique within the area.: null
+                        x-parser-schema-id: <anonymous-schema-89>
+                      handoffNodeId:
+                        type: string
+                        description: >-
+                          An ACTIVE DELIVERY_STATION or SORTATION_CENTER the
+                          network hands packages over at.
+                        x-parser-schema-id: <anonymous-schema-90>
+                      costPerPackageCents:
+                        type: integer
+                        minimum: 0
+                        maximum: 10000000
+                        description: The carrier's declared cost of delivering one package
+                        integer cents.: null
+                        x-parser-schema-id: <anonymous-schema-91>
+                      transitMinutes:
+                        type: integer
+                        minimum: 1
+                        description: >-
+                          The carrier's declared transit from the handoff node
+                          to the doorstep
+                        in minutes.: null
+                        x-parser-schema-id: <anonymous-schema-92>
+                    x-parser-schema-id: CarrierOption
+                  x-parser-schema-id: <anonymous-schema-88>
+              x-parser-schema-id: <anonymous-schema-82>
+          x-parser-schema-id: <anonymous-schema-81>
       x-parser-schema-id: ServiceAreaAssignedEvent
+    CarrierOption:
+      type: object
+      description: >-
+        One declared external carrier of a CARRIER_HANDOFF service area (ADR
+        0016).
+      required:
+        - carrierId
+        - handoffNodeId
+        - costPerPackageCents
+        - transitMinutes
+      properties:
+        carrierId:
+          type: string
+          description: The carrier's own identifier
+          unique within the area.: null
+          x-parser-schema-id: <anonymous-schema-89>
+        handoffNodeId:
+          type: string
+          description: >-
+            An ACTIVE DELIVERY_STATION or SORTATION_CENTER the network hands
+            packages over at.
+          x-parser-schema-id: <anonymous-schema-90>
+        costPerPackageCents:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+          description: The carrier's declared cost of delivering one package
+          integer cents.: null
+          x-parser-schema-id: <anonymous-schema-91>
+        transitMinutes:
+          type: integer
+          minimum: 1
+          description: The carrier's declared transit from the handoff node to the doorstep
+          in minutes.: null
+          x-parser-schema-id: <anonymous-schema-92>
+      x-parser-schema-id: CarrierOption
     RegionDefinedEvent:
       allOf:
         - type: object
@@ -7318,16 +8425,16 @@ components:
               properties:
                 regionId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-82>
+                  x-parser-schema-id: <anonymous-schema-95>
                 code:
                   type: string
                   description: Unique short code.
-                  x-parser-schema-id: <anonymous-schema-83>
+                  x-parser-schema-id: <anonymous-schema-96>
                 name:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-84>
-              x-parser-schema-id: <anonymous-schema-81>
-          x-parser-schema-id: <anonymous-schema-80>
+                  x-parser-schema-id: <anonymous-schema-97>
+              x-parser-schema-id: <anonymous-schema-94>
+          x-parser-schema-id: <anonymous-schema-93>
       x-parser-schema-id: RegionDefinedEvent
 x-parser-spec-parsed: true
 x-parser-api-version: 3

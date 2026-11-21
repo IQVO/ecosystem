@@ -1,0 +1,70 @@
+---
+id: network-fulfillment-api-getNetworkOrderByPurchaseOrder
+version: 1.0.0
+name: getNetworkOrderByPurchaseOrder
+summary: Get the network order of one purchase order
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:network-orders'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: '/purchase-orders/{poNumber}'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+The same `NetworkOrder` that `GET /network-orders/{networkRef}` returns (state, site, `requiredShipBy`, `acknowledgeBy`, `receivedAt`, `acknowledgementOverdue`, `networkRef`, the lines, and `localOrderId` once the order was acknowledged), found by the network's purchase-order number instead of by `networkRef`.
+
+This route exists for a caller that knows only the purchase-order number. The `networkRef` is minted by this context the first time a purchase order is seen and is never derived from the number (ADR 0026), so nobody outside can work it out; the purchase-order number is known outside. With this route such a caller can follow a purchase order to the order-management order raised for it: read `localOrderId` from the answer (ADR 0036).
+
+It is a KEYED READ, not a listing. It answers for exactly one purchase-order number, takes no query parameter (any is a 400 `unknown-query-parameter`) and has no paging, so it does not widen `GET /network-orders`, which stays the only list. It reads the same stored order as its sibling, so the two always agree.
+
+A `404 purchase-order-not-found` means this context holds no demand for that number: it was never polled, or the poll that would bring it has not run yet (a caller waiting for a purchase order it expects should retry). In `NETWORK_MODE=stub` nothing keeps the map from purchase-order number to `networkRef` (ADR 0026: the map tables stay empty), so every number is a 404 there; the stub's demand is read by `networkRef`.
+
+
+
+
+
+## GET `(/purchase-orders/{poNumber})`
+
+### Parameters
+- **poNumber** (path) (required): The network's purchase-order number, exactly as the network issued it. Treated as an opaque string: this context never parses it and assumes no format. Only its shape as a URL path segment is checked: 1 to 128 characters, each a letter, a digit, `-`, `.`, `_` or `~`. Anything else is a 400 `invalid-purchase-order-number`.
+
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem details.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 7807 problem details.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem details.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

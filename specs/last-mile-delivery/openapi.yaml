@@ -24,6 +24,10 @@ info:
     characters is 400 `idempotency-key-invalid`, a key reused with another
     method, path or body is 409 `idempotency-key-reused`, and a repeated request
     replays the stored answer with the header `Idempotency-Replayed: true`.
+    A 2xx is stored and a 5xx never; a refusal is stored (and replayed) only
+    when it is final for the request, and a refusal that depends on state that
+    can change is not stored, so its key is released and the retry executes
+    again (the lists are on the `Idempotency-Key` parameter; ADR 0019).
     Every collection is paged with `limit` and `cursor` and answers
     `{items, nextCursor}`; an undeclared query parameter is 400
     `unknown-query-parameter`. Errors are RFC 9457 `application/problem+json`;
@@ -37,7 +41,7 @@ info:
     `resource-not-found`. A path no route serves is 404 `resource-not-found`,
     a method a path does not serve is 405 `method-not-allowed` (problem+json),
     and an unmapped failure is an opaque 500 `internal-error` (never stored for
-    replay; every 4xx answer is). Every problem body carries `type`, `title`,
+    replay). Every problem body carries `type`, `title`,
     `status`, `detail` and `instance`. The first eight operations of this file are the
     model's REST list; `getWaveStops`, `cancelWave`, `getRoute`,
     `deactivatePartner` and `declareWaveCost` are the additions of Gap Register
@@ -312,6 +316,53 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '500':
           $ref: '#/components/responses/InternalError'
+  /waves/{waveId}/emission-declarations:
+    post:
+      tags: [Waves]
+      operationId: declareWaveEmission
+      summary: Declare the stop emission of a wave (DeclareEmission)
+      description: >-
+        Records the planner's declared marginal greenhouse emission of ONE
+        delivery stop on the wave (the stop's share of the route's driving),
+        in grams of CO2 equivalent (roadmap feature C9; ADR 0016), and
+        publishes WaveEmissionDeclared for order-sourcing's
+        estimatedCo2eGrams. The emission is per stop (the G11 stopKey
+        grouping), never per package. 0 is a legal declared zero marginal
+        emission; a wave with no declaration reports 0 and leaves a
+        consumer's estimate incomplete. Allowed while the wave still runs
+        (OPEN, INDUCTION_CLOSED or DISPATCHED, illegal-transition once
+        CANCELLED or COMPLETED); a later declaration overwrites the earlier
+        one and publishes again. Ranking is untouched by this fact: carbon
+        is recorded, not optimised, in this slice.
+      parameters:
+        - $ref: '#/components/parameters/WaveId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeclareWaveEmissionRequest'
+      responses:
+        '201':
+          description: Stop emission declared.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryWave'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /routes:
     post:
       tags: [Routes]
@@ -412,9 +463,12 @@ paths:
       operationId: recordAttempt
       summary: Record a delivery attempt (RecordAttempt)
       description: >-
-        Records DELIVERED or FAILED for one package on an OUT_FOR_DELIVERY
-        route and publishes DeliveryAttempted. Errors: ErrRouteNotStarted (409
-        route-not-started), ErrAlreadyDelivered (409 already-delivered). A
+        Records DELIVERED, FAILED or COLLECTED for one package on an
+        OUT_FOR_DELIVERY route and publishes DeliveryAttempted. COLLECTED is
+        valid only for a package inducted into the wave as a PICKUP (ADR 0017,
+        activation-gated; every induction is DELIVERY until then). Errors:
+        ErrRouteNotStarted (409 route-not-started), ErrAlreadyDelivered (409
+        already-delivered). A
         FAILED attempt counts in the package's attempt history and re-inducts
         the package onto the next wave (policy RetryNextWave); the third
         failure publishes PackageReturnInitiated instead. The attempt that
@@ -561,7 +615,9 @@ paths:
         Per UTC day and per delivery station (the station of the attempt's
         route, UNKNOWN while its PackageOutForDelivery is not projected):
         attempts, deliveredAttempts and failedAttempts are the
-        DeliveryAttempted of the day by outcome (DELIVERED, FAILED);
+        DeliveryAttempted of the day by outcome; a success is DELIVERED or
+        COLLECTED (both count in deliveredAttempts, ADR 0017), a failure
+        FAILED;
         packagesAttempted are the packages whose FIRST attempt fell on the day,
         packagesWithFirstAttemptSuccess those of them delivered at it;
         firstAttemptSuccessRate = packagesWithFirstAttemptSuccess /
@@ -678,12 +734,28 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: >-
+      description: |
         Client-generated key (a UUID) per logical submit, 1 to 128 printable
         ASCII characters. A retry with the same method, path and body replays
         the stored answer with `Idempotency-Replayed: true` and changes
         nothing; the same key with another method, path or body is 409
-        `idempotency-key-reused`. Keys are global and kept 24 hours.
+        `idempotency-key-reused`. Keys are global.
+
+        What is stored. A 2xx is stored. A 5xx is never stored. A refusal is
+        stored (and replayed) only when it is final for the request:
+        `validation-failed`, `invalid-wave-times`, `invalid-van-capacity`,
+        `already-delivered`, `attempt-already-recorded`,
+        `package-already-routed`, `induction-closed` and `already-inducted`.
+        A refusal that depends on state that can change is NOT stored: its key
+        is released, a retry with the same key and request executes again (it
+        can succeed once the state allows), and a different request under the
+        released key is a new request, not `idempotency-key-reused`. These are
+        `concurrent-update` (re-read, then retry), `not-found`,
+        `unknown-station`, `package-not-on-route`, `package-not-inducted`,
+        `stop-key-mismatch`, `route-over-capacity`, `partner-inactive`,
+        `partner-station-mismatch`, `route-not-started`, `route-incomplete`,
+        `wave-full` and `illegal-transition`; the 409 `idempotency-key-reused`
+        is itself never stored. Rows are kept 24 hours.
       schema:
         type: string
         minLength: 1
@@ -1106,9 +1178,23 @@ components:
             The declared marginal cost of ONE delivery stop on the wave,
             integer cents (single-currency study; no currency field). 0 is a
             legal declared zero marginal cost.
+    DeclareWaveEmissionRequest:
+      type: object
+      additionalProperties: false
+      required: [gCo2ePerStop]
+      properties:
+        gCo2ePerStop:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10000000
+          description: >-
+            The declared marginal greenhouse emission of ONE delivery stop
+            on the wave, in grams of CO2 equivalent (gCo2e). 0 is a legal
+            declared zero marginal emission.
     DeliveryWave:
       type: object
-      required: [waveId, stationNodeId, serviceDate, inductCutoffAt, windowStart, windowEnd, stopCapacity, assignedStops, remainingStops, state, costPerStopCents]
+      required: [waveId, stationNodeId, serviceDate, inductCutoffAt, windowStart, windowEnd, stopCapacity, assignedStops, remainingStops, state, costPerStopCents, gCo2ePerStop]
       properties:
         waveId:
           type: string
@@ -1146,6 +1232,12 @@ components:
           minimum: 0
           maximum: 10000000
           description: The declared marginal cost of ONE delivery stop on this wave, integer cents (ADR 0011). 0 until declared and for a declared zero alike.
+        gCo2ePerStop:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10000000
+          description: The declared marginal greenhouse emission of ONE delivery stop on this wave, in grams of CO2 equivalent (ADR 0016). 0 until declared and for a declared zero alike.
     WaveStop:
       type: object
       required: [stopKey, trackingNumbers]
@@ -1165,7 +1257,7 @@ components:
       enum: [PLANNED, OUT_FOR_DELIVERY, COMPLETED]
     Outcome:
       type: string
-      enum: [DELIVERED, FAILED]
+      enum: [DELIVERED, FAILED, COLLECTED]
     StopInput:
       type: object
       additionalProperties: false
@@ -1197,7 +1289,7 @@ components:
           description: >-
             Derived from the per-package attempts (Gap Register G17): omitted
             until every package of the stop has an attempt, then DELIVERED when
-            all were delivered, else FAILED.
+            none failed (delivered or collected, ADR 0017), else FAILED.
     PlanRouteRequest:
       type: object
       additionalProperties: false
@@ -1251,7 +1343,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
-          description: Required when outcome is FAILED and forbidden when DELIVERED; free text (trimmed, no control characters), the model defines no vocabulary.
+          description: Required when outcome is FAILED and forbidden when DELIVERED or COLLECTED; free text (trimmed, no control characters), the model defines no vocabulary.
         outcomeDetail:
           $ref: '#/components/schemas/OutcomeDetail'
         at:

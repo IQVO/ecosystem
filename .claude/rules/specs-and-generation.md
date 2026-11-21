@@ -23,6 +23,10 @@ paths:
 - `scripts/prepare-specs.mjs` writes a normalised copy to `.generated-specs/` (git-ignored): injected
   message ids, per-channel clones, direction rewritten from topic ownership, MDX escaping. Its header
   documents each rewrite. Payload schemas are never modified.
+- Message ids are `<producing ctx>-<Event>` (step 8), for every context: the producer is the owner of
+  the channel the message is declared on, so a consumer's declaration resolves to the producer's page.
+  Never special-case an event name, and never reintroduce bare ids (two contexts publishing the same name
+  merge into one page). Old bare-id URLs are 301s from the frozen `nginx.legacy-event-ids.map`.
 
 ## Self-healing refresh (`specs-refresh` workflow, bot PR `chore/specs-refresh`)
 

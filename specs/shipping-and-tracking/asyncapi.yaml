@@ -22,21 +22,25 @@ info:
     journey, the one customer-visible timeline consolidated from vendor handover,
     load and delivery facts (ADR 0001, ADR 0002).
 
-    **Published.** Nine events, all on `retailnetwork.shipping-and-tracking.events`,
+    **Published.** Thirteen events, all on `retailnetwork.shipping-and-tracking.events`,
     through a **transactional outbox**: the aggregate rows and their already-encoded
     events are written in ONE database transaction and an always-on relay drains
     them to Kafka (at-least-once; the CloudEvents `id` is stored with the outbox row,
-    so a retry republishes the same `id`). The nine types are catalogued in ADR 0004.
+    so a retry republishes the same `id`). The thirteen types are catalogued in ADR 0004.
     Every one is an integration event: the model's analytics-only events
     (LabelVoided, PackageReturned, PackageLost) were promoted by contracts-delta
     E6 and E16, so nothing is published on `retailnetwork.shipping-and-tracking.analytics`.
     No event carries a ship-to address or any part of it (the opaque `stopKey` and the
     postal prefix on LabelIssued are the only derived values; ADR 0002 A9, A10).
 
-    **Consumed.** Eight types from four topics (ADR 0003): vendor-connectivity
+    **Consumed.** Fourteen types from five topics (ADR 0003): vendor-connectivity
     VendorShipmentConfirmed, linehaul-transportation LoadDeparted and LoadArrived,
     last-mile-delivery PackageOutForDelivery, DeliveryAttempted,
-    PackageReturnInitiated and StopEtaWindowAssigned, offer-availability CatalogItemCreated. Each consumer
+    PackageReturnInitiated, StopEtaWindowAssigned and DeliveryPointFlagged (ADR 0014),
+    offer-availability CatalogItemCreated, node-topology ServiceAreaAssigned (ADR 0015)
+    and the node lifecycle events NodeRegistered, NodeActivated, NodeSuspended and
+    NodeRetired (ADR 0016; NodeRegistered also feeds the destination prefix of every
+    node, ADR 0018). Each consumer
     group dedupes on the CloudEvents `id` (inbox table `processed_events`),
     dispatches on the full `type`, ignores unknown types and fields, and parks a
     poison message on `<topic>.dlq`; a transient failure is retried five times first.
@@ -104,6 +108,30 @@ channels:
         $ref: "#/components/messages/PackageEtaWindowAssigned"
       PackageDeliveryPointFlagged:
         $ref: "#/components/messages/PackageDeliveryPointFlagged"
+      PackageHandedToCarrier:
+        $ref: "#/components/messages/PackageHandedToCarrier"
+      PackageReadyForCollection:
+        $ref: "#/components/messages/PackageReadyForCollection"
+      PackageCollected:
+        $ref: "#/components/messages/PackageCollected"
+  nodeTopologyEvents:
+    address: retailnetwork.node-topology.events
+    title: node-topology integration topic (consumed)
+    description: |
+      Owned by node-topology; this service only reads it, in its own consumer group
+      (ST_AREAS_CONSUMER_GROUP), and relies on the fields listed on each message.
+      Unknown fields and unknown types are ignored.
+    messages:
+      ServiceAreaAssigned:
+        $ref: "#/components/messages/ServiceAreaAssigned"
+      NodeRegistered:
+        $ref: "#/components/messages/NodeRegistered"
+      NodeActivated:
+        $ref: "#/components/messages/NodeActivated"
+      NodeSuspended:
+        $ref: "#/components/messages/NodeSuspended"
+      NodeRetired:
+        $ref: "#/components/messages/NodeRetired"
   vendorConnectivityEvents:
     address: retailnetwork.vendor-connectivity.events
     title: vendor-connectivity integration topic (consumed)
@@ -159,7 +187,7 @@ operations:
   publishShippingAndTrackingEvents:
     action: send
     title: Publish shipping-and-tracking events
-    summary: Publish the nine shipping-and-tracking events through the transactional outbox.
+    summary: Publish the shipping-and-tracking events through the transactional outbox.
     description: |
       The service sends every event of its two aggregates (ShippingLabel,
       PackageJourney) to `retailnetwork.shipping-and-tracking.events`. Consumers route
@@ -178,6 +206,8 @@ operations:
       - $ref: "#/channels/shippingAndTrackingEvents/messages/PackageReturned"
       - $ref: "#/channels/shippingAndTrackingEvents/messages/PackageLost"
       - $ref: "#/channels/shippingAndTrackingEvents/messages/PackageEtaWindowAssigned"
+      - $ref: "#/channels/shippingAndTrackingEvents/messages/PackageDeliveryPointFlagged"
+      - $ref: "#/channels/shippingAndTrackingEvents/messages/PackageHandedToCarrier"
   projectOwnEventsForAnalytics:
     action: receive
     title: Project this context's own events into the analytical database
@@ -186,7 +216,9 @@ operations:
       Inbound adapter internal/adapters/inbound/kafka/analytics_consumer.go, run by
       cmd/st-projector in the consumer group ANALYTICS_CONSUMER_GROUP (default
       shipping-and-tracking-analytics). Dispatches on the full `type`; LabelVoided,
-      PackageHandedOver, PackageExceptionRaised and PackageEtaWindowAssigned are acknowledged without projection;
+      PackageHandedOver, PackageHandedToCarrier (ADR 0015), PackageExceptionRaised,
+      PackageEtaWindowAssigned, PackageDeliveryPointFlagged, PackageReadyForCollection and
+      PackageCollected are acknowledged without projection;
       any other type or a non-CloudEvents message is skipped with a sampled warning.
     tags:
       - name: shipping-and-tracking
@@ -198,6 +230,33 @@ operations:
       - $ref: "#/channels/shippingAndTrackingEvents/messages/PackageDelivered"
       - $ref: "#/channels/shippingAndTrackingEvents/messages/PackageReturned"
       - $ref: "#/channels/shippingAndTrackingEvents/messages/PackageLost"
+  consumeNodeTopologyEvents:
+    action: receive
+    title: Consume node-topology events
+    summary: Receive ServiceAreaAssigned and the node lifecycle events from node-topology (ADR 0015, ADR 0016).
+    description: |
+      Inbound adapter under internal/adapters/inbound/kafka. Reads `retailnetwork.node-topology.events` in the
+      consumer group named by ST_AREAS_CONSUMER_GROUP (mandatory), records the CloudEvents
+      `id` in `processed_events` in the same transaction as the effect, and dead-letters
+      a message it cannot decode. An assignment version older than the stored row is
+      acknowledged and dropped (an equal one only fills a missing delivery station, ADR 0019);
+      that fold claims the CloudEvents `id` under its own inbox identity
+      (`node-topology.area-modes`). The node lifecycle events keep the pickup-point rows of
+      the local PickupPointView (ADR 0016). NodeRegistered also keeps, for a node of ANY
+      type, its row of the local NodeDestinationView (ADR 0018): the node id and the
+      destination prefix derived from the registered postal code. That fold claims the
+      CloudEvents `id` under its own inbox identity (`node-topology.node-destinations`),
+      and the three status events never reach it.
+    tags:
+      - name: shipping-and-tracking
+    channel:
+      $ref: "#/channels/nodeTopologyEvents"
+    messages:
+      - $ref: "#/channels/nodeTopologyEvents/messages/ServiceAreaAssigned"
+      - $ref: "#/channels/nodeTopologyEvents/messages/NodeRegistered"
+      - $ref: "#/channels/nodeTopologyEvents/messages/NodeActivated"
+      - $ref: "#/channels/nodeTopologyEvents/messages/NodeSuspended"
+      - $ref: "#/channels/nodeTopologyEvents/messages/NodeRetired"
   consumeVendorConnectivityEvents:
     action: receive
     title: Consume vendor-connectivity events
@@ -270,7 +329,7 @@ components:
       name: LabelIssued
       title: A shipping label was issued for one package
       summary: A shipping label was issued for one package.
-      description: "`type` = `com.retailnetwork.logistics.shipping-and-tracking.label.LabelIssued`; Raised by IssueLabel. Subject and key = the labelRef. Consumers: linehaul-transportation (ExpectedVolumeView), customer-ordering (OrderTrackingView), last-mile-delivery (groups stops by `stopKey`, contracts-delta E10). `stopKey` is an opaque keyed hash of the normalized ship-to address and `destinationPostalPrefix` its postal prefix: no address ever appears on the wire. `orderId` is an additive field (ADR 0002 A12)."
+      description: "`type` = `com.retailnetwork.logistics.shipping-and-tracking.label.LabelIssued`; Raised by IssueLabel. Subject and key = the labelRef. Consumers: linehaul-transportation (ExpectedVolumeView), customer-ordering (OrderTrackingView), last-mile-delivery (groups stops by `stopKey`, contracts-delta E10). `stopKey` is an opaque keyed hash of the normalized ship-to address and `destinationPostalPrefix` its postal prefix: no address ever appears on the wire. `orderId` is an additive field (ADR 0002 A12). `destinationStationNodeId` is an additive optional field (ADR 0019): the delivery station of the area covering `destinationPostalPrefix`, a node id only, omitted when no station is known for the prefix."
       contentType: application/cloudevents+json
       tags:
         - name: label
@@ -300,6 +359,32 @@ components:
                 "carrier": "RN-EXPRESS",
                 "stopKey": "9f2a6c0d4b7e11aa5c3d8e90b1f47a62c8d0e3f15a9b7c24d6e8f0a1b3c5d7e9",
                 "destinationPostalPrefix": "01310"
+              }
+            }
+        - name: labelIssuedWithDestinationStation
+          summary: A shipping label whose destination prefix is covered by a delivery station (ADR 0019).
+          payload:
+            {
+              "specversion": "1.0",
+              "id": "3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1c02",
+              "source": "/retailnetwork/shipping-and-tracking",
+              "type": "com.retailnetwork.logistics.shipping-and-tracking.label.LabelIssued",
+              "subject": "lbl-7c20",
+              "time": "2026-10-23T12:00:05Z",
+              "datacontenttype": "application/json",
+              "dataschema": "urn:retailnetwork:shipping-and-tracking:events:LabelIssued:v1",
+              "data": {
+                "labelRef": "lbl-7c20",
+                "trackingNumber": "STT00000000000043",
+                "poNumber": "PO-1001",
+                "assignmentId": "asg-001",
+                "orderId": "ord-001",
+                "packageNo": 2,
+                "tier": "NEXT_DAY",
+                "carrier": "RN-EXPRESS",
+                "stopKey": "9f2a6c0d4b7e11aa5c3d8e90b1f47a62c8d0e3f15a9b7c24d6e8f0a1b3c5d7e9",
+                "destinationPostalPrefix": "01310",
+                "destinationStationNodeId": "node-ds-07"
               }
             }
     LabelVoided:
@@ -573,6 +658,39 @@ components:
                 "orderId": "ord-001",
                 "reason": "NOT_HOME",
                 "flaggedAt": "2026-10-24T16:30:00Z"
+              }
+            }
+    PackageHandedToCarrier:
+      name: PackageHandedToCarrier
+      title: A package was handed to an external carrier (ADR 0015)
+      summary: A package of a CARRIER_HANDOFF service area was handed to the chosen carrier.
+      description: "`type` = `com.retailnetwork.logistics.shipping-and-tracking.journey.PackageHandedToCarrier`; raised on AT_STATION to WITH_CARRIER, once per journey (a repeat handoff scan is a duplicate). Subject and key = the trackingNumber. `carrierId` and `handoffNodeId` are the deterministic choice computed at the station (ADR 0015); `destinationPostalPrefix` is the label's prefix. Consumer: delivery-promise (carrier transit actuals)."
+      contentType: application/cloudevents+json
+      tags:
+        - name: journey
+      payload:
+        $ref: "#/components/schemas/PackageHandedToCarrierEvent"
+      examples:
+        - name: packageHandedToCarrier
+          summary: A package was handed to an external carrier.
+          payload:
+            {
+              "specversion": "1.0",
+              "id": "3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1c0a",
+              "source": "/retailnetwork/shipping-and-tracking",
+              "type": "com.retailnetwork.logistics.shipping-and-tracking.journey.PackageHandedToCarrier",
+              "subject": "STT00000000000042",
+              "time": "2026-11-13T09:00:00Z",
+              "datacontenttype": "application/json",
+              "dataschema": "urn:retailnetwork:shipping-and-tracking:events:PackageHandedToCarrier:v1",
+              "data": {
+                "trackingNumber": "STT00000000000042",
+                "assignmentId": "asg-001",
+                "orderId": "ord-001",
+                "carrierId": "crr-fast",
+                "handoffNodeId": "node-sc-03",
+                "destinationPostalPrefix": "01310",
+                "handedAt": "2026-11-13T08:55:00Z"
               }
             }
     VendorShipmentConfirmed:
@@ -867,6 +985,204 @@ components:
                 "fragile": true
               }
             }
+    ServiceAreaAssigned:
+      name: ServiceAreaAssigned
+      title: ServiceAreaAssigned (consumed from node-topology)
+      summary: A postal prefix was assigned to a delivery station (ADR 0015).
+      description: "`type` = `com.retailnetwork.logistics.node-topology.servicearea.ServiceAreaAssigned`. Tolerant local copy: `deliveryStationNodeId` is kept per postal prefix (ADR 0019) and published as `destinationStationNodeId` on LabelIssued; `regionId` is read and dropped. `deliveryMode` and `carriers` are additive v1 fields (ADR 0016 there); their absence means NETWORK_ROUTE with no options, so a pre-C4 replay keeps the old meaning. Upserted into `area_modes` only when `assignmentVersion` beats the stored row; an equal `assignmentVersion` still fills a station the stored row lacks (ADR 0019), so a replay or re-emit backfills rows stored before the station was kept."
+      contentType: application/cloudevents+json
+      tags:
+        - name: shipping-and-tracking
+      payload:
+        $ref: "#/components/schemas/ServiceAreaAssignedEvent"
+      examples:
+        - name: serviceAreaAssigned
+          summary: ServiceAreaAssigned as this service relies on it.
+          payload:
+            {
+              "specversion": "1.0",
+              "id": "7c1f5a2e-3d8b-4f6a-b9e4-1f2a3b4c5d6e",
+              "source": "/retailnetwork/node-topology",
+              "type": "com.retailnetwork.logistics.node-topology.servicearea.ServiceAreaAssigned",
+              "subject": "01310",
+              "time": "2026-11-13T07:00:00Z",
+              "datacontenttype": "application/json",
+              "dataschema": "urn:retailnetwork:node-topology:events:ServiceAreaAssigned:v1",
+              "data": {
+                "postalPrefix": "01310",
+                "deliveryStationNodeId": "node-ds-07",
+                "regionId": "reg-1",
+                "assignmentVersion": 4,
+                "deliveryMode": "CARRIER_HANDOFF",
+                "carriers": [
+                  {
+                    "carrierId": "crr-fast",
+                    "handoffNodeId": "node-sc-03",
+                    "costPerPackageCents": 420,
+                    "transitMinutes": 1440
+                  },
+                  {
+                    "carrierId": "crr-saver",
+                    "handoffNodeId": "node-sc-03",
+                    "costPerPackageCents": 380,
+                    "transitMinutes": 2880
+                  }
+                ]
+              }
+            }
+
+    PackageReadyForCollection:
+      name: PackageReadyForCollection
+      title: A package reached its pickup point (ADR 0016)
+      summary: The wave deposited a pickup journey's package at its point.
+      description: "`type` = `com.retailnetwork.logistics.shipping-and-tracking.journey.PackageReadyForCollection`; raised on OUT_FOR_DELIVERY to READY_FOR_COLLECTION. Subject and key = the trackingNumber. `holdUntil` is the retention deadline the uncollected sweep returns the package after. Consumer: delivery-promise (the kept outcome of a pickup promise)."
+      contentType: application/cloudevents+json
+      tags:
+        - name: journey
+      payload:
+        $ref: "#/components/schemas/PackageReadyForCollectionEvent"
+      examples:
+        - name: packageReadyForCollection
+          summary: A package became collectable at its point.
+          payload:
+            {
+              "specversion": "1.0",
+              "id": "3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1c0b",
+              "source": "/retailnetwork/shipping-and-tracking",
+              "type": "com.retailnetwork.logistics.shipping-and-tracking.journey.PackageReadyForCollection",
+              "subject": "STT00000000000051",
+              "time": "2026-11-13T09:00:00Z",
+              "datacontenttype": "application/json",
+              "dataschema": "urn:retailnetwork:shipping-and-tracking:events:PackageReadyForCollection:v1",
+              "data": {
+                "trackingNumber": "STT00000000000051",
+                "assignmentId": "asg-1001",
+                "orderId": "ord-2001",
+                "pickupPointId": "node-pnt-07",
+                "readyForCollectionAt": "2026-11-13T09:00:00Z",
+                "holdUntil": "2026-11-20T09:00:00Z"
+              }
+            }
+    PackageCollected:
+      name: PackageCollected
+      title: The shopper collected the package (ADR 0016)
+      summary: A READY_FOR_COLLECTION package was collected at its point.
+      description: "`type` = `com.retailnetwork.logistics.shipping-and-tracking.journey.PackageCollected`; COLLECTED is terminal. Subject and key = the trackingNumber. `proofCode` is omitted when no proof was taken."
+      contentType: application/cloudevents+json
+      tags:
+        - name: journey
+      payload:
+        $ref: "#/components/schemas/PackageCollectedEvent"
+      examples:
+        - name: packageCollected
+          summary: A package was collected with a proof code.
+          payload:
+            {
+              "specversion": "1.0",
+              "id": "3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1c0c",
+              "source": "/retailnetwork/shipping-and-tracking",
+              "type": "com.retailnetwork.logistics.shipping-and-tracking.journey.PackageCollected",
+              "subject": "STT00000000000051",
+              "time": "2026-11-14T18:30:00Z",
+              "datacontenttype": "application/json",
+              "dataschema": "urn:retailnetwork:shipping-and-tracking:events:PackageCollected:v1",
+              "data": {
+                "trackingNumber": "STT00000000000051",
+                "assignmentId": "asg-1001",
+                "orderId": "ord-2001",
+                "pickupPointId": "node-pnt-07",
+                "collectedAt": "2026-11-14T18:30:00Z",
+                "proofCode": "4821"
+              }
+            }
+    NodeRegistered:
+      name: NodeRegistered
+      title: NodeRegistered (consumed from node-topology)
+      summary: A node was registered; every node reaches the NodeDestinationView (ADR 0018), a PICKUP_POINT also the PickupPointView (ADR 0016).
+      description: "`type` = `com.retailnetwork.logistics.node-topology.node.NodeRegistered`. Tolerant local copy. Relied on for EVERY node type: `nodeId` and `postalCode`, from which this context derives the node's destination prefix (the first 5 characters from A-Z 0-9 of the upper-cased code; ADR 0002 A10, ADR 0018) and keeps it, not the code, in the NodeDestinationView. A registration whose `postalCode` is absent or leaves no such character still makes the node known, with no usable prefix. Relied on for a PICKUP_POINT only: `nodeType` and `servingStationNodeId` (null for every other node type), which add the pickup-point row (ADR 0016). A registration without a `nodeId` is dead-lettered. Every other field is ignored."
+      contentType: application/cloudevents+json
+      tags:
+        - name: shipping-and-tracking
+      payload:
+        $ref: "#/components/schemas/NodeRegisteredEvent"
+      examples:
+        - name: nodeRegistered
+          summary: A partner pickup point was registered.
+          payload:
+            {
+              "specversion": "1.0",
+              "id": "7c1f5a2e-3d8b-4f6a-b9e4-1f2a3b4c5d71",
+              "source": "/retailnetwork/node-topology",
+              "type": "com.retailnetwork.logistics.node-topology.node.NodeRegistered",
+              "subject": "node-pnt-07",
+              "time": "2026-11-13T07:00:00Z",
+              "datacontenttype": "application/json",
+              "data": {
+                "nodeId": "node-pnt-07",
+                "nodeType": "PICKUP_POINT",
+                "operator": "PARTNER",
+                "servingStationNodeId": "node-ds-07",
+                "regionId": "reg-1",
+                "timezone": "America/Sao_Paulo",
+                "postalCode": "07095000",
+                "countryCode": "BR"
+              }
+            }
+        - name: nodeRegisteredFulfillmentCenter
+          summary: A node that is not a pickup point; its destination prefix 07750 is kept (ADR 0018).
+          payload:
+            {
+              "specversion": "1.0",
+              "id": "3f6c2a9e-8b1d-4c7a-9e55-0d2f6b7a1c40",
+              "source": "/retailnetwork/node-topology",
+              "type": "com.retailnetwork.logistics.node-topology.node.NodeRegistered",
+              "subject": "node-0f3a91",
+              "time": "2026-10-22T13:00:00Z",
+              "datacontenttype": "application/json",
+              "dataschema": "urn:retailnetwork:node-topology:events:NodeRegistered:v1",
+              "data": {
+                "nodeId": "node-0f3a91",
+                "nodeType": "FULFILLMENT_CENTER",
+                "subtype": "SORTABLE",
+                "operator": "VENDOR",
+                "vendorId": "vendor-77",
+                "vendorNodeCode": "SP-CAJAMAR-01",
+                "regionId": "region-se",
+                "timezone": "America/Sao_Paulo",
+                "postalCode": "07750-000",
+                "countryCode": "BR"
+              }
+            }
+    NodeActivated:
+      name: NodeActivated
+      title: NodeActivated (consumed from node-topology)
+      summary: A node became ACTIVE; a pickup point becomes labelable (ADR 0016).
+      description: "`type` = `com.retailnetwork.logistics.node-topology.node.NodeActivated`. Only the `nodeId` is read. It sets the state of the pickup point this context holds under that id to ACTIVE and changes nothing else: the point's serving station and prefix come from NodeRegistered alone. A node this context holds no pickup point of (any node of another type) is acknowledged without an effect and no row is made; a RETIRED point is not revived (ADR 0016, addendum 2026-11-18). Like NodeSuspended and NodeRetired it never reaches the NodeDestinationView: a node's destination prefix does not depend on its state (ADR 0018)."
+      contentType: application/cloudevents+json
+      tags:
+        - name: shipping-and-tracking
+      payload:
+        $ref: "#/components/schemas/NodeStateChangedEvent"
+    NodeSuspended:
+      name: NodeSuspended
+      title: NodeSuspended (consumed from node-topology)
+      summary: A node was suspended; a pickup point stops being labelable (ADR 0016).
+      description: "`type` = `com.retailnetwork.logistics.node-topology.node.NodeSuspended`. Only the `nodeId` is read. Sets the state of the held pickup point to SUSPENDED and changes nothing else; the same rules as NodeActivated for a node that is not a held pickup point and for a RETIRED one."
+      contentType: application/cloudevents+json
+      tags:
+        - name: shipping-and-tracking
+      payload:
+        $ref: "#/components/schemas/NodeStateChangedEvent"
+    NodeRetired:
+      name: NodeRetired
+      title: NodeRetired (consumed from node-topology)
+      summary: A node was retired; its pickup point stays in the view as RETIRED, for good (ADR 0016).
+      description: "`type` = `com.retailnetwork.logistics.node-topology.node.NodeRetired`. Only the `nodeId` is read. Sets the state of the held pickup point to RETIRED and changes nothing else; the row is kept, RETIRED is terminal and no later status fact changes it. A node that is not a held pickup point is acknowledged without an effect."
+      contentType: application/cloudevents+json
+      tags:
+        - name: shipping-and-tracking
+      payload:
+        $ref: "#/components/schemas/NodeStateChangedEvent"
 
   schemas:
     CloudEventEnvelope:
@@ -888,11 +1204,11 @@ components:
 
     ScanType:
       type: string
-      enum: [SHIPMENT_CONFIRMED, PICKUP_DEPARTURE, DEPARTURE, TRANSIT_ARRIVAL, STATION_ARRIVAL, OUT_FOR_DELIVERY, DELIVERED, DELIVERY_FAILED]
+      enum: [SHIPMENT_CONFIRMED, PICKUP_DEPARTURE, DEPARTURE, TRANSIT_ARRIVAL, STATION_ARRIVAL, CARRIER_HANDOFF, OUT_FOR_DELIVERY, DELIVERED, DELIVERY_FAILED, POINT_DEPOSITED, COLLECTED]
 
     JourneyState:
       type: string
-      enum: [LABELLED, HANDED_OVER, IN_TRANSIT, AT_STATION, OUT_FOR_DELIVERY, DELIVERED, RETURNED, LOST, VOIDED]
+      enum: [LABELLED, HANDED_OVER, IN_TRANSIT, AT_STATION, WITH_CARRIER, OUT_FOR_DELIVERY, READY_FOR_COLLECTION, DELIVERED, COLLECTED, RETURNED, LOST, VOIDED]
 
     LabelIssuedEvent:
       allOf:
@@ -911,8 +1227,12 @@ components:
                 packageNo: {"type": "integer", "minimum": 1}
                 tier: {"$ref": "#/components/schemas/ServiceTier"}
                 carrier: {"type": "string"}
-                stopKey: {"type": "string", "description": "Opaque keyed hash (HMAC-SHA-256, hex) of the normalized address; equal addresses give equal keys."}
-                destinationPostalPrefix: {"type": "string", "description": "Leading characters of the ship-to postal code (ADR 0002 A10)."}
+                stopKey: {"type": "string", "description": "Opaque keyed hash (HMAC-SHA-256, hex) of the normalized address; equal addresses give equal keys. A pickup label keys the point id, so every package of one point shares one stop (ADR 0016). A reverse label keys the same ship-to as the outbound label of the same order, so its key EQUALS the outbound key (ADR 0017)."}
+                destinationPostalPrefix: {"type": "string", "description": "Leading characters of the ship-to postal code (ADR 0002 A10); a pickup label carries the point's own prefix (ADR 0016); a reverse label carries the RETURN DESTINATION's prefix (ADR 0017)."}
+                pickupPointId: {"type": "string", "description": "The pickup point of a pickup label; omitted on a ship-to label (ADR 0016)."}
+                destinationStationNodeId: {"type": "string", "description": "Optional (ADR 0019). The delivery station of the area covering destinationPostalPrefix, as node-topology's ServiceAreaAssigned last assigned it (the area's station, also for a pickup label; ADR 0019 records the open question). A node id only, never an address. Omitted when no station is known for the prefix and on a reverse label. Tolerant consumers ignore it."}
+                purpose: {"type": "string", "enum": ["RETURN"], "description": "Present only on a reverse label of a customer return (ADR 0017); omitted on an outbound label. Tolerant consumers ignore it."}
+                returnAuthorizationId: {"type": "string", "description": "The return authorization a reverse label belongs to (ADR 0017); omitted on an outbound label."}
 
     LabelVoidedEvent:
       allOf:
@@ -998,6 +1318,68 @@ components:
                 trackingNumber: {"type": "string"}
                 orderId: {"type": "string"}
                 returnedAt: {"type": "string", "format": "date-time"}
+                reason: {"type": "string", "description": "Why the package returned; UNCOLLECTED is the pickup hold expiry (ADR 0016). Omitted on the station-initiated return."}
+
+    NodeRegisteredEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: ["nodeId", "nodeType"]
+              properties:
+                nodeId: {"type": "string", "description": "Relied on for every node type: the key of the NodeDestinationView row (ADR 0018)."}
+                nodeType: {"type": "string", "description": "Only PICKUP_POINT reaches the PickupPointView (ADR 0016); every node type reaches the NodeDestinationView (ADR 0018)."}
+                operator: {"type": "string"}
+                servingStationNodeId: {"type": ["string", "null"], "description": "The serving delivery station of a pickup point; null for every other node type."}
+                regionId: {"type": "string"}
+                timezone: {"type": "string"}
+                postalCode: {"type": "string", "description": "The node's own postal code. Relied on for every node type: its first 5 characters from A-Z 0-9 (upper-cased) are the node's destination prefix, kept in the NodeDestinationView; the code itself is not kept (ADR 0018). A pickup point's code is also its PickupPointView prefix (ADR 0016)."}
+                countryCode: {"type": "string"}
+
+    NodeStateChangedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: ["nodeId"]
+              properties:
+                nodeId: {"type": "string"}
+
+    PackageReadyForCollectionEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: ["trackingNumber", "pickupPointId", "readyForCollectionAt", "holdUntil"]
+              properties:
+                trackingNumber: {"type": "string"}
+                assignmentId: {"type": "string"}
+                orderId: {"type": "string"}
+                pickupPointId: {"type": "string"}
+                readyForCollectionAt: {"type": "string", "format": "date-time"}
+                holdUntil: {"type": "string", "format": "date-time"}
+
+    PackageCollectedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: ["trackingNumber", "pickupPointId", "collectedAt"]
+              properties:
+                trackingNumber: {"type": "string"}
+                assignmentId: {"type": "string"}
+                orderId: {"type": "string"}
+                pickupPointId: {"type": "string"}
+                collectedAt: {"type": "string", "format": "date-time"}
+                proofCode: {"type": "string", "description": "The shopper's collection proof; omitted when none was taken (ADR 0016)."}
 
     PackageLostEvent:
       allOf:
@@ -1027,6 +1409,23 @@ components:
                 etaStart: {"type": "string", "format": "date-time"}
                 etaEnd: {"type": "string", "format": "date-time", "description": "After etaStart."}
                 assignedAt: {"type": "string", "format": "date-time", "description": "The route start instant: the CloudEvents time of the consumed StopEtaWindowAssigned."}
+
+    PackageHandedToCarrierEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: ["trackingNumber", "assignmentId", "orderId", "carrierId", "handoffNodeId", "destinationPostalPrefix", "handedAt"]
+              properties:
+                trackingNumber: {"type": "string"}
+                assignmentId: {"type": "string"}
+                orderId: {"type": "string"}
+                carrierId: {"type": "string", "description": "The deterministic choice of the area's declared options (ADR 0015)."}
+                handoffNodeId: {"type": "string", "description": "The node the carrier collects the package at."}
+                destinationPostalPrefix: {"type": "string", "description": "The label's postal prefix."}
+                handedAt: {"type": "string", "format": "date-time"}
 
     VendorShipmentConfirmedEvent:
       allOf:
@@ -1181,3 +1580,19 @@ components:
                 weightG: {"type": "integer"}
                 hazmat: {"type": "boolean"}
                 fragile: {"type": "boolean"}
+
+    ServiceAreaAssignedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: ["postalPrefix", "assignmentVersion"]
+              properties:
+                postalPrefix: {"type": "string"}
+                deliveryStationNodeId: {"type": "string", "description": "The DELIVERY_STATION that serves the prefix. Kept per postal prefix and published as destinationStationNodeId on LabelIssued (ADR 0019); absent or not a valid id means no station."}
+                regionId: {"type": "string", "description": "Read and dropped."}
+                assignmentVersion: {"type": "integer", "minimum": 1}
+                deliveryMode: {"type": "string", "enum": ["NETWORK_ROUTE", "CARRIER_HANDOFF"], "description": "Absent means NETWORK_ROUTE (the pre-C4 meaning)."}
+                carriers: {"type": "array", "description": "The declared carrier options of a CARRIER_HANDOFF area; absent or empty means none.", "items": {"type": "object", "required": ["carrierId", "handoffNodeId", "transitMinutes"], "properties": {"carrierId": {"type": "string"}, "handoffNodeId": {"type": "string"}, "costPerPackageCents": {"type": "integer", "minimum": 0}, "transitMinutes": {"type": "integer", "minimum": 1}}}}

@@ -1,0 +1,97 @@
+---
+id: last-mile-delivery-api-declareWaveEmission
+version: 0.1.0
+name: declareWaveEmission
+summary: Declare the stop emission of a wave (DeclareEmission)
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Waves'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/waves/{waveId}/emission-declarations'
+  statusCodes:
+    - '201'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+Records the planner's declared marginal greenhouse emission of ONE delivery stop on the wave (the stop's share of the route's driving), in grams of CO2 equivalent (roadmap feature C9; ADR 0016), and publishes WaveEmissionDeclared for order-sourcing's estimatedCo2eGrams. The emission is per stop (the G11 stopKey grouping), never per package. 0 is a legal declared zero marginal emission; a wave with no declaration reports 0 and leaves a consumer's estimate incomplete. Allowed while the wave still runs (OPEN, INDUCTION_CLOSED or DISPATCHED, illegal-transition once CANCELLED or COMPLETED); a later declaration overwrites the earlier one and publishes again. Ranking is untouched by this fact: carbon is recorded, not optimised, in this slice.
+
+
+
+
+## POST `(/waves/{waveId}/emission-declarations)`
+
+### Parameters
+- **waveId** (path) (required)
+- **Idempotency-Key** (header) (required): Client-generated key (a UUID) per logical submit, 1 to 128 printable
+ASCII characters. A retry with the same method, path and body replays
+the stored answer with `Idempotency-Replayed: true` and changes
+nothing; the same key with another method, path or body is 409
+`idempotency-key-reused`. Keys are global.
+
+What is stored. A 2xx is stored. A 5xx is never stored. A refusal is
+stored (and replayed) only when it is final for the request:
+`validation-failed`, `invalid-wave-times`, `invalid-van-capacity`,
+`already-delivered`, `attempt-already-recorded`,
+`package-already-routed`, `induction-closed` and `already-inducted`.
+A refusal that depends on state that can change is NOT stored: its key
+is released, a retry with the same key and request executes again (it
+can succeed once the state allows), and a different request under the
+released key is a new request, not `idempotency-key-reused`. These are
+`concurrent-update` (re-read, then retry), `not-found`,
+`unknown-station`, `package-not-on-route`, `package-not-inducted`,
+`stop-key-mismatch`, `route-over-capacity`, `partner-inactive`,
+`partner-station-mismatch`, `route-not-started`, `route-incomplete`,
+`wave-full` and `illegal-transition`; the 409 `idempotency-key-reused`
+is itself never stored. Rows are kept 24 hours.
+
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

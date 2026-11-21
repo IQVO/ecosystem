@@ -1,0 +1,257 @@
+openapi: 3.1.0
+
+info:
+  title: asrs-control API
+  version: 1.0.0
+  contact:
+    name: asrs-control maintainers
+    url: https://github.com/IQVO/asrs-control
+    email: asrs-control@iqvo.example.com
+  license:
+    name: UNLICENSED
+  description: |
+    The subsystem-controller interface of **asrs-control** (WCS tier, Generic; ADR 0001), called by
+    material-flow-control (WCS context map relationship 5). A store or retrieve is accepted or refused at once
+    (`202` or `422`); its progress is reported only by events on `warehouse.asrs-control.events`
+    (ContainerStored, ContainerPresentedAtPort, StorageJobFailed). Rack positions never appear here.
+
+    **Idempotency.** Every POST requires `Idempotency-Key` (1-128 characters). The first request executes; a
+    retry with the same key and body returns the stored answer with `Idempotency-Replayed: true`; the same key
+    with another body is `409 idempotency-key-reused`. Only 2xx and FINAL refusals are stored (24 hours):
+    `bad-request`, `invalid-parameter`, `asrs-not-found`, `storage-job-not-found`, `unknown-port`,
+    `wrong-port-kind`. RETRYABLE refusals release the key, so a retry under the same key executes again:
+    `unknown-container`, `container-busy`, `container-already-stored`, `storage-full`, `aisle-unavailable`,
+    `port-unreachable`, `port-not-presenting`, `job-not-cancellable`, `job-ended`.
+
+    **Errors** are RFC 9457 `application/problem+json` with a stable `code`. No authentication (fleet rule).
+
+servers:
+  - url: https://asrs-control.warehouse-systems.internal
+
+tags:
+  - name: storage-jobs
+    description: Store and retrieve jobs and their cancellation.
+  - name: asrs
+    description: AS/RS state and port handoffs.
+  - name: health
+    description: Probes.
+
+paths:
+  /healthz:
+    get:
+      operationId: getLiveness
+      summary: Liveness
+      description: 200 while the process runs.
+      tags: [health]
+      responses:
+        '200': {description: Alive., content: {application/json: {schema: {$ref: '#/components/schemas/Status'}}}}
+  /readyz:
+    get:
+      operationId: getReadiness
+      summary: Readiness
+      description: 200 when Postgres, Kafka and every MQTT link are reachable; 503 while draining or while one is not.
+      tags: [health]
+      responses:
+        '200': {description: Ready., content: {application/json: {schema: {$ref: '#/components/schemas/Status'}}}}
+        '503': {$ref: '#/components/responses/NotReady'}
+  /asrs/{asrsId}:
+    get:
+      operationId: getAsrs
+      summary: Read an AS/RS
+      description: Aisles (unit state, open jobs, free positions), ports (the container waiting on each output port), the input port that balances the aisles, and the capacity snapshot.
+      tags: [asrs]
+      parameters: [{$ref: '#/components/parameters/AsrsId'}]
+      responses:
+        '200': {description: The AS/RS., content: {application/json: {schema: {$ref: '#/components/schemas/AsrsView'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+  /asrs/{asrsId}/storage-jobs:
+    post:
+      operationId: createStorageJob
+      summary: Request a store or a retrieve
+      description: |
+        `kind` STORE stores the container waiting on input port `port_id`; its rack position is reserved now
+        (a full aisle is `422 storage-full`). `kind` RETRIEVE presents a stored container at `port_id`, or at
+        the first output port of its aisle when `port_id` is omitted; retrieves to one port are presented in
+        the order they are accepted. `reference` is echoed in every event of the job.
+      tags: [storage-jobs]
+      parameters: [{$ref: '#/components/parameters/AsrsId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/StorageJobRequest'}}}
+      responses:
+        '202':
+          description: Accepted. Progress follows as events.
+          headers:
+            Location: {description: The job., schema: {type: string}}
+            Idempotency-Replayed: {$ref: '#/components/headers/IdempotencyReplayed'}
+          content: {application/json: {schema: {$ref: '#/components/schemas/StorageJob'}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /asrs/{asrsId}/storage-jobs/{storageJobId}:
+    get:
+      operationId: getStorageJob
+      summary: Read a storage job
+      description: The job's status and, once ended, its reason.
+      tags: [storage-jobs]
+      parameters: [{$ref: '#/components/parameters/AsrsId'}, {$ref: '#/components/parameters/StorageJobId'}]
+      responses:
+        '200': {description: The job., content: {application/json: {schema: {$ref: '#/components/schemas/StorageJob'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+  /asrs/{asrsId}/storage-jobs/{storageJobId}/cancellation:
+    post:
+      operationId: cancelStorageJob
+      summary: Cancel a storage job
+      description: |
+        A queued job is cancelled at once (`200`, status CANCELLED, `StorageJobFailed` reason CANCELLED). A job
+        already with the PLC gets a CANCEL telegram (`202`, status CANCEL_REQUESTED): the PLC's answer decides,
+        and a refused cancellation lets the job run to its outcome. A retrieve on its way to the port is
+        `409 job-not-cancellable`.
+      tags: [storage-jobs]
+      parameters: [{$ref: '#/components/parameters/AsrsId'}, {$ref: '#/components/parameters/StorageJobId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200':
+          description: Cancelled.
+          headers: {Idempotency-Replayed: {$ref: '#/components/headers/IdempotencyReplayed'}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/StorageJob'}}}
+        '202':
+          description: The PLC was asked to cancel.
+          headers: {Idempotency-Replayed: {$ref: '#/components/headers/IdempotencyReplayed'}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/StorageJob'}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+  /asrs/{asrsId}/ports/{portId}/pickups:
+    post:
+      operationId: confirmPortPickup
+      summary: Confirm a container was taken from an output port
+      description: material-flow-control confirms the handoff; the next retrieve to the port can then be presented. The PLC reports no removal, so this call is the only signal.
+      tags: [asrs]
+      parameters: [{$ref: '#/components/parameters/AsrsId'}, {$ref: '#/components/parameters/PortId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PickupRequest'}}}
+      responses:
+        '200':
+          description: The port is free.
+          headers: {Idempotency-Replayed: {$ref: '#/components/headers/IdempotencyReplayed'}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/Pickup'}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+
+components:
+  parameters:
+    AsrsId: {name: asrsId, in: path, required: true, description: The AS/RS id of the layout file., schema: {$ref: '#/components/schemas/Id'}}
+    StorageJobId: {name: storageJobId, in: path, required: true, description: The storage job id (`sj-<uuid>`)., schema: {$ref: '#/components/schemas/Id'}}
+    PortId: {name: portId, in: path, required: true, description: An output port of the AS/RS., schema: {$ref: '#/components/schemas/Id'}}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Caller-minted key, 1 to 128 characters (fleet guideline R3-R5); a missing or longer one is `400 idempotency-key-required`.
+      schema: {type: string, minLength: 1, maxLength: 128}
+  headers:
+    IdempotencyReplayed:
+      description: '`true` on an answer replayed from the idempotency store; absent on a first execution.'
+      schema: {type: string, enum: ['true']}
+  responses:
+    Problem:
+      description: An RFC 9457 problem.
+      content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+    NotReady:
+      description: Draining, or a dependency is not reachable (`dependency-unavailable`).
+      content:
+        application/json: {schema: {$ref: '#/components/schemas/Status'}}
+        application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}
+  schemas:
+    Id: {type: string, minLength: 1, maxLength: 128, description: No control characters.}
+    Status:
+      type: object
+      required: [status]
+      properties: {status: {type: string, examples: [ok, ready, not_ready]}}
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: {type: string}
+        title: {type: string}
+        status: {type: integer}
+        code: {type: string, description: Stable fleet error code., examples: [storage-full]}
+        detail: {type: string}
+        instance: {type: string}
+    StorageJobRequest:
+      type: object
+      required: [kind, container_id]
+      additionalProperties: false
+      properties:
+        kind: {type: string, enum: [STORE, RETRIEVE]}
+        container_id: {$ref: '#/components/schemas/Id'}
+        port_id: {$ref: '#/components/schemas/Id', description: 'STORE: required, the input port holding the container. RETRIEVE: optional output port.'}
+        reference: {$ref: '#/components/schemas/Id', description: The caller's reference (e.g. a transport leg), echoed in the job's events.}
+    StorageJob:
+      type: object
+      required: [storage_job_id, asrs_id, kind, container_id, port_id, status, accepted_at]
+      properties:
+        storage_job_id: {type: string}
+        asrs_id: {type: string}
+        kind: {type: string, enum: [STORE, RETRIEVE]}
+        container_id: {type: string}
+        port_id: {type: string}
+        reference: {type: string}
+        status: {type: string, enum: [QUEUED, DISPATCHED, ACKNOWLEDGED, CANCEL_REQUESTED, AWAITING_ARRIVAL, DONE, FAILED, CANCELLED]}
+        reason: {type: string, enum: [CANCELLED, EQUIPMENT_FAULT, EQUIPMENT_UNREACHABLE, COMMAND_REFUSED, CONTAINER_NOT_AT_PORT, STORAGE_MAP_MISMATCH, PORT_OCCUPIED, RESHUFFLE_FAILED, NO_RESHUFFLE_POSITION]}
+        plc_reason: {type: string, description: The PLC's bare reason code.}
+        accepted_at: {type: string, format: date-time}
+        ended_at: {type: string, format: date-time}
+    PickupRequest:
+      type: object
+      required: [container_id]
+      additionalProperties: false
+      properties: {container_id: {$ref: '#/components/schemas/Id'}}
+    Pickup:
+      type: object
+      required: [asrs_id, port_id, container_id]
+      properties: {asrs_id: {type: string}, port_id: {type: string}, container_id: {type: string}}
+    AsrsView:
+      type: object
+      required: [asrs_id, aisles, ports, recommended_input_port_id, capacity]
+      properties:
+        asrs_id: {type: string}
+        aisles:
+          type: array
+          items:
+            type: object
+            required: [aisle, unit_id, state, busy, open_jobs, positions_total, positions_free]
+            properties:
+              aisle: {type: integer, minimum: 1}
+              unit_id: {type: string}
+              state: {type: string, enum: [IDLE, EXECUTE, HELD]}
+              busy: {type: boolean, description: A job is with the PLC for this unit.}
+              open_jobs: {type: integer, minimum: 0}
+              positions_total: {type: integer, minimum: 1}
+              positions_free: {type: integer, minimum: 0}
+        ports:
+          type: array
+          items:
+            type: object
+            required: [port_id, aisle, kind, presented_container_id]
+            properties:
+              port_id: {type: string}
+              aisle: {type: integer, minimum: 1}
+              kind: {type: string, enum: [INPUT, OUTPUT]}
+              presented_container_id: {type: [string, 'null'], description: The container waiting on an output port.}
+        recommended_input_port_id: {type: [string, 'null'], description: The input port of the least-loaded available aisle.}
+        capacity:
+          type: object
+          required: [units_total, units_available, positions_total, positions_free, open_jobs]
+          properties:
+            units_total: {type: integer}
+            units_available: {type: integer}
+            positions_total: {type: integer}
+            positions_free: {type: integer}
+            open_jobs: {type: integer}

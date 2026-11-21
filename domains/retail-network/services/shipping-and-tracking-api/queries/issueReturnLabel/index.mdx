@@ -1,0 +1,76 @@
+---
+id: shipping-and-tracking-api-issueReturnLabel
+version: 0.1.0
+name: issueReturnLabel
+summary: Issue the reverse label of one package of a return (IssueReturnLabel)
+schemaPath: request-body.json
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Labels'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: /return-labels
+  statusCodes:
+    - '201'
+    - '400'
+    - '409'
+    - '422'
+    - '500'
+    - '503'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+In-org route called by customer-returns (ADR 0017, ADR 0018), the reverse twin of POST /labels. Reads the ship-to of orderId from customer-ordering BEFORE the transaction opens and derives the stopKey exactly like the outbound label of the same order (same secret over the same normalized address), so a return pickup stop groups with the outbound delivery stop by construction. The RETURN DESTINATION is named in exactly one of two ways. destinationNodeId names the returns node, and this context derives the label's destination prefix itself, from its own view of node-topology's registered nodes (ADR 0018): the caller holds no address data. destinationPostalPrefix, deprecated, is a prefix the caller supplies. Sending both, or neither, is validation-failed. A destinationNodeId this context holds no usable prefix for (the node's registration has not been consumed yet, or its registered postal code has no letter or digit from A-Z 0-9) is refused with 409 destination-prefix-unavailable and no label is stored, nor is the refusal kept under the Idempotency-Key, so the same request with the same key is executed again and served once the node is known; this context does not judge whether the node is the right one or whether it is active. The label rides the ground carrier (RN-GROUND), starts NO package journey and seals NO ship-to snapshot; scans of the reverse package are counted-and-acknowledged unknowns, and shopper-facing return tracking is customer-returns' authorization view. The response is a ReturnLabel: no poNumber, no assignmentId, purpose RETURN and the returnAuthorizationId. One label per (returnAuthorizationId, packageNo). A replay of the same Idempotency-Key returns the first response when that response is final for the request: a success and a refusal that is stored (see the Idempotency-Key parameter). A refusal that follows state which can change is not stored, and a retry under the same key executes again.
+
+
+
+
+## POST `(/return-labels)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Client-generated key, 1-128 printable ASCII characters, one per logical submit (a retry reuses it). A retry of the same request under the same key replays the first answer (24 hours, Idempotency-Replayed true) only when that answer is final for the request, that is a success, the refusals not-found, label-already-issued, void-after-handover, journey-closed and duplicate-scan (a function of the request or of a fact that never reverts), and scan-out-of-order and illegal-transition (the scan was stored, not applied, and stays stored). Every other refusal follows state that can change and is NOT stored; the key is released and a retry with the same key executes again, namely validation-failed, address-suspect, pickup-point-unavailable, destination-prefix-unavailable, tracking-number-taken, concurrent-update, and every 5xx. After a release, another body under the same key is a new request. The same key with a different method, path or body, while an answer is stored for it, answers 409 idempotency-key-reused.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">201 Created</span>
+Metadata of a reverse label, the label of one package of a customer return (ADR 0017). Never contains the ship-to address. A reverse label has no purchase order and no fulfillment assignment, so it carries neither poNumber nor assignmentId; it always carries purpose RETURN and the returnAuthorizationId it belongs to. orderId is the outbound order whose ship-to is the return's pickup address.
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+#### <span className="text-red-500">503 Service Unavailable</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-503.json" maxHeight="500" id="response-503" />
+
+
+
+## Architecture
+
+<NodeGraph />

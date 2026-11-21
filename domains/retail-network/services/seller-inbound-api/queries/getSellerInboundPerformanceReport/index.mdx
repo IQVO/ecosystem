@@ -1,0 +1,67 @@
+---
+id: seller-inbound-api-getSellerInboundPerformanceReport
+version: 1.0.0
+name: getSellerInboundPerformanceReport
+summary: 'Seller-inbound performance, per UTC day (GetSellerInboundPerformanceReport)'
+schemaPath: ''
+badges:
+  - content: GET
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Reports'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: GET
+  path: /reports/seller-inbound-performance
+  statusCodes:
+    - '200'
+    - '400'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: GET
+---
+## Overview
+Per UTC day of each fact's own business instant, folded from this context's OWN events only (ADR 0017); days without any fact are omitted. Served by the reports process (`si-reports`, port 8092), not by the seller API; `from` and `to` are UTC dates, both inclusive (neither = the 30 days ending today, at most 366 days).
+
+- `inbound_plans_confirmed`: `InboundPlanConfirmed` events of the day (`confirmedAt`). Plan creation publishes no event, so confirmation is the inbound announcement the model records.
+- `placement_advisories_issued`: `PlacementPlanSuggested` events of the day (`createdAt`).
+- `shipments_received`: `InboundShipmentReceived` events of the day (`receivedAt`).
+- `received_eaches` and `received_item_count`: the eaches and the distinct GTINs of EVERY `received` line of the day's receipts (ADR 0014). `received_by_item` lists at most 10 of them, most eaches first, ties by GTIN; `publications` is the number of receipts that listed the GTIN, `catalog_item_id` is present when a line of that day resolved it. A receipt published before ADR 0014 has no lines.
+- `advisory_to_receipt_samples`, `advisory_to_receipt_p50_seconds`, `advisory_to_receipt_p95_seconds`: for every received line that resolved its `catalogItemId`, the seconds from the LATEST placement advisory of the same seller and item at or before the receipt to the receipt (continuous percentiles); a line without such an advisory is not a sample. Nothing in the own facts links an advisory to a shipment, so this is the time since the seller's latest advice about the item, not a causal lead time. Both percentiles are `null` on a day without a sample.
+
+Not reported, because this context publishes no event for it: inbound capacity allocations granted or refused and the reasons of a refusal (the capacity gate answers `inbound-capacity-exceeded` and publishes nothing).
+
+
+
+
+
+## GET `(/reports/seller-inbound-performance)`
+
+### Parameters
+- **from** (query): First UTC day of the range, `YYYY-MM-DD`, inclusive. Omitted = 29 days before `to` (a 30-day range).
+- **to** (query): Last UTC day of the range, `YYYY-MM-DD`, inclusive. Omitted = today. At most 366 days from `from`; `from` after `to` is `invalid-report-range`.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 9457 problem details.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

@@ -25,9 +25,13 @@ info:
     snake_case keys.
 
 
-    The same `type` names an occurrence on both the integration and analytics
-    topics; `dataschema` names the payload shape. A breaking payload change
-    ships as a new `.v2` type with a new dataschema version.
+    An event that is published on both the integration and analytics topics
+    carries the same CloudEvents `type` attribute on each; `dataschema` names
+    the payload shape. The `Analytics` prefix on the analytics message
+    components below (for example `AnalyticsTaskCompleted`) is only the AsyncAPI
+    component `name` (the `title` is the plain event name); the CloudEvents
+    `type` const never carries it. A breaking payload change ships as a new
+    `.v2` type with a new dataschema version.
   contact:
     name: Fulfillment Execution Team
     url: https://github.com/claudioed/fulfillment-execution
@@ -372,7 +376,7 @@ channels:
                     cpt: '2026-09-30T16:00:00Z'
                     priority_band: REPLENISH:2026-09-30T16:00:00Z
                     available_at: '2026-09-30T15:00:00Z'
-            messageId: TaskAvailable
+            messageId: fulfillment-execution-TaskAvailable
           - name: TaskClaimed
             title: TaskClaimed
             summary: A station claimed a task; it left the open-task pool.
@@ -553,7 +557,7 @@ channels:
                     task_type: RELOCATE
                     station_id: station-07
                     claimed_at: '2026-09-30T15:00:00Z'
-            messageId: TaskClaimed
+            messageId: fulfillment-execution-TaskClaimed
           - name: TaskCompleted
             title: TaskCompleted
             summary: A station finished a claimed task.
@@ -932,7 +936,7 @@ channels:
                     to_bin: WH1-FWD-AMB-A01-01-01-A
                     quantity: 20
                     request_ref: req-9
-            messageId: TaskCompleted
+            messageId: fulfillment-execution-TaskCompleted
           - name: TaskCPTMissed
             title: TaskCPTMissed
             summary: A task is still open (Pending or Claimed) past its CPT deadline.
@@ -1106,7 +1110,7 @@ channels:
                     order_ref: wu-8a1f
                     task_type: PICK
                     cpt: '2026-09-30T14:55:00Z'
-            messageId: TaskCPTMissed
+            messageId: fulfillment-execution-TaskCPTMissed
           - name: PackageManifested
             title: PackageManifested
             summary: A package passed its SLAM weigh-check (the "SLAM pass").
@@ -1114,7 +1118,8 @@ channels:
               Raised alongside `LabelApplied` when the SLAM weigh-check passes
               (ADR-0025); a diverted package does not raise it. Published on
               `warehouse.fulfillment.events`, keyed by package id. Consumed by
-              order-management.
+              order-management and outbound-shipping (which needs `site_id` and
+              `cpt` to place the package on a load, ADR-0065).
             contentType: application/cloudevents+json
             tags:
               - name: package
@@ -1237,15 +1242,33 @@ channels:
                           x-parser-schema-id: <anonymous-schema-77>
                         order_ref:
                           type: string
-                          description: The package's order reference.
+                          description: >-
+                            The package's order reference (its correlated task's
+                            orderRef). NOTE — de-facto shape, not a parsed
+                            contract: for order-originated work
+                            wes-work-planning releases one work unit per order
+                            line, so this de-facto reads `<order_id>-line-<n>`
+                            (ADR-0040; the trailing `-line-N` suffix is exactly
+                            what source_order_id strips, above); transfer work
+                            carries the demand id, and tasks created directly
+                            via REST/MCP carry the caller's opaque string. This
+                            service never parses it (ADR-0041, decision 3);
+                            consumers that need the order identity should read
+                            source_order_id, not parse this field.
                           x-parser-schema-id: <anonymous-schema-78>
                         site_id:
                           type: string
+                          pattern: ^[A-Z0-9]+$
                           description: >-
-                            Optional facility-layout siteCode the package ships
-                            from (ADR-0061). No source exists in the order-work
-                            chain yet, so this is omitted until a later wave
-                            lands one; never an empty string.
+                            Optional facility-layout siteCode of the fulfillment
+                            site the order named (ADR-0061, sourced by
+                            ADR-0065): WorkReleased.site_id on the order's work,
+                            kept on the PICK tasks, inherited by the rebin PACK
+                            task, and read from the manifest's SLAM task, else
+                            its PACK task. Omitted — never an empty string —
+                            when the order named none (or the value was not a
+                            valid site code); consumers must treat absent as
+                            "site unknown".
                           x-parser-schema-id: <anonymous-schema-79>
                         source_order_id:
                           type: string
@@ -1263,10 +1286,14 @@ channels:
                           type: string
                           format: date-time
                           description: >-
-                            Optional RFC3339 Critical Pull Time of the
-                            manifest's SLAM task (ADR-0061) — the same SLAM-leg
-                            correlation as the on-time-to-CPT KPI. Omitted when
-                            no SLAM task correlates.
+                            Optional RFC3339 Critical Pull Time (UTC) of the
+                            manifest (ADR-0061): the CPT of its SLAM task — the
+                            same SLAM-leg correlation as the on-time-to-CPT KPI
+                            — and, when the order has no SLAM task (every
+                            customer order: its package is sealed from the rebin
+                            PACK task), the CPT of its PACK task, the order's
+                            promise date (ADR-0065). Omitted when neither task
+                            correlates.
                           x-parser-schema-id: <anonymous-schema-81>
                         weight_g:
                           type: number
@@ -1320,7 +1347,32 @@ channels:
                     source_order_id: order-88421
                     cpt: '2026-09-30T15:30:00Z'
                     weight_g: 1240.5
-            messageId: PackageManifested
+              - name: packageManifestedRebinWithSite
+                summary: >-
+                  A rebin package of an order that named a fulfillment site; no
+                  SLAM task exists, so cpt is the PACK task's.
+                headers:
+                  content-type: application/cloudevents+json; charset=UTF-8
+                  traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
+                payload:
+                  specversion: '1.0'
+                  id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+                  source: /warehouse/fulfillment-execution
+                  type: >-
+                    com.warehouse.wes.fulfillment-execution.package.PackageManifested
+                  subject: pkg-1031
+                  time: '2026-09-30T15:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:fulfillment-execution:events:PackageManifested:v1
+                  data:
+                    package_id: pkg-1031
+                    order_ref: order-88422
+                    site_id: WH1
+                    source_order_id: order-88422
+                    cpt: '2026-09-30T18:00:00Z'
+                    weight_g: 980
+            messageId: fulfillment-execution-PackageManifested
           - name: PackageDiverted
             title: PackageDiverted
             summary: >-
@@ -1473,7 +1525,7 @@ channels:
                     urn:warehouse:fulfillment-execution:events:PackageDiverted:v1
                   data:
                     package_id: p1
-            messageId: PackageDiverted
+            messageId: fulfillment-execution-PackageDiverted
           - name: WeightDiscrepancyDetected
             title: WeightDiscrepancyDetected
             summary: SLAM found a package weight out of tolerance.
@@ -1638,7 +1690,7 @@ channels:
                     package_id: p1
                     expected_g: 1000
                     actual_g: 1200
-            messageId: WeightDiscrepancyDetected
+            messageId: fulfillment-execution-WeightDiscrepancyDetected
           - name: TransferPicked
             title: TransferPicked
             summary: >-
@@ -1830,7 +1882,7 @@ channels:
                   traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
                 payload:
                   specversion: '1.0'
-                  id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+                  id: 3f5e1a2c-4b6d-4c7e-8d9f-0a1b2c3d4e5f
                   source: /warehouse/fulfillment-execution
                   type: >-
                     com.warehouse.wes.fulfillment-execution.transfer.TransferPicked
@@ -1847,7 +1899,7 @@ channels:
                     site_id: site-north
                     sku: SKU-0042
                     quantity: 12
-            messageId: TransferPicked
+            messageId: fulfillment-execution-TransferPicked
           - name: TransferDispatched
             title: TransferDispatched
             summary: >-
@@ -2035,12 +2087,12 @@ channels:
                   traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
                 payload:
                   specversion: '1.0'
-                  id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+                  id: 4a6f2b3d-5c7e-4d8f-9e0a-1b2c3d4e5f60
                   source: /warehouse/fulfillment-execution
                   type: >-
                     com.warehouse.wes.fulfillment-execution.transfer.TransferDispatched
-                  subject: task-tr-8a1f
-                  time: '2026-10-06T15:04:05Z'
+                  subject: task-tr-8a1f-dsp
+                  time: '2026-10-06T18:42:10Z'
                   datacontenttype: application/json
                   dataschema: >-
                     urn:warehouse:fulfillment-execution:events:TransferDispatched:v1
@@ -2048,12 +2100,12 @@ channels:
                     transfer_ref: tr-9f2a
                     demand_id: demand-77
                     work_unit_id: wu-tr-8a1f
-                    task_id: task-tr-8a1f
+                    task_id: task-tr-8a1f-dsp
                     work_kind: TRANSFER_DISPATCH
                     site_id: site-north
                     sku: SKU-0042
                     quantity: 12
-            messageId: TransferDispatched
+            messageId: fulfillment-execution-TransferDispatched
           - name: TransferArrived
             title: TransferArrived
             summary: >-
@@ -2242,12 +2294,12 @@ channels:
                   traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
                 payload:
                   specversion: '1.0'
-                  id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+                  id: 5b703c4e-6d8f-4e90-af1b-2c3d4e5f6071
                   source: /warehouse/fulfillment-execution
                   type: >-
                     com.warehouse.wes.fulfillment-execution.transfer.TransferArrived
-                  subject: task-tr-8a1f
-                  time: '2026-10-06T15:04:05Z'
+                  subject: task-tr-8a1f-arv
+                  time: '2026-10-07T08:15:30Z'
                   datacontenttype: application/json
                   dataschema: >-
                     urn:warehouse:fulfillment-execution:events:TransferArrived:v1
@@ -2255,12 +2307,12 @@ channels:
                     transfer_ref: tr-9f2a
                     demand_id: demand-77
                     work_unit_id: wu-tr-8a1f
-                    task_id: task-tr-8a1f
+                    task_id: task-tr-8a1f-arv
                     work_kind: TRANSFER_ARRIVAL
                     site_id: site-south
                     sku: SKU-0042
                     quantity: 12
-            messageId: TransferArrived
+            messageId: fulfillment-execution-TransferArrived
           - x-no-consumer-reason: >-
               pending: published only with PICK_BATCH_MODE on (ADR 0063); the
               contract names labor-performance (batch_size reporting) as the
@@ -2485,7 +2537,7 @@ channels:
                       - task_id: task-9c2e
                         stop_seq: 2
                         compartment: 2
-            messageId: WorkBatchFormed
+            messageId: fulfillment-execution-WorkBatchFormed
           - x-no-consumer-reason: >-
               pending: published only with PICK_BATCH_MODE on (ADR 0063); the
               contract names labor-performance (batch_size reporting) as the
@@ -2675,7 +2727,7 @@ channels:
                     walk_seconds: 450
                     completed_at: '2026-09-30T15:07:30Z'
                     version: 3
-            messageId: WorkBatchCompleted
+            messageId: fulfillment-execution-WorkBatchCompleted
           - x-no-consumer-reason: >-
               pending: published only with PICK_BATCH_MODE on (ADR 0063); the
               contract names labor-performance (batch_size reporting) as the
@@ -2858,7 +2910,7 @@ channels:
                     member_count: 2
                     abandoned_at: '2026-09-30T15:10:00Z'
                     version: 3
-            messageId: WorkBatchAbandoned
+            messageId: fulfillment-execution-WorkBatchAbandoned
   warehouse.fulfillment.analytics:
     description: >-
       Internal analytics stream (ADR-0012), keyed by aggregate id; read by this
@@ -3035,7 +3087,7 @@ channels:
                   data:
                     task_id: t1
                     task_type: PICK
-            messageId: AnalyticsTaskCreated
+            messageId: fulfillment-execution-AnalyticsTaskCreated
           - name: AnalyticsTaskClaimed
             title: TaskClaimed
             summary: >-
@@ -3203,7 +3255,7 @@ channels:
                     task_id: t1
                     task_type: PICK
                     station_id: s1
-            messageId: AnalyticsTaskClaimed
+            messageId: fulfillment-execution-AnalyticsTaskClaimed
           - name: AnalyticsLeaseExpired
             title: LeaseExpired
             summary: >-
@@ -3367,7 +3419,7 @@ channels:
                   data:
                     task_id: t1
                     task_type: PICK
-            messageId: AnalyticsLeaseExpired
+            messageId: fulfillment-execution-AnalyticsLeaseExpired
           - name: AnalyticsTaskCompleted
             title: TaskCompleted
             summary: >-
@@ -3558,7 +3610,7 @@ channels:
                     station_id: s1
                     order_ref: order-1
                     line_no: 2
-            messageId: AnalyticsTaskCompleted
+            messageId: fulfillment-execution-AnalyticsTaskCompleted
           - name: AnalyticsItemPicked
             title: ItemPicked
             summary: >-
@@ -3720,7 +3772,7 @@ channels:
                   data:
                     task_id: t1
                     task_type: PICK
-            messageId: AnalyticsItemPicked
+            messageId: fulfillment-execution-AnalyticsItemPicked
           - name: AnalyticsPackageSealed
             title: PackageSealed
             summary: >-
@@ -3952,7 +4004,7 @@ channels:
                       width_mm: 300
                       height_mm: 200
                       weight_g: 6500
-            messageId: AnalyticsPackageSealed
+            messageId: fulfillment-execution-AnalyticsPackageSealed
           - name: AnalyticsWeightDiscrepancyDetected
             title: WeightDiscrepancyDetected
             summary: >-
@@ -4118,7 +4170,7 @@ channels:
                     package_id: p1
                     expected_g: 1000
                     actual_g: 1200
-            messageId: AnalyticsWeightDiscrepancyDetected
+            messageId: fulfillment-execution-AnalyticsWeightDiscrepancyDetected
           - name: AnalyticsLabelApplied
             title: LabelApplied
             summary: >-
@@ -4268,7 +4320,7 @@ channels:
                     urn:warehouse:fulfillment-execution:analytics:LabelApplied:v1
                   data:
                     package_id: p1
-            messageId: AnalyticsLabelApplied
+            messageId: fulfillment-execution-AnalyticsLabelApplied
           - name: AnalyticsPackageDiverted
             title: PackageDiverted
             summary: >-
@@ -4419,7 +4471,7 @@ channels:
                     urn:warehouse:fulfillment-execution:analytics:PackageDiverted:v1
                   data:
                     package_id: p1
-            messageId: AnalyticsPackageDiverted
+            messageId: fulfillment-execution-AnalyticsPackageDiverted
           - name: AnalyticsPackageManifested
             title: PackageManifested
             summary: >-
@@ -4610,7 +4662,7 @@ channels:
                     station_id: station-09
                     on_time: true
                     resolved: true
-            messageId: AnalyticsPackageManifested
+            messageId: fulfillment-execution-AnalyticsPackageManifested
           - name: AnalyticsWorkBatchFormed
             title: WorkBatchFormed
             summary: >-
@@ -4791,7 +4843,7 @@ channels:
                       x-parser-schema-id: <anonymous-schema-260>
                   x-parser-schema-id: <anonymous-schema-256>
               x-parser-schema-id: <anonymous-schema-255>
-            messageId: AnalyticsWorkBatchFormed
+            messageId: fulfillment-execution-AnalyticsWorkBatchFormed
           - name: AnalyticsWorkBatchCompleted
             title: WorkBatchCompleted
             summary: >-
@@ -4948,7 +5000,7 @@ channels:
                       x-parser-schema-id: <anonymous-schema-276>
                   x-parser-schema-id: <anonymous-schema-272>
               x-parser-schema-id: <anonymous-schema-271>
-            messageId: AnalyticsWorkBatchCompleted
+            messageId: fulfillment-execution-AnalyticsWorkBatchCompleted
           - name: AnalyticsWorkBatchAbandoned
             title: WorkBatchAbandoned
             summary: >-
@@ -5100,7 +5152,7 @@ channels:
                       x-parser-schema-id: <anonymous-schema-288>
                   x-parser-schema-id: <anonymous-schema-284>
               x-parser-schema-id: <anonymous-schema-283>
-            messageId: AnalyticsWorkBatchAbandoned
+            messageId: fulfillment-execution-AnalyticsWorkBatchAbandoned
   warehouse.work-planning.events:
     description: >-
       The outbound topic owned by the Work Planning & Release bounded context
@@ -5638,19 +5690,20 @@ channels:
                   to_bin: WH1-FWD-AMB-A01-01-01-A
                   quantity: 24
                   priority: URGENT
-        messageId: WorkReleased
+        messageId: wes-work-planning-WorkReleased
   warehouse.process-path-management.events:
     description: >-
       This service's own integration topic (its `kafka.Topic` constant). Carries
-      all three ProcessPath* event types plus CPTScheduleChanged (ADR 0010) as
-      CloudEvents 1.0 (ADR 0016), dispatched by consumers on the full `type`.
-      Kafka message key = the CloudEvents `subject` (`path_id`, or `site_id` for
-      CPTScheduleChanged), hash-balanced. Every message carries the Kafka header
-      `content-type: application/cloudevents+json; charset=UTF-8` plus
-      `traceparent` / `tracestate` when raised inside a traced operation. Events
-      travel through the transactional outbox (Postgres is mandatory, ADR 0037);
-      there is no log or in-memory publisher in the shipped binary. The topic is
-      auto-created by the broker on first write.
+      all three ProcessPath* event types, CPTScheduleChanged (ADR 0010) and the
+      three ProcessFlow* event types (ADR 0042) as CloudEvents 1.0 (ADR 0016),
+      dispatched by consumers on the full `type`. Kafka message key = the
+      CloudEvents `subject` (`path_id`, `site_id` for CPTScheduleChanged,
+      `flow_id` for ProcessFlow*), hash-balanced. Every message carries the
+      Kafka header `content-type: application/cloudevents+json; charset=UTF-8`
+      plus `traceparent` / `tracestate` when raised inside a traced operation.
+      Events travel through the transactional outbox (Postgres is mandatory, ADR
+      0037); there is no log or in-memory publisher in the shipped binary. The
+      topic is auto-created by the broker on first write.
     x-eventcatalog-channel-version: 1.0.0
     subscribe:
       operationId: receiveProcessPathEvents
@@ -5833,7 +5886,7 @@ channels:
                     direct: true
                     required_capabilities:
                       - pick
-            messageId: ProcessPathCreated
+            messageId: process-path-management-ProcessPathCreated
           - name: ProcessPathUpdated
             title: ProcessPathUpdated
             summary: Process-path catalogue event ProcessPathUpdated (consumed).
@@ -6006,7 +6059,7 @@ channels:
                     required_capabilities:
                       - pick
                       - hazmat
-            messageId: ProcessPathUpdated
+            messageId: process-path-management-ProcessPathUpdated
           - name: ProcessPathDeactivated
             title: ProcessPathDeactivated
             summary: Process-path catalogue event ProcessPathDeactivated (consumed).
@@ -6174,7 +6227,7 @@ channels:
                     urn:warehouse:process-path-management:events:ProcessPathDeactivated:v1
                   data:
                     path_id: PICK
-            messageId: ProcessPathDeactivated
+            messageId: process-path-management-ProcessPathDeactivated
   warehouse.product-master.events:
     description: |
       This service's integration topic. Written by the outbox relay; key = SKU;
@@ -6408,7 +6461,7 @@ channels:
                     dot_hazard_class: 3
                     classification_source: native
                     version: 3
-            messageId: ProductClassified
+            messageId: product-master-ProductClassified
           - name: ProductPackLevelDeclared
             title: ProductPackLevelDeclared
             summary: >-
@@ -6617,7 +6670,7 @@ channels:
                       x-parser-schema-id: <anonymous-schema-391>
                   x-parser-schema-id: <anonymous-schema-387>
               x-parser-schema-id: <anonymous-schema-386>
-            messageId: ProductPackLevelDeclared
+            messageId: product-master-ProductPackLevelDeclared
           - name: ProductPackLevelRetired
             title: ProductPackLevelRetired
             summary: product-master retired a pack level of a SKU (consumed).
@@ -6769,7 +6822,7 @@ channels:
                       x-parser-schema-id: <anonymous-schema-412>
                   x-parser-schema-id: <anonymous-schema-408>
               x-parser-schema-id: <anonymous-schema-407>
-            messageId: ProductPackLevelRetired
+            messageId: product-master-ProductPackLevelRetired
   warehouse.task-interleaving.events:
     description: >
       This service's integration topic. Written by the outbox relay; key =
@@ -7038,7 +7091,7 @@ channels:
                     task_type: REPLENISH
                     location: WH1-FWD-A02-01-01-A
                     detour_m: 12
-        messageId: InterleavingHintIssued
+        messageId: task-interleaving-InterleavingHintIssued
 components:
   messages:
     TaskCompleted:
@@ -7406,7 +7459,7 @@ components:
               to_bin: WH1-FWD-AMB-A01-01-01-A
               quantity: 20
               request_ref: req-9
-      messageId: TaskCompleted
+      messageId: fulfillment-execution-TaskCompleted
     TaskCPTMissed:
       name: TaskCPTMissed
       title: TaskCPTMissed
@@ -7577,7 +7630,7 @@ components:
               order_ref: wu-8a1f
               task_type: PICK
               cpt: '2026-09-30T14:55:00Z'
-      messageId: TaskCPTMissed
+      messageId: fulfillment-execution-TaskCPTMissed
     TaskAvailable:
       name: TaskAvailable
       title: TaskAvailable
@@ -7865,7 +7918,7 @@ components:
               cpt: '2026-09-30T16:00:00Z'
               priority_band: REPLENISH:2026-09-30T16:00:00Z
               available_at: '2026-09-30T15:00:00Z'
-      messageId: TaskAvailable
+      messageId: fulfillment-execution-TaskAvailable
     TaskClaimed:
       name: TaskClaimed
       title: TaskClaimed
@@ -8044,7 +8097,7 @@ components:
               task_type: RELOCATE
               station_id: station-07
               claimed_at: '2026-09-30T15:00:00Z'
-      messageId: TaskClaimed
+      messageId: fulfillment-execution-TaskClaimed
     PackageManifested:
       name: PackageManifested
       title: PackageManifested
@@ -8053,7 +8106,8 @@ components:
         Raised alongside `LabelApplied` when the SLAM weigh-check passes
         (ADR-0025); a diverted package does not raise it. Published on
         `warehouse.fulfillment.events`, keyed by package id. Consumed by
-        order-management.
+        order-management and outbound-shipping (which needs `site_id` and `cpt`
+        to place the package on a load, ADR-0065).
       contentType: application/cloudevents+json
       tags:
         - name: package
@@ -8175,15 +8229,31 @@ components:
                     x-parser-schema-id: <anonymous-schema-77>
                   order_ref:
                     type: string
-                    description: The package's order reference.
+                    description: >-
+                      The package's order reference (its correlated task's
+                      orderRef). NOTE — de-facto shape, not a parsed contract:
+                      for order-originated work wes-work-planning releases one
+                      work unit per order line, so this de-facto reads
+                      `<order_id>-line-<n>` (ADR-0040; the trailing `-line-N`
+                      suffix is exactly what source_order_id strips, above);
+                      transfer work carries the demand id, and tasks created
+                      directly via REST/MCP carry the caller's opaque string.
+                      This service never parses it (ADR-0041, decision 3);
+                      consumers that need the order identity should read
+                      source_order_id, not parse this field.
                     x-parser-schema-id: <anonymous-schema-78>
                   site_id:
                     type: string
+                    pattern: ^[A-Z0-9]+$
                     description: >-
-                      Optional facility-layout siteCode the package ships from
-                      (ADR-0061). No source exists in the order-work chain yet,
-                      so this is omitted until a later wave lands one; never an
-                      empty string.
+                      Optional facility-layout siteCode of the fulfillment site
+                      the order named (ADR-0061, sourced by ADR-0065):
+                      WorkReleased.site_id on the order's work, kept on the PICK
+                      tasks, inherited by the rebin PACK task, and read from the
+                      manifest's SLAM task, else its PACK task. Omitted — never
+                      an empty string — when the order named none (or the value
+                      was not a valid site code); consumers must treat absent as
+                      "site unknown".
                     x-parser-schema-id: <anonymous-schema-79>
                   source_order_id:
                     type: string
@@ -8200,9 +8270,13 @@ components:
                     type: string
                     format: date-time
                     description: >-
-                      Optional RFC3339 Critical Pull Time of the manifest's SLAM
-                      task (ADR-0061) — the same SLAM-leg correlation as the
-                      on-time-to-CPT KPI. Omitted when no SLAM task correlates.
+                      Optional RFC3339 Critical Pull Time (UTC) of the manifest
+                      (ADR-0061): the CPT of its SLAM task — the same SLAM-leg
+                      correlation as the on-time-to-CPT KPI — and, when the
+                      order has no SLAM task (every customer order: its package
+                      is sealed from the rebin PACK task), the CPT of its PACK
+                      task, the order's promise date (ADR-0065). Omitted when
+                      neither task correlates.
                     x-parser-schema-id: <anonymous-schema-81>
                   weight_g:
                     type: number
@@ -8252,7 +8326,30 @@ components:
               source_order_id: order-88421
               cpt: '2026-09-30T15:30:00Z'
               weight_g: 1240.5
-      messageId: PackageManifested
+        - name: packageManifestedRebinWithSite
+          summary: >-
+            A rebin package of an order that named a fulfillment site; no SLAM
+            task exists, so cpt is the PACK task's.
+          headers:
+            content-type: application/cloudevents+json; charset=UTF-8
+            traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
+          payload:
+            specversion: '1.0'
+            id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+            source: /warehouse/fulfillment-execution
+            type: com.warehouse.wes.fulfillment-execution.package.PackageManifested
+            subject: pkg-1031
+            time: '2026-09-30T15:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:fulfillment-execution:events:PackageManifested:v1
+            data:
+              package_id: pkg-1031
+              order_ref: order-88422
+              site_id: WH1
+              source_order_id: order-88422
+              cpt: '2026-09-30T18:00:00Z'
+              weight_g: 980
+      messageId: fulfillment-execution-PackageManifested
     PackageDiverted:
       name: PackageDiverted
       title: PackageDiverted
@@ -8400,7 +8497,7 @@ components:
             dataschema: urn:warehouse:fulfillment-execution:events:PackageDiverted:v1
             data:
               package_id: p1
-      messageId: PackageDiverted
+      messageId: fulfillment-execution-PackageDiverted
     WeightDiscrepancyDetected:
       name: WeightDiscrepancyDetected
       title: WeightDiscrepancyDetected
@@ -8564,7 +8661,7 @@ components:
               package_id: p1
               expected_g: 1000
               actual_g: 1200
-      messageId: WeightDiscrepancyDetected
+      messageId: fulfillment-execution-WeightDiscrepancyDetected
     AnalyticsTaskCreated:
       name: AnalyticsTaskCreated
       title: TaskCreated
@@ -8722,7 +8819,7 @@ components:
             data:
               task_id: t1
               task_type: PICK
-      messageId: AnalyticsTaskCreated
+      messageId: fulfillment-execution-AnalyticsTaskCreated
     AnalyticsTaskClaimed:
       name: AnalyticsTaskClaimed
       title: TaskClaimed
@@ -8887,7 +8984,7 @@ components:
               task_id: t1
               task_type: PICK
               station_id: s1
-      messageId: AnalyticsTaskClaimed
+      messageId: fulfillment-execution-AnalyticsTaskClaimed
     AnalyticsLeaseExpired:
       name: AnalyticsLeaseExpired
       title: LeaseExpired
@@ -9046,7 +9143,7 @@ components:
             data:
               task_id: t1
               task_type: PICK
-      messageId: AnalyticsLeaseExpired
+      messageId: fulfillment-execution-AnalyticsLeaseExpired
     AnalyticsTaskCompleted:
       name: AnalyticsTaskCompleted
       title: TaskCompleted
@@ -9232,7 +9329,7 @@ components:
               station_id: s1
               order_ref: order-1
               line_no: 2
-      messageId: AnalyticsTaskCompleted
+      messageId: fulfillment-execution-AnalyticsTaskCompleted
     AnalyticsItemPicked:
       name: AnalyticsItemPicked
       title: ItemPicked
@@ -9390,7 +9487,7 @@ components:
             data:
               task_id: t1
               task_type: PICK
-      messageId: AnalyticsItemPicked
+      messageId: fulfillment-execution-AnalyticsItemPicked
     AnalyticsPackageSealed:
       name: AnalyticsPackageSealed
       title: PackageSealed
@@ -9613,7 +9710,7 @@ components:
                 width_mm: 300
                 height_mm: 200
                 weight_g: 6500
-      messageId: AnalyticsPackageSealed
+      messageId: fulfillment-execution-AnalyticsPackageSealed
     AnalyticsWeightDiscrepancyDetected:
       name: AnalyticsWeightDiscrepancyDetected
       title: WeightDiscrepancyDetected
@@ -9778,7 +9875,7 @@ components:
               package_id: p1
               expected_g: 1000
               actual_g: 1200
-      messageId: AnalyticsWeightDiscrepancyDetected
+      messageId: fulfillment-execution-AnalyticsWeightDiscrepancyDetected
     AnalyticsLabelApplied:
       name: AnalyticsLabelApplied
       title: LabelApplied
@@ -9922,7 +10019,7 @@ components:
             dataschema: urn:warehouse:fulfillment-execution:analytics:LabelApplied:v1
             data:
               package_id: p1
-      messageId: AnalyticsLabelApplied
+      messageId: fulfillment-execution-AnalyticsLabelApplied
     AnalyticsPackageDiverted:
       name: AnalyticsPackageDiverted
       title: PackageDiverted
@@ -10068,7 +10165,7 @@ components:
             dataschema: urn:warehouse:fulfillment-execution:analytics:PackageDiverted:v1
             data:
               package_id: p1
-      messageId: AnalyticsPackageDiverted
+      messageId: fulfillment-execution-AnalyticsPackageDiverted
     AnalyticsPackageManifested:
       name: AnalyticsPackageManifested
       title: PackageManifested
@@ -10257,7 +10354,7 @@ components:
               station_id: station-09
               on_time: true
               resolved: true
-      messageId: AnalyticsPackageManifested
+      messageId: fulfillment-execution-AnalyticsPackageManifested
     WorkReleased:
       name: WorkReleased
       title: WorkReleased
@@ -10775,7 +10872,7 @@ components:
                 to_bin: WH1-FWD-AMB-A01-01-01-A
                 quantity: 24
                 priority: URGENT
-      messageId: WorkReleased
+      messageId: wes-work-planning-WorkReleased
     TransferPicked:
       name: TransferPicked
       title: TransferPicked
@@ -10963,7 +11060,7 @@ components:
             traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
           payload:
             specversion: '1.0'
-            id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+            id: 3f5e1a2c-4b6d-4c7e-8d9f-0a1b2c3d4e5f
             source: /warehouse/fulfillment-execution
             type: com.warehouse.wes.fulfillment-execution.transfer.TransferPicked
             subject: task-tr-8a1f
@@ -10979,7 +11076,7 @@ components:
               site_id: site-north
               sku: SKU-0042
               quantity: 12
-      messageId: TransferPicked
+      messageId: fulfillment-execution-TransferPicked
     TransferDispatched:
       name: TransferDispatched
       title: TransferDispatched
@@ -11163,24 +11260,24 @@ components:
             traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
           payload:
             specversion: '1.0'
-            id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+            id: 4a6f2b3d-5c7e-4d8f-9e0a-1b2c3d4e5f60
             source: /warehouse/fulfillment-execution
             type: >-
               com.warehouse.wes.fulfillment-execution.transfer.TransferDispatched
-            subject: task-tr-8a1f
-            time: '2026-10-06T15:04:05Z'
+            subject: task-tr-8a1f-dsp
+            time: '2026-10-06T18:42:10Z'
             datacontenttype: application/json
             dataschema: urn:warehouse:fulfillment-execution:events:TransferDispatched:v1
             data:
               transfer_ref: tr-9f2a
               demand_id: demand-77
               work_unit_id: wu-tr-8a1f
-              task_id: task-tr-8a1f
+              task_id: task-tr-8a1f-dsp
               work_kind: TRANSFER_DISPATCH
               site_id: site-north
               sku: SKU-0042
               quantity: 12
-      messageId: TransferDispatched
+      messageId: fulfillment-execution-TransferDispatched
     TransferArrived:
       name: TransferArrived
       title: TransferArrived
@@ -11365,23 +11462,23 @@ components:
             traceparent: 00-8812c36621d214139a08949823716b93-14ddf02dbd8913ba-01
           payload:
             specversion: '1.0'
-            id: 6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b
+            id: 5b703c4e-6d8f-4e90-af1b-2c3d4e5f6071
             source: /warehouse/fulfillment-execution
             type: com.warehouse.wes.fulfillment-execution.transfer.TransferArrived
-            subject: task-tr-8a1f
-            time: '2026-10-06T15:04:05Z'
+            subject: task-tr-8a1f-arv
+            time: '2026-10-07T08:15:30Z'
             datacontenttype: application/json
             dataschema: urn:warehouse:fulfillment-execution:events:TransferArrived:v1
             data:
               transfer_ref: tr-9f2a
               demand_id: demand-77
               work_unit_id: wu-tr-8a1f
-              task_id: task-tr-8a1f
+              task_id: task-tr-8a1f-arv
               work_kind: TRANSFER_ARRIVAL
               site_id: site-south
               sku: SKU-0042
               quantity: 12
-      messageId: TransferArrived
+      messageId: fulfillment-execution-TransferArrived
     ProcessPathCreated:
       name: ProcessPathCreated
       title: ProcessPathCreated
@@ -11552,7 +11649,7 @@ components:
               direct: true
               required_capabilities:
                 - pick
-      messageId: ProcessPathCreated
+      messageId: process-path-management-ProcessPathCreated
     ProcessPathUpdated:
       name: ProcessPathUpdated
       title: ProcessPathUpdated
@@ -11724,7 +11821,7 @@ components:
               required_capabilities:
                 - pick
                 - hazmat
-      messageId: ProcessPathUpdated
+      messageId: process-path-management-ProcessPathUpdated
     ProcessPathDeactivated:
       name: ProcessPathDeactivated
       title: ProcessPathDeactivated
@@ -11892,7 +11989,7 @@ components:
               urn:warehouse:process-path-management:events:ProcessPathDeactivated:v1
             data:
               path_id: PICK
-      messageId: ProcessPathDeactivated
+      messageId: process-path-management-ProcessPathDeactivated
     ProductPackLevelDeclared:
       name: ProductPackLevelDeclared
       title: ProductPackLevelDeclared
@@ -12097,7 +12194,7 @@ components:
                 x-parser-schema-id: <anonymous-schema-391>
             x-parser-schema-id: <anonymous-schema-387>
         x-parser-schema-id: <anonymous-schema-386>
-      messageId: ProductPackLevelDeclared
+      messageId: product-master-ProductPackLevelDeclared
     ProductPackLevelRetired:
       name: ProductPackLevelRetired
       title: ProductPackLevelRetired
@@ -12247,7 +12344,7 @@ components:
                 x-parser-schema-id: <anonymous-schema-412>
             x-parser-schema-id: <anonymous-schema-408>
         x-parser-schema-id: <anonymous-schema-407>
-      messageId: ProductPackLevelRetired
+      messageId: product-master-ProductPackLevelRetired
     ProductClassified:
       name: ProductClassified
       title: ProductClassified
@@ -12452,7 +12549,7 @@ components:
               dot_hazard_class: 3
               classification_source: native
               version: 3
-      messageId: ProductClassified
+      messageId: product-master-ProductClassified
     InterleavingHintIssued:
       name: InterleavingHintIssued
       title: InterleavingHintIssued
@@ -12688,7 +12785,7 @@ components:
                   task_type: REPLENISH
                   location: WH1-FWD-A02-01-01-A
                   detour_m: 12
-      messageId: InterleavingHintIssued
+      messageId: task-interleaving-InterleavingHintIssued
     WorkBatchFormed:
       x-no-consumer-reason: >-
         pending: published only with PICK_BATCH_MODE on (ADR 0063); the contract
@@ -12908,7 +13005,7 @@ components:
                 - task_id: task-9c2e
                   stop_seq: 2
                   compartment: 2
-      messageId: WorkBatchFormed
+      messageId: fulfillment-execution-WorkBatchFormed
     WorkBatchCompleted:
       x-no-consumer-reason: >-
         pending: published only with PICK_BATCH_MODE on (ADR 0063); the contract
@@ -13096,7 +13193,7 @@ components:
               walk_seconds: 450
               completed_at: '2026-09-30T15:07:30Z'
               version: 3
-      messageId: WorkBatchCompleted
+      messageId: fulfillment-execution-WorkBatchCompleted
     WorkBatchAbandoned:
       x-no-consumer-reason: >-
         pending: published only with PICK_BATCH_MODE on (ADR 0063); the contract
@@ -13276,7 +13373,7 @@ components:
               member_count: 2
               abandoned_at: '2026-09-30T15:10:00Z'
               version: 3
-      messageId: WorkBatchAbandoned
+      messageId: fulfillment-execution-WorkBatchAbandoned
     AnalyticsWorkBatchFormed:
       name: AnalyticsWorkBatchFormed
       title: WorkBatchFormed
@@ -13454,7 +13551,7 @@ components:
                 x-parser-schema-id: <anonymous-schema-260>
             x-parser-schema-id: <anonymous-schema-256>
         x-parser-schema-id: <anonymous-schema-255>
-      messageId: AnalyticsWorkBatchFormed
+      messageId: fulfillment-execution-AnalyticsWorkBatchFormed
     AnalyticsWorkBatchCompleted:
       name: AnalyticsWorkBatchCompleted
       title: WorkBatchCompleted
@@ -13610,7 +13707,7 @@ components:
                 x-parser-schema-id: <anonymous-schema-276>
             x-parser-schema-id: <anonymous-schema-272>
         x-parser-schema-id: <anonymous-schema-271>
-      messageId: AnalyticsWorkBatchCompleted
+      messageId: fulfillment-execution-AnalyticsWorkBatchCompleted
     AnalyticsWorkBatchAbandoned:
       name: AnalyticsWorkBatchAbandoned
       title: WorkBatchAbandoned
@@ -13761,7 +13858,7 @@ components:
                 x-parser-schema-id: <anonymous-schema-288>
             x-parser-schema-id: <anonymous-schema-284>
         x-parser-schema-id: <anonymous-schema-283>
-      messageId: AnalyticsWorkBatchAbandoned
+      messageId: fulfillment-execution-AnalyticsWorkBatchAbandoned
   schemas:
     TransferFactData:
       type: object

@@ -42,9 +42,11 @@ info:
     with `ReplenishmentPolicyDeclared`, which is analytics-only.
 
 
-    **Consumed (ADR 0003).** `BinStockLevelChanged` (pending producer change P1)
+    **Consumed (ADR 0003).** `BinStockLevelChanged` (producer change P1, built
+    in
 
-    and `StockRelocated` from inventory-storage, `SlotPlanApproved` from
+    inventory-storage) and `StockRelocated` from inventory-storage,
+    `SlotPlanApproved` from
 
     slotting-optimization, and `ZoneRegistered`, `LocationSlotRegistered` and
 
@@ -294,7 +296,7 @@ channels:
                     policy_min: 10
                     policy_max: 60
                     requested_at: '2026-10-17T09:30:00Z'
-            messageId: ReplenishmentRequested
+            messageId: pick-face-replenishment-ReplenishmentRequested
           - x-no-consumer-reason: >-
               ledger mirror of inventory-storage's StockRelocated; consumed on
               demand
@@ -421,7 +423,7 @@ channels:
                     source_bin: WH1-RSV-A07-03-02-B
                     quantity: 24
                     completed_at: '2026-10-17T10:05:00Z'
-            messageId: ReplenishmentCompleted
+            messageId: pick-face-replenishment-ReplenishmentCompleted
           - name: ReplenishmentCancelled
             title: Replenishment cancelled
             summary: An open request was cancelled before its relocation was recorded.
@@ -543,7 +545,7 @@ channels:
                     sku: SKU-1
                     reason: ASSIGNMENT_CHANGED
                     cancelled_at: '2026-10-17T09:50:00Z'
-            messageId: ReplenishmentCancelled
+            messageId: pick-face-replenishment-ReplenishmentCancelled
   warehouse.pick-face-replenishment.analytics:
     description: >
       This service's own analytics stream (ADR 0008), written by the SAME
@@ -726,7 +728,7 @@ channels:
                     policy_min: 10
                     policy_max: 60
                     requested_at: '2026-10-17T09:30:00Z'
-            messageId: ReplenishmentRequestedAnalytics
+            messageId: pick-face-replenishment-ReplenishmentRequestedAnalytics
           - name: ReplenishmentCompleted
             title: Replenishment completed (analytics twin)
             summary: The analytics-stream twin of ReplenishmentCompleted (ADR 0008).
@@ -846,7 +848,7 @@ channels:
                     source_bin: WH1-RSV-A07-03-02-B
                     quantity: 24
                     completed_at: '2026-10-17T10:05:00Z'
-            messageId: ReplenishmentCompletedAnalytics
+            messageId: pick-face-replenishment-ReplenishmentCompletedAnalytics
           - name: ReplenishmentCancelled
             title: Replenishment cancelled (analytics twin)
             summary: The analytics-stream twin of ReplenishmentCancelled (ADR 0008).
@@ -958,7 +960,7 @@ channels:
                     sku: SKU-1
                     reason: ASSIGNMENT_CHANGED
                     cancelled_at: '2026-10-17T09:50:00Z'
-            messageId: ReplenishmentCancelledAnalytics
+            messageId: pick-face-replenishment-ReplenishmentCancelledAnalytics
           - name: ReplenishmentPolicyDeclared
             title: Replenishment policy declared
             summary: A min/max policy was declared or changed (analytics only).
@@ -1087,7 +1089,7 @@ channels:
                     multiple: 6
                     version: 1
                     declared_at: '2026-10-17T09:00:00Z'
-            messageId: ReplenishmentPolicyDeclared
+            messageId: pick-face-replenishment-ReplenishmentPolicyDeclared
   warehouse.product-master.events:
     description: |
       This service's integration topic. Written by the outbox relay; key = SKU;
@@ -1121,13 +1123,10 @@ channels:
 
               packaging view (pack level -> eaches factor for case-level scans).
 
-              NOTE: the consumer decodes camelCase keys (`unitsPerPack`,
-              `effectiveFrom`),
+              The keys are snake_case, exactly as product-master's encoder
+              writes them
 
-              while product-master's encoder writes snake_case
-              (`units_per_pack`,
-
-              `effective_from`); see the PR notes.
+              (`units_per_pack`, `effective_from`, `effective_to`).
             contentType: application/cloudevents+json
             tags:
               - name: consumed
@@ -1185,8 +1184,8 @@ channels:
                         - sku
                         - level
                         - gtin
-                        - unitsPerPack
-                        - effectiveFrom
+                        - units_per_pack
+                        - effective_from
                         - version
                       properties:
                         sku:
@@ -1214,14 +1213,11 @@ channels:
                           maximum: 1000000
                           description: Absent for EACH.
                           x-parser-schema-id: <anonymous-schema-53>
-                        unitsPerPack:
+                        units_per_pack:
                           type: integer
                           minimum: 1
                           maximum: 1000000
-                          description: >-
-                            Direct factor to eaches; 1 for EACH. The consumer
-                            decodes this camelCase key (see the product-master
-                            note in the message).
+                          description: Direct factor to eaches; 1 for EACH.
                           x-parser-schema-id: <anonymous-schema-54>
                         is_orderable:
                           type: boolean
@@ -1229,10 +1225,9 @@ channels:
                         is_despatch_unit:
                           type: boolean
                           x-parser-schema-id: <anonymous-schema-56>
-                        effectiveFrom:
+                        effective_from:
                           type: string
                           format: date-time
-                          description: camelCase key as decoded by the consumer.
                           x-parser-schema-id: <anonymous-schema-57>
                         version:
                           type: integer
@@ -1241,7 +1236,7 @@ channels:
                       x-parser-schema-id: <anonymous-schema-48>
                   x-parser-schema-id: <anonymous-schema-47>
               x-parser-schema-id: ProductPackLevelDeclaredEvent
-            messageId: ProductPackLevelDeclared
+            messageId: product-master-ProductPackLevelDeclared
           - name: ProductPackLevelRetired
             title: product-master ProductPackLevelRetired (consumed)
             summary: A pack level of a SKU was retired.
@@ -1314,7 +1309,7 @@ channels:
                         - sku
                         - level
                         - gtin
-                        - effectiveTo
+                        - effective_to
                         - version
                       properties:
                         sku:
@@ -1332,10 +1327,9 @@ channels:
                           type: string
                           pattern: ^[0-9]{14}$
                           x-parser-schema-id: <anonymous-schema-63>
-                        effectiveTo:
+                        effective_to:
                           type: string
                           format: date-time
-                          description: camelCase key as decoded by the consumer.
                           x-parser-schema-id: <anonymous-schema-64>
                         reason:
                           type: string
@@ -1352,7 +1346,7 @@ channels:
                       x-parser-schema-id: <anonymous-schema-60>
                   x-parser-schema-id: <anonymous-schema-59>
               x-parser-schema-id: ProductPackLevelRetiredEvent
-            messageId: ProductPackLevelRetired
+            messageId: product-master-ProductPackLevelRetired
   warehouse.inventory.events:
     description: >
       The outbound integration topic for this bounded context (the `Topic`
@@ -1363,8 +1357,8 @@ channels:
       `BinStockLevelChanged` (keyed by `<bin>:<sku>`, ADR 0040) and the promoted
       exception facts `DiscrepancyDetected`, `ItemUnlocated` and `ItemStowed`
       (ADR 0043 — byte-identical copies of the analytics feed, consumed by
-      exception-management and returns-processing) and the container events
-      `ContainerRegistered`, `ContainerStowed`, `CaseBroken` and
+      exception-management; `ItemStowed` has no consumer yet) and the container
+      events `ContainerRegistered`, `ContainerStowed`, `CaseBroken` and
       `ContainerEmptied` (keyed by LPN, ADR 0045/0046) and the held-stock events
       `StockHeld`, `StockReleased` and `StockDispositioned` (keyed by held unit
       id, ADR 0052). The legacy `ProductClassified` was retired at
@@ -1401,11 +1395,10 @@ channels:
               The absolute on-hand and reserved level of one SKU in one bin
               changed.
             description: >
-              PENDING PRODUCER CHANGE P1: inventory-storage does not publish
-              this type
+              Producer change P1 is built: inventory-storage publishes this type
+              (its
 
-              yet; this contract is pinned consumer-first and the producer will
-              match it.
+              ADR 0040). The contract was pinned here consumer-first.
 
               `type` =
               `com.warehouse.wms.inventory-storage.stock.BinStockLevelChanged`,
@@ -1553,7 +1546,7 @@ channels:
                     version: 17
                     reason: PICK
                     occurred_at: '2026-10-17T09:29:00Z'
-            messageId: BinStockLevelChanged
+            messageId: inventory-storage-BinStockLevelChanged
           - name: StockRelocated
             title: StockRelocated (consumed, inventory-storage)
             summary: >-
@@ -1571,13 +1564,13 @@ channels:
 
               contract (its ADR 0039), never imported. Act only when `reason` is
 
-              `REPLENISHMENT`, a value inventory-storage adds with producer
+              `REPLENISHMENT`, a value inventory-storage added with producer
               change P4
 
-              (today it publishes `SLOTTING`, `CONSOLIDATION` and `MANUAL`);
-              ignore every
+              (its ADR 0041; it also publishes `SLOTTING`, `CONSOLIDATION` and
+              `MANUAL`);
 
-              other reason.
+              ignore every other reason.
             contentType: application/cloudevents+json
             tags:
               - name: consumed
@@ -1707,7 +1700,7 @@ channels:
                     reason: REPLENISHMENT
                     source_ref: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
                     occurred_at: '2026-10-17T10:05:00Z'
-            messageId: StockRelocated
+            messageId: inventory-storage-StockRelocated
   warehouse.slotting-optimization.events:
     description: |
       This service's integration topic. Written by the outbox relay; key = plan
@@ -1902,7 +1895,7 @@ channels:
                   - sku: SKU-2
                     to_slot: WH1-FWD-A01-01-02-A
                     kind: Assign
-        messageId: SlotPlanApproved
+        messageId: slotting-optimization-SlotPlanApproved
   warehouse.facility.events:
     description: >
       The single outbound integration topic for this bounded context, named
@@ -2047,7 +2040,7 @@ channels:
                     zoneCode: RSV
                     temperatureClass: Ambient
                     hazmat: false
-            messageId: ZoneRegistered
+            messageId: facility-layout-ZoneRegistered
           - name: LocationSlotRegistered
             title: LocationSlotRegistered (consumed, facility-layout)
             summary: A coded leaf slot now exists on the warehouse map.
@@ -2182,7 +2175,7 @@ channels:
                     role: Storage
                     maxWeightKg: 800
                     maxVolumeM3: 1.2
-            messageId: LocationSlotRegistered
+            messageId: facility-layout-LocationSlotRegistered
           - name: LocationSlotDecommissioned
             title: LocationSlotDecommissioned (consumed, facility-layout)
             summary: A coded slot was permanently retired.
@@ -2279,7 +2272,7 @@ channels:
                       com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
                     occurredAt: '2026-10-01T08:00:00Z'
                     locationCode: WH1-RSV-A07-03-03-B
-            messageId: LocationSlotDecommissioned
+            messageId: facility-layout-LocationSlotDecommissioned
 components:
   messages:
     ReplenishmentRequested:
@@ -2431,7 +2424,7 @@ components:
               policy_min: 10
               policy_max: 60
               requested_at: '2026-10-17T09:30:00Z'
-      messageId: ReplenishmentRequested
+      messageId: pick-face-replenishment-ReplenishmentRequested
     ReplenishmentCompleted:
       x-no-consumer-reason: ledger mirror of inventory-storage's StockRelocated; consumed on demand
       name: ReplenishmentCompleted
@@ -2553,7 +2546,7 @@ components:
               source_bin: WH1-RSV-A07-03-02-B
               quantity: 24
               completed_at: '2026-10-17T10:05:00Z'
-      messageId: ReplenishmentCompleted
+      messageId: pick-face-replenishment-ReplenishmentCompleted
     ReplenishmentCancelled:
       name: ReplenishmentCancelled
       title: Replenishment cancelled
@@ -2673,7 +2666,7 @@ components:
               sku: SKU-1
               reason: ASSIGNMENT_CHANGED
               cancelled_at: '2026-10-17T09:50:00Z'
-      messageId: ReplenishmentCancelled
+      messageId: pick-face-replenishment-ReplenishmentCancelled
     ReplenishmentPolicyDeclared:
       name: ReplenishmentPolicyDeclared
       title: Replenishment policy declared
@@ -2801,7 +2794,7 @@ components:
               multiple: 6
               version: 1
               declared_at: '2026-10-17T09:00:00Z'
-      messageId: ReplenishmentPolicyDeclared
+      messageId: pick-face-replenishment-ReplenishmentPolicyDeclared
     ReplenishmentRequestedAnalytics:
       name: ReplenishmentRequested
       title: Replenishment requested (analytics twin)
@@ -2941,7 +2934,7 @@ components:
               policy_min: 10
               policy_max: 60
               requested_at: '2026-10-17T09:30:00Z'
-      messageId: ReplenishmentRequestedAnalytics
+      messageId: pick-face-replenishment-ReplenishmentRequestedAnalytics
     ReplenishmentCompletedAnalytics:
       name: ReplenishmentCompleted
       title: Replenishment completed (analytics twin)
@@ -3060,7 +3053,7 @@ components:
               source_bin: WH1-RSV-A07-03-02-B
               quantity: 24
               completed_at: '2026-10-17T10:05:00Z'
-      messageId: ReplenishmentCompletedAnalytics
+      messageId: pick-face-replenishment-ReplenishmentCompletedAnalytics
     ReplenishmentCancelledAnalytics:
       name: ReplenishmentCancelled
       title: Replenishment cancelled (analytics twin)
@@ -3171,16 +3164,15 @@ components:
               sku: SKU-1
               reason: ASSIGNMENT_CHANGED
               cancelled_at: '2026-10-17T09:50:00Z'
-      messageId: ReplenishmentCancelledAnalytics
+      messageId: pick-face-replenishment-ReplenishmentCancelledAnalytics
     BinStockLevelChanged:
       name: BinStockLevelChanged
       title: BinStockLevelChanged (consumed, inventory-storage)
       summary: The absolute on-hand and reserved level of one SKU in one bin changed.
       description: >
-        PENDING PRODUCER CHANGE P1: inventory-storage does not publish this type
+        Producer change P1 is built: inventory-storage publishes this type (its
 
-        yet; this contract is pinned consumer-first and the producer will match
-        it.
+        ADR 0040). The contract was pinned here consumer-first.
 
         `type` =
         `com.warehouse.wms.inventory-storage.stock.BinStockLevelChanged`,
@@ -3317,7 +3309,7 @@ components:
               version: 17
               reason: PICK
               occurred_at: '2026-10-17T09:29:00Z'
-      messageId: BinStockLevelChanged
+      messageId: inventory-storage-BinStockLevelChanged
     StockRelocated:
       name: StockRelocated
       title: StockRelocated (consumed, inventory-storage)
@@ -3334,12 +3326,12 @@ components:
 
         contract (its ADR 0039), never imported. Act only when `reason` is
 
-        `REPLENISHMENT`, a value inventory-storage adds with producer change P4
+        `REPLENISHMENT`, a value inventory-storage added with producer change P4
 
-        (today it publishes `SLOTTING`, `CONSOLIDATION` and `MANUAL`); ignore
-        every
+        (its ADR 0041; it also publishes `SLOTTING`, `CONSOLIDATION` and
+        `MANUAL`);
 
-        other reason.
+        ignore every other reason.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -3465,7 +3457,7 @@ components:
               reason: REPLENISHMENT
               source_ref: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
               occurred_at: '2026-10-17T10:05:00Z'
-      messageId: StockRelocated
+      messageId: inventory-storage-StockRelocated
     SlotPlanApproved:
       name: SlotPlanApproved
       title: SlotPlanApproved (consumed, slotting-optimization)
@@ -3631,7 +3623,7 @@ components:
                 - sku: SKU-2
                   to_slot: WH1-FWD-A01-01-02-A
                   kind: Assign
-      messageId: SlotPlanApproved
+      messageId: slotting-optimization-SlotPlanApproved
     ZoneRegistered:
       name: ZoneRegistered
       title: ZoneRegistered (consumed, facility-layout)
@@ -3750,7 +3742,7 @@ components:
               zoneCode: RSV
               temperatureClass: Ambient
               hazmat: false
-      messageId: ZoneRegistered
+      messageId: facility-layout-ZoneRegistered
     LocationSlotRegistered:
       name: LocationSlotRegistered
       title: LocationSlotRegistered (consumed, facility-layout)
@@ -3881,7 +3873,7 @@ components:
               role: Storage
               maxWeightKg: 800
               maxVolumeM3: 1.2
-      messageId: LocationSlotRegistered
+      messageId: facility-layout-LocationSlotRegistered
     LocationSlotDecommissioned:
       name: LocationSlotDecommissioned
       title: LocationSlotDecommissioned (consumed, facility-layout)
@@ -3975,7 +3967,7 @@ components:
                 com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned
               occurredAt: '2026-10-01T08:00:00Z'
               locationCode: WH1-RSV-A07-03-03-B
-      messageId: LocationSlotDecommissioned
+      messageId: facility-layout-LocationSlotDecommissioned
     ProductPackLevelDeclared:
       name: ProductPackLevelDeclared
       title: product-master ProductPackLevelDeclared (consumed)
@@ -3995,12 +3987,9 @@ components:
 
         packaging view (pack level -> eaches factor for case-level scans).
 
-        NOTE: the consumer decodes camelCase keys (`unitsPerPack`,
-        `effectiveFrom`),
+        The keys are snake_case, exactly as product-master's encoder writes them
 
-        while product-master's encoder writes snake_case (`units_per_pack`,
-
-        `effective_from`); see the PR notes.
+        (`units_per_pack`, `effective_from`, `effective_to`).
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -4056,8 +4045,8 @@ components:
                   - sku
                   - level
                   - gtin
-                  - unitsPerPack
-                  - effectiveFrom
+                  - units_per_pack
+                  - effective_from
                   - version
                 properties:
                   sku:
@@ -4085,14 +4074,11 @@ components:
                     maximum: 1000000
                     description: Absent for EACH.
                     x-parser-schema-id: <anonymous-schema-53>
-                  unitsPerPack:
+                  units_per_pack:
                     type: integer
                     minimum: 1
                     maximum: 1000000
-                    description: >-
-                      Direct factor to eaches; 1 for EACH. The consumer decodes
-                      this camelCase key (see the product-master note in the
-                      message).
+                    description: Direct factor to eaches; 1 for EACH.
                     x-parser-schema-id: <anonymous-schema-54>
                   is_orderable:
                     type: boolean
@@ -4100,10 +4086,9 @@ components:
                   is_despatch_unit:
                     type: boolean
                     x-parser-schema-id: <anonymous-schema-56>
-                  effectiveFrom:
+                  effective_from:
                     type: string
                     format: date-time
-                    description: camelCase key as decoded by the consumer.
                     x-parser-schema-id: <anonymous-schema-57>
                   version:
                     type: integer
@@ -4112,7 +4097,7 @@ components:
                 x-parser-schema-id: <anonymous-schema-48>
             x-parser-schema-id: <anonymous-schema-47>
         x-parser-schema-id: ProductPackLevelDeclaredEvent
-      messageId: ProductPackLevelDeclared
+      messageId: product-master-ProductPackLevelDeclared
     ProductPackLevelRetired:
       name: ProductPackLevelRetired
       title: product-master ProductPackLevelRetired (consumed)
@@ -4184,7 +4169,7 @@ components:
                   - sku
                   - level
                   - gtin
-                  - effectiveTo
+                  - effective_to
                   - version
                 properties:
                   sku:
@@ -4202,10 +4187,9 @@ components:
                     type: string
                     pattern: ^[0-9]{14}$
                     x-parser-schema-id: <anonymous-schema-63>
-                  effectiveTo:
+                  effective_to:
                     type: string
                     format: date-time
-                    description: camelCase key as decoded by the consumer.
                     x-parser-schema-id: <anonymous-schema-64>
                   reason:
                     type: string
@@ -4220,7 +4204,7 @@ components:
                 x-parser-schema-id: <anonymous-schema-60>
             x-parser-schema-id: <anonymous-schema-59>
         x-parser-schema-id: ProductPackLevelRetiredEvent
-      messageId: ProductPackLevelRetired
+      messageId: product-master-ProductPackLevelRetired
   schemas:
     ProductPackLevelDeclaredEvent:
       allOf:
@@ -4274,8 +4258,8 @@ components:
                 - sku
                 - level
                 - gtin
-                - unitsPerPack
-                - effectiveFrom
+                - units_per_pack
+                - effective_from
                 - version
               properties:
                 sku:
@@ -4303,14 +4287,11 @@ components:
                   maximum: 1000000
                   description: Absent for EACH.
                   x-parser-schema-id: <anonymous-schema-53>
-                unitsPerPack:
+                units_per_pack:
                   type: integer
                   minimum: 1
                   maximum: 1000000
-                  description: >-
-                    Direct factor to eaches; 1 for EACH. The consumer decodes
-                    this camelCase key (see the product-master note in the
-                    message).
+                  description: Direct factor to eaches; 1 for EACH.
                   x-parser-schema-id: <anonymous-schema-54>
                 is_orderable:
                   type: boolean
@@ -4318,10 +4299,9 @@ components:
                 is_despatch_unit:
                   type: boolean
                   x-parser-schema-id: <anonymous-schema-56>
-                effectiveFrom:
+                effective_from:
                   type: string
                   format: date-time
-                  description: camelCase key as decoded by the consumer.
                   x-parser-schema-id: <anonymous-schema-57>
                 version:
                   type: integer
@@ -4382,7 +4362,7 @@ components:
                 - sku
                 - level
                 - gtin
-                - effectiveTo
+                - effective_to
                 - version
               properties:
                 sku:
@@ -4400,10 +4380,9 @@ components:
                   type: string
                   pattern: ^[0-9]{14}$
                   x-parser-schema-id: <anonymous-schema-63>
-                effectiveTo:
+                effective_to:
                   type: string
                   format: date-time
-                  description: camelCase key as decoded by the consumer.
                   x-parser-schema-id: <anonymous-schema-64>
                 reason:
                   type: string

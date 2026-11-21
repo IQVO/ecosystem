@@ -210,6 +210,17 @@ export const CONTEXTS = {
       "Shift planning and labor assignment. Stops deliberately at the process-path boundary: it assigns people to paths, it does not plan work.",
     topics: ["warehouse.workforce.events", "warehouse.workforce.analytics"],
   },
+  // WCS tier (warehouse-docs wcs/): subsystem controllers below the WES, CloudEvents segment wes.
+  // equipment-emulator (the simulated AMRs and AS/RS behind them) is test infrastructure, not a
+  // bounded context, and is deliberately not catalogued.
+  'asrs-control': {
+    subdomain: 'wes',
+    classification: 'Generic',
+    tier: 'WES, WCS subsystem controller',
+    purpose:
+      "Store and retrieve containers in the automated storage and retrieval system at the throughput the WCS needs, and own where each container sits inside the rack: position assignment, one storage job per aisle at a time, port presentation, reshuffles and PackML equipment state, over a telegram protocol on MQTT to the shuttles and lifts. To the WMS the whole AS/RS is one logical location; no rack position is ever published.",
+    topics: ["warehouse.asrs-control.events", "warehouse.asrs-control.analytics"],
+  },
   // --- Retail Network (separate organization; see SUBDOMAINS['retail-network']) ---
   'node-topology': {
     subdomain: 'retail-network',
@@ -219,6 +230,15 @@ export const CONTEXTS = {
     purpose:
       "The authoritative registry of the network's physical shape: every node (vendor fulfillment centres, cross-docks, returns centres, and the network's own sortation centres, delivery stations and air hubs), its declared operational profile, the directed lanes between nodes, the regions, and which delivery station serves which postal area.",
     topics: ["retailnetwork.node-topology.events"],
+  },
+  'customer-returns': {
+    subdomain: 'retail-network',
+    ceSegment: 'commerce',
+    classification: 'Supporting',
+    tier: 'Retail Network, commerce tier',
+    purpose:
+      "The shopper-facing return authorization of the retail network: a return is authorized with its disposition decided at authorization (KEEP returnless below a caller-declared threshold, NEAREST_RETURNS_CENTER, ORIGIN_NODE), the reverse label comes from shipping-and-tracking, returns-processing receives the advices and grades the outcome, and offer-availability restocks the sellable units. Fees are recorded as facts, never money; doorstep pickup is dormant until last-mile carries it.",
+    topics: ["retailnetwork.customer-returns.events"],
   },
   'offer-availability': {
     subdomain: 'retail-network',

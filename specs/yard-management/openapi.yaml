@@ -20,7 +20,14 @@ info:
 
     Sites are addressed by siteCode and doors and spots by their facility-layout locationCode (globally unique). Errors are RFC 7807 problem documents
     with `type = https://errors.yard-management.warehouse-systems.dev/<slug>`, the slug being the kebab-case of the domain error name (`ErrLocationOccupied`
-    is `location-occupied`). There is no authentication layer (fleet decision 2026-09-11).'
+    is `location-occupied`). There is no authentication layer (fleet decision 2026-09-11).
+
+
+    Three problem types belong to no single operation. A path that matches no route, or one that carries a NUL character, is a 404 `resource-not-found`.
+    A method that a path does not take is a 405 `method-not-allowed`, with an `Allow` header that lists the methods the path does take. Every
+    command (each POST and PUT except the two sweeps) can answer 409 `concurrent-modification` when another request changed the same aggregate
+    first (the optimistic `version` guard, ADR 0008): nothing is persisted, and the refusal is not stored under the Idempotency-Key of the request (replay
+    class RETRYABLE, ADR 0019), so read the resource again and retry, with the same key or a new one.'
 servers:
 - url: http://localhost:8080
   description: Local development
@@ -101,7 +108,10 @@ paths:
         a hazard class is placed only on a HAZMAT spot (a site with none refuses it, unless the policy sets `allowHazmatOnUnclassifiedSpots`, then
         only spots whose kind is unknown); a trailer that requires temperature control only on a REEFER_PLUG spot where the site has any. A site
         with no suitable free spot answers 409 `no-free-spot` (all taken) or `placement-rule-violated` (none exists); doors are exempt; a trailer
-        that declares nothing, and a spot with no known kind, are judged as before. The gate clerk may then record the refusal with `POST /visit-rejections`.'
+        that declares nothing, and a spot with no known kind, are judged as before. The gate clerk may then record the refusal with `POST /visit-rejections`.
+        A carrier that dock-scheduling has suspended (the local copy of its registry, ADR 0016) is handled by the site yard policy `suspendedCarrierAction`:
+        NONE admits the visit as before; FLAG admits it and sets the visit `carrierFlag` to SUSPENDED; REJECT records a REJECTED visit (reason CARRIER_SUSPENDED,
+        VisitRejected published, no trailer persisted) and answers 409 `carrier-suspended`, so that turn-away is on record although the call is a 409.'
       tags:
       - Visits
       parameters:
@@ -152,7 +162,7 @@ paths:
       operationId: listVisits
       summary: List visits
       description: 'Lists visits newest first, one keyset page at a time (`limit` 1-500, default 100; `cursor` is the opaque `nextCursor` of the
-        previous page). Filters: `siteId`, `state`, `tractorPlate`.'
+        previous page). Filters: `siteId`, `state`, `tractorPlate`. A query parameter this operation does not define is a 400 `unknown-query-parameter`.'
       tags:
       - Visits
       parameters:
@@ -165,7 +175,7 @@ paths:
       - name: state
         in: query
         required: false
-        description: CHECKED_IN, CHECKED_OUT or REJECTED.
+        description: CHECKED_IN, CHECKED_OUT or REJECTED. Any other non-empty value is a 400 `invalid-state`.
         schema:
           type: string
           enum:
@@ -331,7 +341,7 @@ paths:
       operationId: listTrailers
       summary: List trailers
       description: 'Lists trailers by arrival, one keyset page at a time. Filters: `siteId`, `state` (default: not DEPARTED), `kind`, `locationCode`,
-        `unitNumber`, `visitId` (the visit the trailer is attached to: the one that brought it, until a later visit takes it).'
+        `unitNumber`, `visitId` (the visit the trailer is attached to: the one that brought it, until a later visit takes it). A query parameter this operation does not define is a 400 `unknown-query-parameter`.'
       tags:
       - Trailers
       parameters:
@@ -344,7 +354,7 @@ paths:
       - name: state
         in: query
         required: false
-        description: PARKED, IN_MOVE, DOCKED or DEPARTED.
+        description: PARKED, IN_MOVE, DOCKED or DEPARTED. Any other non-empty value is a 400 `invalid-state`.
         schema:
           type: string
           enum:
@@ -355,7 +365,7 @@ paths:
       - name: kind
         in: query
         required: false
-        description: Trailer kind.
+        description: Trailer kind. A non-empty value outside the enumeration is a 400 `invalid-state`.
         schema:
           type: string
           enum:
@@ -864,7 +874,7 @@ paths:
     get:
       operationId: listTrailerInspections
       summary: List the inspections of a trailer
-      description: 'Lists the inspections of one trailer, newest first, one keyset page at a time (ADR 0015). 404 `trailer-not-found` for an unknown trailer.'
+      description: 'Lists the inspections of one trailer, newest first, one keyset page at a time (ADR 0015). 404 `trailer-not-found` for an unknown trailer. A query parameter this operation does not define is a 400 `unknown-query-parameter`.'
       tags:
       - Inspections
       parameters:
@@ -958,7 +968,7 @@ paths:
       operationId: listMoves
       summary: List moves
       description: 'Lists moves oldest first, one keyset page at a time. Filters: `siteId`, `state`, `trailerId`, `hostlerRef` (the moves a hostler holds
-        or held).'
+        or held). A query parameter this operation does not define is a 400 `unknown-query-parameter`.'
       tags:
       - Moves
       parameters:
@@ -971,7 +981,7 @@ paths:
       - name: state
         in: query
         required: false
-        description: REQUESTED, CLAIMED, COMPLETED or CANCELLED.
+        description: REQUESTED, CLAIMED, COMPLETED or CANCELLED. Any other non-empty value is a 400 `invalid-state`.
         schema:
           type: string
           enum:
@@ -1278,7 +1288,7 @@ paths:
       operationId: listInspectionTemplates
       summary: List the inspection templates
       description: 'Lists the LATEST version of every template, by id, one keyset page at a time: the built-in ones (`tractor-trailer-17-point`, `empty-container-7-point`, `reefer-pre-cool-and-sanitation`,
-        read-only, `builtIn` true) and the ones a site published (ADR 0015).'
+        read-only, `builtIn` true) and the ones a site published (ADR 0015). A query parameter this operation does not define is a 400 `unknown-query-parameter`.'
       tags:
       - Inspections
       parameters:
@@ -1594,7 +1604,7 @@ paths:
       operationId: getYardPolicy
       summary: Get the yard policy
       description: 'Answers the declared policy, or the default one (`declared` false) for a site that never declared one: appointments not required,
-        seal mismatch FLAG, lease 300 s, no detention free time.'
+        seal mismatch FLAG, lease 300 s, no detention free time. An unknown site is not an error; the only 404 is `resource-not-found` (a NUL character in the path).'
       tags:
       - Yard policy
       parameters:
@@ -1629,6 +1639,7 @@ paths:
                   REEFER: 720
                 leaseSeconds: 300
                 sealMismatchAction: FLAG
+                suspendedCarrierAction: NONE
                 freeTimeMinutes: 120
                 minimumSealClass: null
                 requireSecuringBeforeDoorWork: false
@@ -1644,6 +1655,8 @@ paths:
                 declared: true
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
     put:
@@ -1651,6 +1664,7 @@ paths:
       summary: Declare the yard policy (DeclareYardPolicy)
       description: Replaces the policy of the site. Holding spots must be known Yard slots of the site (422 `unknown-location`); thresholds and
         lease must be positive (422 `validation`). `If-Match` makes the replacement conditional on the policy version (412 `precondition-failed`).
+        The only 404 is `resource-not-found` (a NUL character in the path).
       tags:
       - Yard policy
       parameters:
@@ -1694,6 +1708,7 @@ paths:
                   REEFER: 720
                 leaseSeconds: 300
                 sealMismatchAction: FLAG
+                suspendedCarrierAction: NONE
                 freeTimeMinutes: 120
                 minimumSealClass: null
                 requireSecuringBeforeDoorWork: false
@@ -1709,6 +1724,8 @@ paths:
                 declared: true
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '412':
@@ -1722,7 +1739,8 @@ paths:
       operationId: sweepDwell
       summary: Run the dwell sweep (DwellSweep)
       description: Raises TrailerDwellExceeded once per trailer and threshold crossing (the trailer remembers the highest threshold alerted).
-        Naturally idempotent; run by a CronJob.
+        Naturally idempotent; run by a CronJob. A trailer that another request changed meanwhile is skipped (the next sweep sees it), so the
+        sweep never answers 409 `concurrent-modification`.
       tags:
       - Sweeps
       parameters:
@@ -1754,7 +1772,8 @@ paths:
       operationId: sweepMoveLeases
       summary: Run the lease-expiry sweep (ExpireLease)
       description: Returns every CLAIMED HOSTLER move whose lease ran out to REQUESTED and the trailer to where it was (ReturnToOrigin). Naturally
-        idempotent; run by a CronJob.
+        idempotent; run by a CronJob. A move that another request changed meanwhile is skipped (the next sweep sees it), so the sweep never
+        answers 409 `concurrent-modification`.
       tags:
       - Sweeps
       parameters:
@@ -1976,7 +1995,13 @@ components:
       description: 'Caller-generated unique key (a UUID per logical submit, 1-128 printable ASCII characters) that makes a retried request safe.
         Required on every POST and PUT (400 `idempotency-key-required`; `idempotency-key-invalid` when malformed). A replay with the same key,
         method, path and body returns the original response with `Idempotency-Replayed: true`; the same key with a different method, path or body
-        is 409 `idempotency-key-reused`.'
+        is 409 `idempotency-key-reused`. What is replayed depends on the replay class of the problem type (ADR 0019). A success is replayed. A refusal
+        that cannot change for that request (a malformed or invalid field, a 404 on an id this service minted, 422 `validation`) is replayed too, and
+        so is 409 `carrier-suspended`, whose REJECTED visit was committed with it. A refusal the same request could pass later is NOT stored: the key
+        stays free and the retry runs the command again. Those are the optimistic-lock conflict 409 `concurrent-modification`, a state the aggregate
+        is not in yet (409 `visit-already-open`, 409 `trailer-on-hold`, 409 `location-occupied`), a fact that has not arrived yet (422 `unknown-location`,
+        422 `unknown-appointment`) and 404 `no-claimable-move`. A 5xx is never stored. After such a refusal the key is free, so the same key with
+        a different body is a new request, not `idempotency-key-reused`.'
       schema:
         type: string
         minLength: 1
@@ -1987,7 +2012,7 @@ components:
       required: false
       description: 'Optional on the sweeps, which are naturally idempotent (a repeat finds nothing new to do). When sent it behaves as on every other
         POST: a replay with the same key, method, path and body returns the stored answer with `Idempotency-Replayed: true`, and the same key with a
-        different request is 409 `idempotency-key-reused`.'
+        different request is 409 `idempotency-key-reused`. A refusal the same request could pass later is not stored (ADR 0019).'
       schema:
         type: string
         minLength: 1
@@ -1996,14 +2021,14 @@ components:
       name: If-Match
       in: header
       required: false
-      description: The ETag of the policy version the caller read.
+      description: The ETag of the policy version the caller read. A value that is not an entity tag of a policy version is a 400 `invalid-if-match`.
       schema:
         type: string
     Limit:
       name: limit
       in: query
       required: false
-      description: Page size, 1-500, default 100.
+      description: Page size, 1-500, default 100. Anything else is a 400 `invalid-limit`.
       schema:
         type: integer
         minimum: 1
@@ -2013,14 +2038,14 @@ components:
       name: cursor
       in: query
       required: false
-      description: The opaque `nextCursor` of the previous page.
+      description: The opaque `nextCursor` of the previous page. A non-empty value this API did not issue is a 400 `invalid-cursor`.
       schema:
         type: string
     ReportFrom:
       name: from
       in: query
       required: true
-      description: Start of the report window (RFC 3339).
+      description: Start of the report window (RFC 3339). A missing or unparsable value is a 400 `invalid-report-range`.
       schema:
         type: string
         format: date-time
@@ -2028,7 +2053,7 @@ components:
       name: to
       in: query
       required: true
-      description: End of the report window (RFC 3339), after `from`, at most 92 days later.
+      description: End of the report window (RFC 3339), after `from`, at most 92 days later. Anything else is a 400 `invalid-report-range`.
       schema:
         type: string
         format: date-time
@@ -2044,7 +2069,7 @@ components:
         default: 120
   headers:
     IdempotencyReplayed:
-      description: Present, with the value `true`, only when the answer is a replay of the stored answer of an earlier request with the same Idempotency-Key.
+      description: Present, with the value `true`, only when the answer is a replay of the stored answer of an earlier request with the same Idempotency-Key (a success or a refusal that cannot change; a refusal the same request could pass later is never stored).
       schema:
         type: string
         enum:
@@ -2055,7 +2080,9 @@ components:
         type: string
   responses:
     BadRequest:
-      description: Malformed JSON body, an unknown field, a NUL byte, a missing or invalid Idempotency-Key, or an invalid path or query parameter.
+      description: Malformed JSON body, an unknown field, a NUL byte, a missing or invalid Idempotency-Key, or an invalid path or query parameter
+        (on the list operations an unknown query parameter, `limit`, `cursor` or filter value; on the reports the `from`/`to` window; on
+        the yard policy an `If-Match` that is not an entity tag).
       content:
         application/problem+json:
           schema:
@@ -2075,8 +2102,50 @@ components:
                 status: 400
                 detail: send an Idempotency-Key header
                 instance: /trailers
+            unknownQueryParameter:
+              value:
+                type: https://errors.yard-management.warehouse-systems.dev/unknown-query-parameter
+                title: Unknown query parameter
+                status: 400
+                detail: 'unknown query parameter: "colour"'
+                instance: /trailers
+            invalidLimit:
+              value:
+                type: https://errors.yard-management.warehouse-systems.dev/invalid-limit
+                title: Limit is invalid
+                status: 400
+                detail: limit must be an integer between 1 and 500
+                instance: /trailers
+            invalidCursor:
+              value:
+                type: https://errors.yard-management.warehouse-systems.dev/invalid-cursor
+                title: Cursor is invalid
+                status: 400
+                detail: cursor is not a valid page token
+                instance: /trailers
+            invalidState:
+              value:
+                type: https://errors.yard-management.warehouse-systems.dev/invalid-state
+                title: State is invalid
+                status: 400
+                detail: 'state is not one of the values of this operation: "PARKING"'
+                instance: /trailers
+            invalidIfMatch:
+              value:
+                type: https://errors.yard-management.warehouse-systems.dev/invalid-if-match
+                title: If-Match is invalid
+                status: 400
+                detail: 'If-Match is not an entity tag of a policy version: "abc"'
+                instance: /sites/WH1/yard-policy
+            invalidReportRange:
+              value:
+                type: https://errors.yard-management.warehouse-systems.dev/invalid-report-range
+                title: Report range is invalid
+                status: 400
+                detail: from and to must be RFC 3339 instants, to after from and at most 92 days later
+                instance: /reports/yard-dwell
     NotFound:
-      description: The addressed resource does not exist.
+      description: The addressed resource does not exist, or the path carries a NUL character (`resource-not-found`).
       content:
         application/problem+json:
           schema:
@@ -2138,8 +2207,17 @@ components:
                 status: 404
                 detail: no claimable move
                 instance: /moves/claims
+            resourceNotFound:
+              value:
+                type: https://errors.yard-management.warehouse-systems.dev/resource-not-found
+                title: Resource not found
+                status: 404
+                detail: no resource matches the requested path
+                instance: /trailers/trl-%00
     Conflict:
       description: The request conflicts with the state of the yard (an occupied place, an open move, an illegal transition) or reuses an Idempotency-Key.
+        On every POST and PUT except the two sweeps it is also the answer when another request changed the same aggregate first (`concurrent-modification`);
+        read the resource again and retry with a new Idempotency-Key.
       content:
         application/problem+json:
           schema:
@@ -2152,6 +2230,13 @@ components:
                 status: 409
                 detail: location is occupied
                 instance: /trailers
+            carrierSuspended:
+              value:
+                type: https://errors.yard-management.warehouse-systems.dev/carrier-suspended
+                title: The carrier is suspended
+                status: 409
+                detail: 'the carrier is suspended: SCAC ACME is suspended; visit vis-0a1b is recorded as REJECTED'
+                instance: /visits
             sealClassTooLow:
               value:
                 type: https://errors.yard-management.warehouse-systems.dev/seal-class-too-low
@@ -2208,6 +2293,13 @@ components:
                 status: 409
                 detail: the key was used with another request
                 instance: /trailers
+            concurrentModification:
+              value:
+                type: https://errors.yard-management.warehouse-systems.dev/concurrent-modification
+                title: The resource was modified by another request; re-fetch the latest version and retry
+                status: 409
+                detail: 'ports: concurrent modification'
+                instance: /moves/mv-2d3e4f50-6172-4839-8a9b-0c1d2e3f4a5b/completions
     Unprocessable:
       description: A value or reference rule failed (unknown location, appointment or inspection template, unknown inspection item, invalid carrier, invalid unit number, seal class, hazmat class or UN number, unexplained destination, validation).
       content:
@@ -2550,8 +2642,16 @@ components:
           - SEAL_MISMATCH
           - TRAILER_ALREADY_ON_SITE
           - SITE_REQUEST
+          - CARRIER_SUSPENDED
           - null
           nullable: true
+        carrierFlag:
+          type: string
+          enum:
+          - SUSPENDED
+          - null
+          nullable: true
+          description: SUSPENDED when the gate admitted the visit of a suspended carrier because the yard policy action is FLAG (ADR 0016); null otherwise.
         trailersIn:
           type: array
           items:
@@ -3185,6 +3285,13 @@ components:
           description: When true, a trailer with a hazard class may take a spot whose kind is unknown at a site that has no HAZMAT spot (ADR 0014).
             false (the default) refuses it with 409 `placement-rule-violated`. Never lets a hazmat trailer onto a spot of another kind, nor
             onto an unclassified one where the site has a HAZMAT spot.
+        suspendedCarrierAction:
+          type: string
+          enum:
+          - NONE
+          - FLAG
+          - REJECT
+          description: What the gate does with a visit of a carrier that dock-scheduling has suspended (ADR 0016). NONE admits it as before, FLAG admits it and sets the visit's `carrierFlag` to SUSPENDED, REJECT records a REJECTED visit (reason CARRIER_SUSPENDED) and answers 409 `carrier-suspended`.
         requiredInspections:
           type: array
           items:
@@ -3204,6 +3311,7 @@ components:
       - dwellThresholdMinutes
       - leaseSeconds
       - sealMismatchAction
+      - suspendedCarrierAction
       - version
       - declared
     DeclareYardPolicyRequest:
@@ -3250,6 +3358,14 @@ components:
           type: boolean
           default: false
           description: Optional. When true, a trailer with a hazard class may take a spot of unknown kind at a site with no HAZMAT spot (ADR 0014). Left out = false.
+        suspendedCarrierAction:
+          type: string
+          enum:
+          - NONE
+          - FLAG
+          - REJECT
+          default: NONE
+          description: Optional. What the gate does with a visit of a carrier that dock-scheduling has suspended (ADR 0016); see the YardPolicy field of the same name. Left out it is NONE.
         requiredInspections:
           type: array
           maxItems: 20

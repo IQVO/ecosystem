@@ -1,0 +1,68 @@
+---
+id: customer-returns-api-cancelReturn
+version: 1.0.0
+name: cancelReturn
+summary: Cancel a return (CancelReturn)
+schemaPath: ''
+badges:
+  - content: POST
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Return Authorizations'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: POST
+  path: '/return-authorizations/{authorizationId}/cancellations'
+  statusCodes:
+    - '200'
+    - '400'
+    - '404'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: POST
+---
+## Overview
+The shopper's cancellation, allowed while AUTHORIZED (before anything is in transit); publishes `ReturnCancelled` with reason `SHOPPER_REQUESTED` and answers `200` with the CANCELLED authorization. An authorization whose `expiresAt` passed untouched is cancelled by this very call with reason `EXPIRED` and also answers `200` (the lazy expiry IS the cancellation; this route never answers `authorization-expired`). Cancelling again, or after RECEIVED/CLOSED_KEEP, is `409 illegal-transition`.
+
+
+
+
+## POST `(/return-authorizations/{authorizationId}/cancellations)`
+
+### Parameters
+- **authorizationId** (path) (required): The return authorization id (`ret-<uuid>`).
+- **Idempotency-Key** (header) (required): The fleet idempotency key, 1 to 128 printable ASCII characters. A repeat with the same method, path and body replays the first response with `Idempotency-Replayed` set to true when that response is a success or `authorization-expired`. A refusal that depends on state that can change (`group-not-shipped`, `no-return-destination`, `label-unavailable`, `concurrent-update`, `illegal-transition`, `not-found`, `validation-failed`) and every 5xx is not stored -- the key is released and the same request executes again. The same key on a different request is `409 idempotency-key-reused`.
+
+
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">404 Not Found</span>
+<SchemaViewer file="response-404.json" maxHeight="500" id="response-404" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />
