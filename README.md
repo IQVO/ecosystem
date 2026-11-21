@@ -32,6 +32,11 @@ worktree. `scripts/prepare-specs.mjs` writes a normalised copy to `.generated-sp
 fleet's AsyncAPI 2.6 files lack `messageId`, use publish/subscribe inconsistently and re-declare consumed channels;
 the header of that script documents each rewrite. Payload schemas are never modified.
 
+Message ids are namespaced by the producing context: `<ctx>-<Event>` (`customer-returns-ReturnAuthorized`,
+`returns-processing-ReturnAuthorized`), so two contexts may publish the same event name without their pages
+merging. A consumer's `receives` points at the producer's id, derived from the owner of the channel it reads.
+Pre-namespacing URLs (`/docs/events/<Event>/...`) answer 301 from nginx (`nginx.legacy-event-ids.map`, frozen).
+
 Do not `rm -rf domains`: `domains/operator-experience/` is hand-written. Regenerate in place.
 
 Page bodies come from `catalog.markdown.mjs` (purpose, classification, topics, CloudEnvelope table) plus the

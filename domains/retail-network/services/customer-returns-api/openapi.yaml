@@ -1,0 +1,880 @@
+openapi: 3.0.3
+info:
+  title: Customer Returns API
+  version: 1.0.0
+  description: |
+    This is the **shopper-facing returns API** of the `customer-returns` bounded context (retail network, commerce tier): the front door through which the storefront
+    authorizes a customer order group's return, links reverse labels and cancels.
+
+    A **return authorization** covers ONE order group (`orderId` + `groupNo`) and its lines. The context decides the **disposition** itself, from its own read models:
+    `KEEP` (returnless) when the method is not PICKUP, every unit price is known and the total is within the returnless threshold; else `NEAREST_RETURNS_CENTER` when the
+    group's destination region has an ACTIVE returns centre; else `ORIGIN_NODE` when the sourcing facts named the fulfilling node; else the authorization is refused
+    (`no-return-destination`) and the shopper retries later with the same `Idempotency-Key`.
+
+    Rules of the contract:
+
+    - **The group must be SHIPPED or DELIVERED.** The OrderGroupView is fed by customer-ordering's `CustomerOrderPlaced` and the terminal `ShopperNoticeDecided`
+      families; a group that is still PROMISED (or unknown to the view, which may lag) answers `422 group-not-shipped` -- retry later, same key, same body.
+    - **Prices are the storefront's facts.** `unitPriceCents` per line is caller-declared and NEVER leaves this context (no event, no tool answer carries it). With a
+      price absent, `KEEP` can never be chosen and the authorization is returned with `pricesAbsent: true`.
+    - **`reason` is an enum** (`DEFECTIVE`, `NOT_AS_DESCRIBED`, `WRONG_ITEM`, `NOT_NEEDED`, `OTHER`) -- never free text: no event, table or log of this context carries
+      an address, a person's name, a phone number or free text. The ship-to stays in the shipping context, which issues the reverse label.
+    - **Labels.** `POST /return-authorizations/{id}/labels` asks the shipping context's `POST /return-labels` route (the one in-org call this context makes) for the
+      shopper's reverse label, links the tracking number and publishes `ReturnLabelIssued`. While that route is not configured the call answers `422 label-unavailable`:
+      a tolerant failure, never a 500. At most five packages per authorization (`packageNo` 1..5).
+    - **Method.** `DROP_OFF` (default) or `PICKUP`. PICKUP requires a window inside `[authorizedAt, expiresAt]` and is never KEEP. The pickup leg of last-mile is a later
+      wave: the window is recorded, the state machine already knows `PICKUP_FAILED`.
+    - **Expiry.** An authorization expires 30 days after it was authorized; expiry is checked lazily by the next command that touches it, never by a read
+      (ADR 0002 A4 as amended by A11): a label request cancels it and answers `422 authorization-expired`, a cancellation cancels it and answers `200`, and a
+      graded outcome cancels it before recording the outcome as a fact; the event says `EXPIRED` in every case. There is no sweeper.
+    - **No authentication** (consistent with the fleet): the storefront is the only caller and names the order in the body.
+    - Every `POST` takes `Idempotency-Key` (1 to 128 printable ASCII characters; missing is `400 idempotency-key-required`, malformed `400 idempotency-key-invalid`); a
+      repeat replays the first response with the header `Idempotency-Replayed` set to `true` when that response is final for the request: a success, and
+      `422 authorization-expired` (the lazy expiry was committed with it). A refusal that depends on state that can change is NOT stored and its key is released:
+      `group-not-shipped`, `no-return-destination`, `label-unavailable`, `concurrent-update`, `illegal-transition`, `not-found` and `validation-failed`
+      (so "retry later, same key" is true: the retry executes again, and a different body under the released key is a new request). A 5xx is never stored. The same key
+      on a different method, path or body is `409 idempotency-key-reused`.
+    - A NUL character (U+0000) is refused before anything else runs: in a path it is `404 not-found`; in a query string or a JSON body it is `422 validation-failed`,
+      and the `Idempotency-Key` of such a request is not recorded. Request bodies are decoded strictly: an unknown field, malformed JSON, trailing data or a body over
+      4 MiB is `422 validation-failed`.
+    - Errors are RFC 9457 `application/problem+json`; the shared problem types are `not-found` 404, `illegal-transition` 409, `concurrent-update` 409,
+      `validation-failed` 422, plus one slug per model `Err...` name.
+    - **Reports (ADR 0012).** `GET /reports/returns-performance` and `GET /reports/freshness` are read-only GETs served by the separate `cmd/reports` binary
+      (port 8092, behind the `/api/customer-returns/reports` Gateway route when `analytics.enabled`), from a projection of this context's own events topic. They
+      are unauthenticated like every route here, and every error is `application/problem+json`.
+    - Events (AsyncAPI `apis/asyncapi.yaml`): `ReturnAuthorized`, `ReturnLabelIssued`, `ReturnCompleted`, `ReturnCancelled` on the events topic. `GET
+      /return-authorizations/\{id\}/events` is deliberately NOT built: the audit trail IS the event stream.
+  contact:
+    name: customer-returns maintainers
+    url: https://github.com/IQVO/customer-returns
+  license:
+    name: UNLICENSED
+servers:
+  - url: http://localhost:8000/api/customer-returns
+tags:
+  - name: Return Authorizations
+    description: Authorize an order group's return, read it, label it, cancel it.
+  - name: Reports
+    description: Read-only analytics reports over the separate analytical database (ADR 0012). Served by cmd/reports (:8092), never by the api.
+paths:
+  /return-authorizations:
+    post:
+      tags:
+        - Return Authorizations
+      operationId: authorizeReturn
+      summary: Authorize a return (AuthorizeReturn)
+      description: Authorizes one order group's return and publishes `ReturnAuthorized`. The group must be SHIPPED or DELIVERED (`group-not-shipped` otherwise); the lines are resolved against the placed group (`validation-failed` on an unknown lineNo) and the disposition is decided from the read models. A repeat of the same key and body replays the first answer when it was the 201. A refusal that depends on state that can change (`group-not-shipped`, `no-return-destination`, `validation-failed`, `concurrent-update`) is not stored -- the key is released and the same key and body executes again.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizeReturnRequest'
+            example:
+              orderId: ord-51a0c9
+              groupNo: 2
+              lines:
+                - lineNo: 1
+                  unitPriceCents: 20000
+                - lineNo: 2
+                  unitPriceCents: 900
+              reason: DEFECTIVE
+      responses:
+        '201':
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          description: The authorization, decided and stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnAuthorization'
+              example:
+                authorizationId: ret-0f3a91e2
+                orderId: ord-51a0c9
+                groupNo: 2
+                reason: DEFECTIVE
+                disposition: NEAREST_RETURNS_CENTER
+                method: DROP_OFF
+                state: AUTHORIZED
+                lines:
+                  - lineNo: 1
+                    catalogItemId: sku-100
+                    quantity: 2
+                    unitPriceCents: 20000
+                    ownerRef: sel-42
+                  - lineNo: 2
+                    catalogItemId: sku-200
+                    quantity: 1
+                    unitPriceCents: 900
+                    ownerRef: sel-42
+                destinationNodeId: node-rc-1
+                originNodeId: node-fc-1
+                trackingNumbers: []
+                authorizedAt: '2026-11-14T10:00:00Z'
+                expiresAt: '2026-12-14T10:00:00Z'
+                version: 1
+                pricesAbsent: false
+        '400':
+          $ref: '#/components/responses/IdempotencyKeyProblem'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          $ref: '#/components/responses/ValidationProblem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags:
+        - Return Authorizations
+      operationId: listReturnAuthorizations
+      summary: List an order's return authorizations (ListReturnAuthorizations)
+      description: Keyset-paged, newest first. `orderId` is required; `cursor` is the previous page's `nextCursor`; `limit` is 1..100 (default 20). The MCP tool `list_return_authorizations` answers the same query.
+      parameters:
+        - name: orderId
+          in: query
+          required: true
+          description: The customer order whose authorizations to list.
+          schema:
+            type: string
+          example: ord-51a0c9
+        - name: cursor
+          in: query
+          required: false
+          description: The keyset cursor from the previous page's nextCursor; omitted means the first page.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Page size, 1..100; omitted means 20.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: One keyset page of the order's authorizations, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnAuthorizationPage'
+              example:
+                items:
+                  - authorizationId: ret-0f3a91e2
+                    orderId: ord-51a0c9
+                    groupNo: 2
+                    reason: DEFECTIVE
+                    disposition: NEAREST_RETURNS_CENTER
+                    method: DROP_OFF
+                    state: RECEIVED
+                    lines:
+                      - lineNo: 1
+                        catalogItemId: sku-100
+                        quantity: 2
+                        unitPriceCents: 20000
+                        ownerRef: sel-42
+                    destinationNodeId: node-rc-1
+                    originNodeId: node-fc-1
+                    trackingNumbers:
+                      - trk-rev-9
+                    authorizedAt: '2026-11-14T10:00:00Z'
+                    expiresAt: '2026-12-14T10:00:00Z'
+                    closedAt: '2026-11-20T09:30:00Z'
+                    version: 3
+                    pricesAbsent: false
+                nextCursor: ''
+        '400':
+          $ref: '#/components/responses/IdempotencyKeyProblem'
+        '422':
+          $ref: '#/components/responses/ValidationProblem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /return-authorizations/{authorizationId}:
+    get:
+      tags:
+        - Return Authorizations
+      operationId: getReturnAuthorization
+      summary: Read one return authorization (GetReturnAuthorization)
+      description: The authorization with its lines, disposition, labels and state. A pure read (ADR 0002 A11) that never writes; an authorization past its `expiresAt` that no command has touched yet is answered in its stored state (still `AUTHORIZED`) until the next label, cancellation or outcome expires it. The MCP tool `get_return_authorization` and the A2A skill of the same name answer the same query.
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationIdPath'
+      responses:
+        '200':
+          description: The authorization.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnAuthorization'
+              example:
+                authorizationId: ret-0f3a91e2
+                orderId: ord-51a0c9
+                groupNo: 2
+                reason: DEFECTIVE
+                disposition: KEEP
+                method: DROP_OFF
+                state: CLOSED_KEEP
+                lines:
+                  - lineNo: 1
+                    catalogItemId: sku-100
+                    quantity: 2
+                    unitPriceCents: 600
+                trackingNumbers: []
+                authorizedAt: '2026-11-14T10:00:00Z'
+                expiresAt: '2026-12-14T10:00:00Z'
+                closedAt: '2026-11-14T10:00:00Z'
+                version: 1
+                pricesAbsent: false
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /return-authorizations/{authorizationId}/cancellations:
+    post:
+      tags:
+        - Return Authorizations
+      operationId: cancelReturn
+      summary: Cancel a return (CancelReturn)
+      description: The shopper's cancellation, allowed while AUTHORIZED (before anything is in transit); publishes `ReturnCancelled` with reason `SHOPPER_REQUESTED` and answers `200` with the CANCELLED authorization. An authorization whose `expiresAt` passed untouched is cancelled by this very call with reason `EXPIRED` and also answers `200` (the lazy expiry IS the cancellation; this route never answers `authorization-expired`). Cancelling again, or after RECEIVED/CLOSED_KEEP, is `409 illegal-transition`.
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          description: The cancelled authorization.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnAuthorization'
+              example:
+                authorizationId: ret-0f3a91e2
+                orderId: ord-51a0c9
+                groupNo: 2
+                reason: DEFECTIVE
+                disposition: NEAREST_RETURNS_CENTER
+                method: DROP_OFF
+                state: CANCELLED
+                lines:
+                  - lineNo: 1
+                    catalogItemId: sku-100
+                    quantity: 2
+                    unitPriceCents: 20000
+                    ownerRef: sel-42
+                destinationNodeId: node-rc-1
+                originNodeId: node-fc-1
+                trackingNumbers: []
+                authorizedAt: '2026-11-14T10:00:00Z'
+                expiresAt: '2026-12-14T10:00:00Z'
+                closedAt: '2026-11-15T08:00:00Z'
+                version: 2
+                pricesAbsent: false
+        '400':
+          $ref: '#/components/responses/IdempotencyKeyProblem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          $ref: '#/components/responses/ValidationProblem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /return-authorizations/{authorizationId}/labels:
+    post:
+      tags:
+        - Return Authorizations
+      operationId: issueReturnLabel
+      summary: Issue the shopper's reverse label (IssueLabel)
+      description: Asks the shipping context's `POST /return-labels` route for the reverse label of `packageNo` (1..5), links the tracking number and publishes `ReturnLabelIssued`. The route is the ONE in-org call this context makes; while it is not configured (or answers anything but 200) the answer is `422 label-unavailable` -- tolerant, never a 500. Only an open physical authorization is labelable.
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueLabelRequest'
+            example:
+              packageNo: 1
+      responses:
+        '200':
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          description: The authorization with the tracking number linked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnAuthorization'
+              example:
+                authorizationId: ret-0f3a91e2
+                orderId: ord-51a0c9
+                groupNo: 2
+                reason: DEFECTIVE
+                disposition: NEAREST_RETURNS_CENTER
+                method: DROP_OFF
+                state: AUTHORIZED
+                lines:
+                  - lineNo: 1
+                    catalogItemId: sku-100
+                    quantity: 2
+                    unitPriceCents: 20000
+                    ownerRef: sel-42
+                destinationNodeId: node-rc-1
+                originNodeId: node-fc-1
+                trackingNumbers:
+                  - trk-rev-9
+                authorizedAt: '2026-11-14T10:00:00Z'
+                expiresAt: '2026-12-14T10:00:00Z'
+                version: 2
+                pricesAbsent: false
+        '400':
+          $ref: '#/components/responses/IdempotencyKeyProblem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          $ref: '#/components/responses/ValidationProblem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /healthz:
+    get:
+      tags:
+        - Return Authorizations
+      operationId: healthz
+      summary: Liveness
+      description: Always 200 while the process runs; proves nothing about the dependencies.
+      responses:
+        '200':
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /readyz:
+    get:
+      tags:
+        - Return Authorizations
+      operationId: readyz
+      summary: Readiness (drain gate)
+      description: 200 only while Postgres answers a ping AND a Kafka broker answers a metadata request (verdict cached 3s, bounded 2s); 503 with `dependency-unavailable` naming the dead dependency otherwise. Flips to 503 before shutdown drains.
+      responses:
+        '200':
+          description: Both dependencies answer.
+        '503':
+          description: At least one dependency is down; the body names it.
+  /reports/returns-performance:
+    servers:
+      - url: http://localhost:8092
+    get:
+      tags:
+        - Reports
+      operationId: getReturnsPerformanceReport
+      x-pagination-exempt: report
+      summary: Returns performance per UTC day, reason Pareto and freshness
+      description: 'Per UTC day of the business instant (`authorizedAt`, `receivedAt`): the returns authorized (a return is born authorized, so this is both "opened" and "approved"), the returns received (`ReturnCompleted`) and, over the receipts whose authorization is also projected, the p50 and p95 of `receivedAt - authorizedAt` in seconds (`null` on a day without a sample; a negative duration counts as 0). `reasonPareto` ranks the range''s authorizations by reason code, at most 5 entries; `share` is over ALL authorizations of the range. `freshness` is the projection''s lag. Days without activity are omitted, an empty range answers empty arrays. The return RATE and the refund figures are deliberately absent: their facts are not in this context''s own events (ADR 0012).'
+      parameters:
+        - $ref: '#/components/parameters/ReportFrom'
+        - $ref: '#/components/parameters/ReportTo'
+      responses:
+        '200':
+          description: The report for the range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnsPerformanceReport'
+              example:
+                from: '2026-11-14'
+                to: '2026-11-15'
+                days:
+                  - day: '2026-11-14'
+                    returnsAuthorized: 3
+                    returnsReceived: 1
+                    timeToReceiveSamples: 1
+                    timeToReceiveP50Seconds: 518400
+                    timeToReceiveP95Seconds: 518400
+                  - day: '2026-11-15'
+                    returnsAuthorized: 0
+                    returnsReceived: 2
+                    timeToReceiveSamples: 0
+                    timeToReceiveP50Seconds: null
+                    timeToReceiveP95Seconds: null
+                reasonPareto:
+                  - reason: DEFECTIVE
+                    returns: 2
+                    share: 0.6667
+                    cumulativeShare: 0.6667
+                  - reason: NOT_NEEDED
+                    returns: 1
+                    share: 0.3333
+                    cumulativeShare: 1
+                freshness:
+                  asOf: '2026-11-15T09:30:00Z'
+                  lagSeconds: 42.5
+        '400':
+          $ref: '#/components/responses/InvalidReportRange'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /reports/freshness:
+    servers:
+      - url: http://localhost:8092
+    get:
+      tags:
+        - Reports
+      operationId: getReportFreshness
+      summary: How far the analytics projection is behind
+      description: '`asOf` is the CloudEvents time of the newest event the projector applied; `lagSeconds` is now minus `asOf`, never negative. Both are `null` until the first event. The same figure is embedded in every report.'
+      responses:
+        '200':
+          description: The projection's freshness.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportFreshness'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: The fleet idempotency key, 1 to 128 printable ASCII characters. A repeat with the same method, path and body replays the first response with `Idempotency-Replayed` set to true when that response is a success or `authorization-expired`. A refusal that depends on state that can change (`group-not-shipped`, `no-return-destination`, `label-unavailable`, `concurrent-update`, `illegal-transition`, `not-found`, `validation-failed`) and every 5xx is not stored -- the key is released and the same request executes again. The same key on a different request is `409 idempotency-key-reused`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: ^[\x21-\x7E]+$
+      example: auth-51a0c9-1
+    AuthorizationIdPath:
+      name: authorizationId
+      in: path
+      required: true
+      description: The return authorization id (`ret-<uuid>`).
+      schema:
+        type: string
+        pattern: ^ret-[0-9a-f-]{8,}$
+      example: ret-0f3a91e2
+    ReportFrom:
+      name: from
+      in: query
+      required: false
+      description: First UTC day of the range, inclusive. Omitted = 29 days before `to` (a 30-day range).
+      schema:
+        type: string
+        format: date
+    ReportTo:
+      name: to
+      in: query
+      required: false
+      description: Last UTC day of the range, inclusive. Omitted = today. At most 366 days from `from`.
+      schema:
+        type: string
+        format: date
+  headers:
+    IdempotencyReplayed:
+      description: Set to the literal `true` when this response was replayed from the idempotency store; absent otherwise.
+      schema:
+        type: string
+        enum:
+          - 'true'
+  responses:
+    IdempotencyKeyProblem:
+      description: The Idempotency-Key is missing (`idempotency-key-required`), malformed (`idempotency-key-invalid`) or reused on a different request (`idempotency-key-reused`, 409); a malformed query is `validation-failed`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: idempotency-key-required
+            title: Idempotency-Key header is required
+            status: 400
+    NotFound:
+      description: No authorization exists with that id.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: not-found
+            title: Not found
+            status: 404
+    StateConflict:
+      description: The command does not fit the state (`illegal-transition`) or another request modified the resource (`concurrent-update`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: illegal-transition
+            title: Illegal transition
+            status: 409
+    ValidationProblem:
+      description: The body or the world refuses the command; `validation-failed` (malformed body, unknown line, over the line ceiling), `group-not-shipped`, `no-return-destination`, `label-unavailable` or `authorization-expired`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: group-not-shipped
+            title: The order group is not shipped or delivered yet; retry later with the same Idempotency-Key
+            status: 422
+    InvalidReportRange:
+      description: invalid-report-range. `from` or `to` is not a date (YYYY-MM-DD), `from` is after `to`, or the range exceeds 366 days.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: invalid-report-range
+            title: The report range is invalid
+            status: 400
+    InternalError:
+      description: An unexpected failure; the body never leaks the internal error.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: internal-error
+            title: Internal server error
+            status: 500
+  schemas:
+    Problem:
+      type: object
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          description: The kebab-case slug of the error category.
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+          description: Optional; safe, adapter-owned text.
+        instance:
+          type: string
+          description: The request path.
+    AuthorizeReturnRequest:
+      type: object
+      required:
+        - orderId
+        - groupNo
+        - lines
+        - reason
+      properties:
+        orderId:
+          type: string
+          description: The customer order the returned group belongs to.
+          example: ord-51a0c9
+        groupNo:
+          type: integer
+          minimum: 1
+          description: The order group being returned.
+          example: 2
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 50
+          description: The order lines to return, picked by lineNo. At most 50 lines per return.
+          items:
+            $ref: '#/components/schemas/AuthorizeLine'
+        reason:
+          type: string
+          enum:
+            - DEFECTIVE
+            - NOT_AS_DESCRIBED
+            - WRONG_ITEM
+            - NOT_NEEDED
+            - OTHER
+          description: The enum reason code; free text is never accepted (the PII rule).
+        method:
+          type: string
+          enum:
+            - DROP_OFF
+            - PICKUP
+          default: DROP_OFF
+          description: How the shopper hands the package back. PICKUP requires a window and is never KEEP.
+        pickupWindowStart:
+          type: string
+          format: date-time
+          description: Required with PICKUP; both bounds must be given and lie inside [authorizedAt, expiresAt].
+        pickupWindowEnd:
+          type: string
+          format: date-time
+          description: Required with PICKUP; both bounds must be given and lie inside [authorizedAt, expiresAt].
+    AuthorizeLine:
+      type: object
+      required:
+        - lineNo
+      properties:
+        lineNo:
+          type: integer
+          minimum: 1
+          description: The order line's lineNo, resolved against the placed group.
+          example: 1
+        unitPriceCents:
+          type: integer
+          description: Optional; the storefront-declared unit price in cents. Absent means KEEP can never be chosen (returned `pricesAbsent` true). Stored for the disposition decision only; never published.
+          example: 20000
+    IssueLabelRequest:
+      type: object
+      properties:
+        packageNo:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 1
+          description: The package the label is for; at most five packages per authorization.
+          example: 1
+    ReturnLine:
+      type: object
+      required:
+        - lineNo
+        - catalogItemId
+        - quantity
+      properties:
+        lineNo:
+          type: integer
+          example: 1
+        catalogItemId:
+          type: string
+          example: sku-100
+        quantity:
+          type: integer
+          minimum: 1
+          description: The quantity placed on that order line (eaches).
+          example: 2
+        unitPriceCents:
+          type: integer
+          description: Optional; the caller-declared price, echoed back. Never published on any event.
+          example: 20000
+        ownerRef:
+          type: string
+          description: Optional; whose stock the line took (the sourcing release's ownerRef), when known.
+          example: sel-42
+    ReturnAuthorization:
+      type: object
+      required:
+        - authorizationId
+        - orderId
+        - groupNo
+        - reason
+        - disposition
+        - method
+        - state
+        - lines
+        - trackingNumbers
+        - authorizedAt
+        - expiresAt
+        - version
+        - pricesAbsent
+      properties:
+        authorizationId:
+          type: string
+          example: ret-0f3a91e2
+        orderId:
+          type: string
+          example: ord-51a0c9
+        groupNo:
+          type: integer
+          example: 2
+        reason:
+          type: string
+          enum:
+            - DEFECTIVE
+            - NOT_AS_DESCRIBED
+            - WRONG_ITEM
+            - NOT_NEEDED
+            - OTHER
+        disposition:
+          type: string
+          enum:
+            - KEEP
+            - NEAREST_RETURNS_CENTER
+            - ORIGIN_NODE
+          description: Decided by this context at authorization; the caller never chooses it.
+        method:
+          type: string
+          enum:
+            - DROP_OFF
+            - PICKUP
+        state:
+          type: string
+          enum:
+            - AUTHORIZED
+            - IN_TRANSIT
+            - RECEIVED
+            - CLOSED_KEEP
+            - CANCELLED
+            - PICKUP_FAILED
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReturnLine'
+        destinationNodeId:
+          type: string
+          description: Optional; omitted for KEEP (no destination) and when no node is known.
+          example: node-rc-1
+        originNodeId:
+          type: string
+          description: Optional; the node that fulfilled the group, when a sourcing fact named it.
+          example: node-fc-1
+        pickupWindowStart:
+          type: string
+          format: date-time
+          description: Optional; present only for PICKUP.
+        pickupWindowEnd:
+          type: string
+          format: date-time
+          description: Optional; present only for PICKUP.
+        trackingNumbers:
+          type: array
+          items:
+            type: string
+          description: The linked reverse-label tracking numbers, in issue order; at most five.
+          example:
+            - trk-rev-9
+        authorizedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          description: authorizedAt + 30 days.
+        closedAt:
+          type: string
+          format: date-time
+          description: Optional; set by every terminal state.
+        version:
+          type: integer
+          format: int64
+          description: The aggregate version after the last change.
+        pricesAbsent:
+          type: boolean
+          description: True when at least one line had no unit price, so KEEP could never be chosen.
+    ReturnAuthorizationPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReturnAuthorization'
+        nextCursor:
+          type: string
+          description: Present when another page follows; feed it back as the cursor query parameter.
+    ReturnsPerformanceReport:
+      type: object
+      required:
+        - from
+        - to
+        - days
+        - reasonPareto
+        - freshness
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReturnsPerformanceDay'
+        reasonPareto:
+          type: array
+          maxItems: 5
+          description: The range's authorizations grouped by reason code, most frequent first (ties by reason), at most 5 entries.
+          items:
+            $ref: '#/components/schemas/ReasonShare'
+        freshness:
+          $ref: '#/components/schemas/ReportFreshness'
+    ReturnsPerformanceDay:
+      type: object
+      required:
+        - day
+        - returnsAuthorized
+        - returnsReceived
+        - timeToReceiveSamples
+        - timeToReceiveP50Seconds
+        - timeToReceiveP95Seconds
+      properties:
+        day:
+          type: string
+          format: date
+        returnsAuthorized:
+          type: integer
+          minimum: 0
+          description: Authorizations whose authorizedAt falls on the day (both "opened" and "approved").
+        returnsReceived:
+          type: integer
+          minimum: 0
+          description: Receipts (ReturnCompleted) whose receivedAt falls on the day.
+        timeToReceiveSamples:
+          type: integer
+          minimum: 0
+          description: The day's receipts whose authorization is also projected; the population of the two percentiles.
+        timeToReceiveP50Seconds:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Continuous p50 of receivedAt - authorizedAt in seconds; null without a sample.
+        timeToReceiveP95Seconds:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Continuous p95 of receivedAt - authorizedAt in seconds; null without a sample.
+    ReasonShare:
+      type: object
+      required:
+        - reason
+        - returns
+        - share
+        - cumulativeShare
+      properties:
+        reason:
+          type: string
+          description: The enum reason code of the authorization (never free text).
+        returns:
+          type: integer
+          minimum: 1
+        share:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: returns over ALL authorizations of the range.
+        cumulativeShare:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: The running sum of the shares in Pareto order.
+    ReportFreshness:
+      type: object
+      required:
+        - asOf
+        - lagSeconds
+      properties:
+        asOf:
+          type: string
+          format: date-time
+          nullable: true
+        lagSeconds:
+          type: number
+          minimum: 0
+          nullable: true

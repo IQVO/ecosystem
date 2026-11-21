@@ -1,0 +1,115 @@
+---
+id: customer-returns-api
+version: 1.0.0
+name: Customer Returns API
+summary: >-
+  REST API of customer-returns. The shopper-facing return authorization of the
+  retail network: a return is authorized with its disposition decided at
+  authorization (KEEP returnless below a caller-declared threshold,
+  NEAREST_RETURNS_CENTER, ORIGIN_NODE), the reverse label comes from
+  shipping-and-tracking, returns-processing receives the advices and grades the
+  outcome, and offer-availability restocks the sellable units.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: Customer Returns API
+badges:
+  - content: Return Authorizations
+    textColor: blue
+    backgroundColor: blue
+  - content: Reports
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: customer-returns-api-authorizeReturn
+    version: 1.0.0
+  - id: customer-returns-api-listReturnAuthorizations
+    version: 1.0.0
+  - id: customer-returns-api-getReturnAuthorization
+    version: 1.0.0
+  - id: customer-returns-api-cancelReturn
+    version: 1.0.0
+  - id: customer-returns-api-issueReturnLabel
+    version: 1.0.0
+  - id: customer-returns-api-healthz
+    version: 1.0.0
+  - id: customer-returns-api-readyz
+    version: 1.0.0
+  - id: >-
+      customer-returns-api-customer-returns-api_SERVERS_reports_returns-performance
+    version: 1.0.0
+  - id: customer-returns-api-getReturnsPerformanceReport
+    version: 1.0.0
+  - id: customer-returns-api-customer-returns-api_SERVERS_reports_freshness
+    version: 1.0.0
+  - id: customer-returns-api-getReportFreshness
+    version: 1.0.0
+---
+## Purpose
+The shopper-facing return authorization of the retail network: a return is authorized with its disposition decided at authorization (KEEP returnless below a caller-declared threshold, NEAREST_RETURNS_CENTER, ORIGIN_NODE), the reverse label comes from shipping-and-tracking, returns-processing receives the advices and grades the outcome, and offer-availability restocks the sellable units. Fees are recorded as facts, never money; doorstep pickup is dormant until last-mile carries it.
+
+| | |
+|---|---|
+| Bounded context | `customer-returns` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, commerce tier |
+| Repository | [IQVO/customer-returns](https://github.com/IQVO/customer-returns) |
+| Events | [customer-returns](/docs/services/customer-returns) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+This is the **shopper-facing returns API** of the `customer-returns` bounded context (retail network, commerce tier): the front door through which the storefront
+authorizes a customer order group's return, links reverse labels and cancels.
+
+A **return authorization** covers ONE order group (`orderId` + `groupNo`) and its lines. The context decides the **disposition** itself, from its own read models:
+`KEEP` (returnless) when the method is not PICKUP, every unit price is known and the total is within the returnless threshold; else `NEAREST_RETURNS_CENTER` when the
+group's destination region has an ACTIVE returns centre; else `ORIGIN_NODE` when the sourcing facts named the fulfilling node; else the authorization is refused
+(`no-return-destination`) and the shopper retries later with the same `Idempotency-Key`.
+
+Rules of the contract:
+
+- **The group must be SHIPPED or DELIVERED.** The OrderGroupView is fed by customer-ordering's `CustomerOrderPlaced` and the terminal `ShopperNoticeDecided`
+  families; a group that is still PROMISED (or unknown to the view, which may lag) answers `422 group-not-shipped` -- retry later, same key, same body.
+- **Prices are the storefront's facts.** `unitPriceCents` per line is caller-declared and NEVER leaves this context (no event, no tool answer carries it). With a
+  price absent, `KEEP` can never be chosen and the authorization is returned with `pricesAbsent: true`.
+- **`reason` is an enum** (`DEFECTIVE`, `NOT_AS_DESCRIBED`, `WRONG_ITEM`, `NOT_NEEDED`, `OTHER`) -- never free text: no event, table or log of this context carries
+  an address, a person's name, a phone number or free text. The ship-to stays in the shipping context, which issues the reverse label.
+- **Labels.** `POST /return-authorizations/{id}/labels` asks the shipping context's `POST /return-labels` route (the one in-org call this context makes) for the
+  shopper's reverse label, links the tracking number and publishes `ReturnLabelIssued`. While that route is not configured the call answers `422 label-unavailable`:
+  a tolerant failure, never a 500. At most five packages per authorization (`packageNo` 1..5).
+- **Method.** `DROP_OFF` (default) or `PICKUP`. PICKUP requires a window inside `[authorizedAt, expiresAt]` and is never KEEP. The pickup leg of last-mile is a later
+  wave: the window is recorded, the state machine already knows `PICKUP_FAILED`.
+- **Expiry.** An authorization expires 30 days after it was authorized; expiry is checked lazily by the next command that touches it, never by a read
+  (ADR 0002 A4 as amended by A11): a label request cancels it and answers `422 authorization-expired`, a cancellation cancels it and answers `200`, and a
+  graded outcome cancels it before recording the outcome as a fact; the event says `EXPIRED` in every case. There is no sweeper.
+- **No authentication** (consistent with the fleet): the storefront is the only caller and names the order in the body.
+- Every `POST` takes `Idempotency-Key` (1 to 128 printable ASCII characters; missing is `400 idempotency-key-required`, malformed `400 idempotency-key-invalid`); a
+  repeat replays the first response with the header `Idempotency-Replayed` set to `true` when that response is final for the request: a success, and
+  `422 authorization-expired` (the lazy expiry was committed with it). A refusal that depends on state that can change is NOT stored and its key is released:
+  `group-not-shipped`, `no-return-destination`, `label-unavailable`, `concurrent-update`, `illegal-transition`, `not-found` and `validation-failed`
+  (so "retry later, same key" is true: the retry executes again, and a different body under the released key is a new request). A 5xx is never stored. The same key
+  on a different method, path or body is `409 idempotency-key-reused`.
+- A NUL character (U+0000) is refused before anything else runs: in a path it is `404 not-found`; in a query string or a JSON body it is `422 validation-failed`,
+  and the `Idempotency-Key` of such a request is not recorded. Request bodies are decoded strictly: an unknown field, malformed JSON, trailing data or a body over
+  4 MiB is `422 validation-failed`.
+- Errors are RFC 9457 `application/problem+json`; the shared problem types are `not-found` 404, `illegal-transition` 409, `concurrent-update` 409,
+  `validation-failed` 422, plus one slug per model `Err...` name.
+- **Reports (ADR 0012).** `GET /reports/returns-performance` and `GET /reports/freshness` are read-only GETs served by the separate `cmd/reports` binary
+  (port 8092, behind the `/api/customer-returns/reports` Gateway route when `analytics.enabled`), from a projection of this context's own events topic. They
+  are unauthenticated like every route here, and every error is `application/problem+json`.
+- Events (AsyncAPI `apis/asyncapi.yaml`): `ReturnAuthorized`, `ReturnLabelIssued`, `ReturnCompleted`, `ReturnCancelled` on the events topic. `GET
+  /return-authorizations/\{id\}/events` is deliberately NOT built: the audit trail IS the event stream.
+  
+
+## Architecture diagram
+<NodeGraph />
