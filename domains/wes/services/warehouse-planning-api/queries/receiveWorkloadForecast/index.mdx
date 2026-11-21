@@ -1,0 +1,76 @@
+---
+id: warehouse-planning-api-receiveWorkloadForecast
+version: 0.1.0
+name: receiveWorkloadForecast
+summary: Receive the workload forecast of a process path at a site
+schemaPath: request-body.json
+badges:
+  - content: PUT
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:workload-forecasts'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: PUT
+  path: '/workload-forecasts/{site_id}/{path_id}'
+  statusCodes:
+    - '200'
+    - '201'
+    - '400'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: PUT
+---
+## Overview
+Stores the volume a process path is expected to receive at a site, as CPT buckets (docs/adr/0023 decision 1; it was wes-work-planning's charge forecast). One forecast per (site_id, path_id); a receipt replaces the buckets as a whole. 201 with version 1 for a first receipt; 200 with version + 1 when the buckets changed; 200 with the stored forecast, its version and received_at unchanged, when the buckets equal the stored ones (same order): nothing is written and no event is raised. A receipt that changed something raises WorkloadForecastReceived (integration and analytics topics, asyncapi.yaml) in the same transaction. The PUT is naturally idempotent and takes no Idempotency-Key.
+
+
+
+
+
+## PUT `(/workload-forecasts/{site_id}/{path_id})`
+
+### Parameters
+- **site_id** (path) (required): Canonical facility-layout site code (ADR 0012).
+- **path_id** (path) (required): The process path code: case-insensitive; stored and published in upper case (trimmed), so "pick" and "PICK" name the same forecast and labour plan. Upper-cased, it also names the facility-tally activity whose stations the labour plan's warning compares with.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

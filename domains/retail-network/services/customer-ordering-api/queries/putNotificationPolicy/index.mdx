@@ -1,0 +1,66 @@
+---
+id: customer-ordering-api-putNotificationPolicy
+version: 0.1.0
+name: putNotificationPolicy
+summary: Publish the next version of the notification policy (whole document)
+schemaPath: request-body.json
+badges:
+  - content: PUT
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:Operations'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: PUT
+  path: /notification-policy
+  statusCodes:
+    - '200'
+    - '400'
+    - '409'
+    - '422'
+owners:
+  - claudioed
+sidebar:
+  badge: PUT
+---
+## Overview
+Whole-document PUT (ADR 0017): the body carries one row per family. The next version number is derived (current + 1); every version is kept. Publishing version 1 is what wakes a family up — until then the posture is silence. No event is raised: v1 is analytics-free.
+
+
+
+
+## PUT `(/notification-policy)`
+
+### Parameters
+- **Idempotency-Key** (header) (required): Client-generated UUID per logical submit, 1 to 128 printable ASCII characters (missing is 400 idempotency-key-required, malformed is 400 idempotency-key-invalid). A key is global and kept for 24 hours. An answer is stored only when it is final for the request: a success, and a refusal whose problem type is FINAL or OUTCOME (ADR 0019). The same key with the same method, path and body replays a stored answer with Idempotency-Replayed: true; the same key with anything else is 409 idempotency-key-reused. A refusal that depends on state that can change is not stored and releases the key, so the same request under the same key runs again, and another request under that key is a new request. These problem types are not stored: not-found, concurrent-update, illegal-transition, cancel-after-lock, validation-failed, promise-capacity-exhausted, book-closed, group-spans-nodes, promise-destination-mismatch and delivery-promise-unavailable (retry with the same key). The others are stored: malformed-request, line-without-promise, status-regression, shopper-exists, too-many-addresses and offer-not-quotable (use a new key). A 5xx and a panic are never stored.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+The versioned notification policy document (ADR 0017). Version 0 is the built-in default (every family NOBODY, publishedAt absent); a published version is immutable and every version is kept.
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 9457 problem details. type is /problems/\<slug>.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+
+
+## Architecture
+
+<NodeGraph />

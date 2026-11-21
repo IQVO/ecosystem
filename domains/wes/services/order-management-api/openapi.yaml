@@ -11,7 +11,7 @@ info:
 
     Out of this service's boundary: it does not hold inventory, pick, pack, ship, or plan work (those are inventory-storage, wes-work-planning and fulfillment-execution), and it does not model a local Reservation or WorkUnit aggregate. Error responses across this API use RFC 7807 (`application/problem+json`) Problem Details.
 
-    This API follows the fleet REST API guideline (ADR 0048): URLs name things (commands are noun sub-resources such as `POST /orders/{id}/releases` and `POST /orders/{id}/allocation-retries`), EVERY `POST` is behind the Idempotency-Key middleware (a retry replays the stored answer with the response header `Idempotency-Replayed: true`; the same key with a different method, path or body is 409 `idempotency-key-reused`; a missing key is 400 `idempotency-key-required`, a malformed one 400 `idempotency-key-invalid`), and `DELETE /orders/{id}` is idempotent by method. `GET /planned-capacity` is a bounded read model exempt from paging (`x-pagination-exempt: report`).
+    This API follows the fleet REST API guideline (ADR 0048): URLs name things (commands are noun sub-resources such as `POST /orders/{id}/releases` and `POST /orders/{id}/allocation-retries`), EVERY `POST` is behind the Idempotency-Key middleware (a retry replays the stored answer, when the first answer is final for the request, with the response header `Idempotency-Replayed: true`; a refusal that depends on state that can change is not stored, see the `Idempotency-Key` parameter and ADR 0054; the same key with a different method, path or body is 409 `idempotency-key-reused`; a missing key is 400 `idempotency-key-required`, a malformed one 400 `idempotency-key-invalid`), and `DELETE /orders/{id}` is idempotent by method. `GET /planned-capacity` is a bounded read model exempt from paging (`x-pagination-exempt: report`).
   contact:
     name: Order Management (Generic/Supporting Bounded Context)
 servers:
@@ -95,7 +95,7 @@ paths:
 
         `allowPartialShipment` defaults to `false` — ship-complete (BR3). Every line's `pathId` is chosen by this service, not the caller (ADR 0021): the active process paths in the process-path catalogue are filtered by their declared eligibility and the shortest known cycle time wins (ties: lower path id), falling back to the default `pick` when no catalogue is configured or no path is active. A caller placing an order has no business supplying wes-work-planning's process-path vocabulary at intake; `pathId` is visible on every line in the response, but not settable on the request.
 
-        Idempotent (REST guideline, ADR 0023/0048): send an `Idempotency-Key` header. A retry with the same key, method, path and body replays the stored answer (with `Idempotency-Replayed: true`) and creates no second order; the same key with another body is 409 `idempotency-key-reused`.
+        Idempotent (REST guideline, ADR 0023/0048): send an `Idempotency-Key` header. A retry with the same key, method, path and body replays the stored answer (with `Idempotency-Replayed: true`) and creates no second order; the same key with another body is 409 `idempotency-key-reused`. Only a final answer is stored: a 2xx, or a refusal that is a function of the request (400 `malformed-request-body`, `order-without-lines`, `empty-sku`, `invalid-fulfillment-site-id`, 422 `non-positive-quantity`, `held-order-must-be-ship-complete`). A refusal that depends on state that can change (`unknown-process-path`, `line-ineligible-for-resolved-path`) and every 5xx are not stored: the key is released and a retry under the same key executes again.
       tags:
         - Orders
       parameters:
@@ -302,7 +302,7 @@ paths:
 
         An order that was never held has nothing to release on demand — its lines release themselves at allocation — so calling this on one is rejected with `409` rather than silently succeeding, since it means the caller has the wrong order id or the wrong expectation. This holds even when that order has no allocated lines of its own (a backordered order, say): "never held" and "already released" are different answers and must not collapse into one.
 
-        Idempotent through the `Idempotency-Key` header (REST guideline, ADR 0023/0048): a retry with the same key, method, path and body replays the stored answer with `Idempotency-Replayed: true` and runs nothing again, so the key row, the order change and the outbox rows commit together.
+        Idempotent through the `Idempotency-Key` header (REST guideline, ADR 0023/0048): a retry with the same key, method, path and body replays the stored answer with `Idempotency-Replayed: true` and runs nothing again, so the key row, the order change and the outbox rows commit together. A refusal that depends on the order's state or on a concurrent writer (`order-not-held`, `concurrent-modification`) is not stored: the key is released and a retry under the same key executes again; a refusal that is a function of the request (`empty-order-id`) and a 2xx are stored.
       tags:
         - Allocation
       parameters:
@@ -361,7 +361,7 @@ paths:
 
         On success, this ALSO attempts release in the same call — the same allocation-then-release flow `POST /orders` uses — announced via the enriched `OrderAllocated` / `OrderPartiallyAllocated` Kafka events rather than any synchronous call to a Supplier.
 
-        Idempotent through the `Idempotency-Key` header (REST guideline, ADR 0023/0048): a retry with the same key, method, path and body replays the stored answer with `Idempotency-Replayed: true` and allocates nothing again, so the key row, the order change and the outbox rows commit together.
+        Idempotent through the `Idempotency-Key` header (REST guideline, ADR 0023/0048): a retry with the same key, method, path and body replays the stored answer with `Idempotency-Replayed: true` and allocates nothing again, so the key row, the order change and the outbox rows commit together. A refusal that depends on the order's state or on a concurrent writer (`no-backordered-lines`, `concurrent-modification`) and every 5xx are not stored: the key is released and a retry under the same key executes again.
       tags:
         - Allocation
       parameters:
@@ -435,7 +435,7 @@ paths:
       operationId: getPlannedCapacity
       summary: List a site's planned capacity windows
       description: |
-        Reads order-management's LOCAL read model of warehouse-planning's CapacityPlans for one site (ADR 0031): a PLANNED statement about a future window — the demand the planned capacity cannot process in it (`shortage`, in orders) — mirrored from the CloudEvents warehouse-planning publishes on `warehouse.warehouse-planning.events`. It is not live execution state and is never refreshed by calling warehouse-planning. Windows of every `status` are listed (a `DRAFT` is visible here but never influences an order; only a `PUBLISHED` plan with `shortage > 0` annotates orders — see `capacityConstraint` on the Order schema). Windows that ended before `from` are omitted. This route exists only when the integration is enabled; otherwise it is a 404.
+        Reads order-management's LOCAL read model of warehouse-planning's CapacityPlans for one site (ADR 0031): a PLANNED statement about a future window — the demand the planned capacity cannot process in it (`shortage`, in orders) — mirrored from the CloudEvents warehouse-planning publishes on `warehouse.warehouse-planning.events`. It is not live execution state and is never refreshed by calling warehouse-planning. Windows of every `status` are listed (a `DRAFT` is visible here but never influences an order; a `SUPERSEDED` plan was replaced by a newer one of the same window, names it in `supersededBy` and never influences an order again, ADR 0052; only a `PUBLISHED` plan with `shortage > 0` annotates orders — see `capacityConstraint` on the Order schema). Windows that ended before `from` are omitted. This route exists only when the integration is enabled; otherwise it is a 404.
 
         Not paged (`x-pagination-exempt: report`, REST guideline 3.5): a bounded read model of ONE site's planned windows, scoped by the required `site` and the `from` instant, whose size is set by the planning horizon warehouse-planning publishes, not by order volume.
       tags:
@@ -524,7 +524,9 @@ components:
       in: header
       required: false
       description: |
-        Caller-generated unique key (a UUID per logical submit; a retry reuses it, a new user action mints a new one) that makes a retried request safe (ADR 0023, REST guideline section 2). Clients must ALWAYS send a non-empty value of 1-128 printable ASCII characters: with Postgres wired (every deployed runtime) a missing key is answered with 400 `idempotency-key-required`, a malformed one with 400 `idempotency-key-invalid`; a replay with the same key and the same method, path and body returns the original response plus `Idempotency-Replayed: true`, while the same key with a different method, path or body is 409 `idempotency-key-reused`. It is declared optional here only because the in-memory development mode (no `DATABASE_URL`, the mode the Schemathesis contract job boots) has no transactional store and gates the middleware off.
+        Caller-generated unique key (a UUID per logical submit; a retry reuses it, a new user action mints a new one) that makes a retried request safe (ADR 0023, REST guideline section 2). Clients must ALWAYS send a non-empty value of 1-128 printable ASCII characters: with Postgres wired (every deployed runtime) a missing key is answered with 400 `idempotency-key-required`, a malformed one with 400 `idempotency-key-invalid`; a replay with the same key and the same method, path and body returns the original response plus `Idempotency-Replayed: true`, while the same key with a different method, path or body is 409 `idempotency-key-reused`.
+
+        What is replayed (ADR 0054): a 2xx, and a refusal that is a function of the request alone (400 `malformed-request-body`, `order-without-lines`, `empty-sku`, `empty-order-id`, `invalid-fulfillment-site-id`; 404 `order-not-found`; 422 `non-positive-quantity`, `held-order-must-be-ship-complete`). What is NOT stored, so the key is released and the same request under the same key executes again (a different body under a released key is a new request, not a reuse): a 5xx (`downstream-unavailable`, `downstream-not-configured`, `internal-error`), and every refusal that depends on state that can change: 409 `concurrent-modification`, `order-not-held`, `no-backordered-lines`, `no-allocated-lines`, `promise-date-not-set`, `order-line-*`, `order-already-released`, and 400 `unknown-process-path`, `line-ineligible-for-resolved-path` (the process-path catalogue and product classification are fed by events from other contexts). Retry those with the same key. It is declared optional here only because the in-memory development mode (no `DATABASE_URL`, the mode the Schemathesis contract job boots) has no transactional store and gates the middleware off.
       schema:
         type: string
         example: 5b0f6a0e-6a41-4c63-9f33-0c8f5c1d2a77
@@ -715,7 +717,7 @@ components:
     OrderStatus:
       type: string
       description: |
-        The order-level status, ALWAYS derived from the line statuses and never stored, so it cannot drift out of sync with the lines it summarises. `Received` -> `Allocated` | `PartiallyAllocated` | `Backordered` -> `Released` | `PartiallyReleased`, with `Cancelled` reachable only from a pre-release state (BR6).
+        The order-level status, ALWAYS derived from the line statuses and never stored, so it cannot drift out of sync with the lines it summarises. `Received` -> `Allocated` | `PartiallyAllocated` | `Backordered` -> `Released` | `PartiallyReleased` -> `PartiallyShipped` | `Shipped`, with `Cancelled` reachable only from a pre-release state (BR6). `Shipped` means every line has shipped and `PartiallyShipped` that some have: both are reached when outbound-shipping's `ShipmentConfirmed` is consumed (ADR 0051).
       enum:
         - Received
         - Allocated
@@ -723,17 +725,20 @@ components:
         - Backordered
         - Released
         - PartiallyReleased
+        - PartiallyShipped
+        - Shipped
         - Cancelled
       example: Allocated
     OrderLineStatus:
       type: string
       description: |
-        The per-line status. `Pending` -> `Allocated` (inventory-storage reserved) or `Backordered` (inventory-storage answered 409); `Backordered` -> `Allocated` ONLY via an allocation retry; `Allocated` -> `Released` (a pure domain transition made in the same call once ship-complete rule BR3 allows it, ADR 0005 — the released lines are then announced on Kafka for wes-work-planning to react to independently; nothing waits for it to accept the work); any pre-release state -> `Cancelled`.
+        The per-line status. `Pending` -> `Allocated` (inventory-storage reserved) or `Backordered` (inventory-storage answered 409); `Backordered` -> `Allocated` ONLY via an allocation retry; `Allocated` -> `Released` (a pure domain transition made in the same call once ship-complete rule BR3 allows it, ADR 0005 — the released lines are then announced on Kafka for wes-work-planning to react to independently; nothing waits for it to accept the work); `Released` -> `Shipped` when outbound-shipping confirms the shipment that carries the line (ADR 0051); any pre-release state -> `Cancelled`.
       enum:
         - Pending
         - Allocated
         - Backordered
         - Released
+        - Shipped
         - Cancelled
       example: Allocated
     OrderLine:
@@ -851,7 +856,11 @@ components:
           example: WH-1
         location:
           type: string
-          description: Site/building code.
+          description: The ProcessCapacity location the plan evaluates; a site code for a plan that never carried a `siteId`. `GET /planned-capacity` lists by this field.
+          example: SIM1
+        siteId:
+          type: string
+          description: The plan's canonical site (warehouse-planning's `site_id`), when it carries one; omitted otherwise. An order is annotated by a plan whose `siteId` equals the order's site, else, for a plan without one, whose `location` does (ADR 0031 amendment). A write without a site id never erases a stored one.
           example: SIM1
         pathId:
           type: string
@@ -886,8 +895,13 @@ components:
           enum:
             - DRAFT
             - PUBLISHED
-          description: Only PUBLISHED plans with a shortage annotate orders.
+            - SUPERSEDED
+          description: 'Only PUBLISHED plans with a shortage annotate orders. SUPERSEDED (ADR 0052) is terminal: a newer plan of the same window replaced this one, and it never annotates an order again.'
           example: PUBLISHED
+        supersededBy:
+          type: string
+          description: The id of the newer plan that replaced this one. Present only when `status` is SUPERSEDED (ADR 0052).
+          example: 7e2f9a1c-3b4d-4e5f-8a6b-9c0d1e2f3a4b
         asOf:
           type: string
           format: date-time

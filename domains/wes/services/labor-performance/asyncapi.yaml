@@ -19,14 +19,16 @@ info:
       a transactional outbox and drained onto Kafka by the relay inside
       `cmd/labor`; `EVENT_PUBLISHER=log` is rejected at boot.
     - **Outbound integration (`warehouse.labor-performance.events`)** — this
-      service's first Open-Host-Service topic for OTHER bounded contexts
-      (ADR 0013). Before this topic existed, labor-performance was the
-      fleet's only pure event sink: it consumed `TaskCompleted` from
-      fulfillment-execution but published nothing any sibling service could
-      subscribe to. `TaskPerformanceRecorded` is published here so
-      workforce-management (the first intended consumer) can build an
-      event-fed local cache instead of calling this service synchronously
-      over REST. Published through the same transactional outbox relay as
+      service's Open-Host-Service topic for OTHER bounded contexts
+      (ADR 0013, widened by ADR 0038). Before this topic existed,
+      labor-performance was the fleet's only pure event sink: it consumed
+      `TaskCompleted` from fulfillment-execution but published nothing any
+      sibling service could subscribe to. `TaskPerformanceRecorded` is
+      published here so workforce-management (the first consumer) can build
+      an event-fed local cache instead of calling this service synchronously
+      over REST, and `LaborStandardDefined` / `LaborStandardRevised` (ADR
+      0038) so warehouse-planning can keep a local copy of the engineered
+      standards. Published through the same transactional outbox relay as
       the analytics stream (not opt-in).
 
     The three are deliberately separate topics so the integration contracts
@@ -505,9 +507,11 @@ channels:
         `urn:warehouse:labor-performance:analytics:<EventName>:v1`. The message
         key is the TaskType, so every event folding into one report dimension
         lands on a single partition and is applied in publish order. The
-        CloudEvents `id` is the projector's de-duplication key. These events are
-        consumed only by this repo's own projector today; no other service
-        subscribes.
+        CloudEvents `id` is the projector's de-duplication key. This topic is
+        consumed only by this repo's own projector; the standard events and
+        TaskPerformanceRecorded are ALSO published on the integration topic
+        `warehouse.labor-performance.events` for other contexts (ADR 0013, ADR
+        0038).
       tags:
         - name: labor-performance
       message:
@@ -518,7 +522,10 @@ channels:
             description: >-
               Raised when DefineStandard creates the first engineered standard
               for a TaskType. The projector counts it into the (task_type,
-              hour-of- effective_from) rollup row.
+              hour-of- effective_from) rollup row. The same occurrence is also
+              published on the integration topic with the same data
+              (LaborStandardDefinedIntegration, ADR 0038), under its own
+              CloudEvents id.
             contentType: application/cloudevents+json
             tags:
               - name: labor-performance
@@ -688,6 +695,22 @@ channels:
                             only together with team_lift_threshold_g.
                           example: 75
                           x-parser-schema-id: <anonymous-schema-30>
+                        site_code:
+                          type: string
+                          minLength: 1
+                          maxLength: 32
+                          pattern: ^\S+$
+                          description: >-
+                            ADDITIVE (ADR 0038). Present only when the standard
+                            is scoped to one site (a facility-layout site code,
+                            1-32 characters, no whitespace); omitted entirely
+                            (not null, not "") for a site-less standard, which
+                            applies to every site. At most one standard is open
+                            per (task_type, handling_unit, site_code). Scoring
+                            in this service never resolves a site-scoped
+                            standard.
+                          example: SITE-GRU-01
+                          x-parser-schema-id: <anonymous-schema-31>
                         effective_from:
                           type: string
                           format: date-time
@@ -695,7 +718,7 @@ channels:
                             When the standard came into force. The BUSINESS time
                             the projector buckets this event on.
                           example: '2026-09-05T09:00:00Z'
-                          x-parser-schema-id: <anonymous-schema-31>
+                          x-parser-schema-id: <anonymous-schema-32>
                       x-parser-schema-id: LaborStandardDefinedData
                   x-parser-schema-id: <anonymous-schema-21>
               x-parser-schema-id: LaborStandardDefinedCloudEvent
@@ -770,7 +793,9 @@ channels:
               standard is closed, never overwritten (ADR 0004). A bucket with a
               non-zero revision count is one whose efficiency figures span two
               different yardsticks and are not directly comparable across the
-              boundary.
+              boundary. The same occurrence is also published on the integration
+              topic with the same data (LaborStandardRevisedIntegration, ADR
+              0038).
             contentType: application/cloudevents+json
             tags:
               - name: labor-performance
@@ -855,11 +880,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wes.labor-performance.standard.LaborStandardRevised
-                      x-parser-schema-id: <anonymous-schema-33>
+                      x-parser-schema-id: <anonymous-schema-34>
                     dataschema:
                       const: >-
                         urn:warehouse:labor-performance:analytics:LaborStandardRevised:v1
-                      x-parser-schema-id: <anonymous-schema-34>
+                      x-parser-schema-id: <anonymous-schema-35>
                     data:
                       type: object
                       required:
@@ -875,7 +900,7 @@ channels:
                             The id of the NEW standard record opened by this
                             revision.
                           example: std-0002
-                          x-parser-schema-id: <anonymous-schema-35>
+                          x-parser-schema-id: <anonymous-schema-36>
                         task_type:
                           type: string
                           enum:
@@ -883,7 +908,7 @@ channels:
                             - PACK
                             - SLAM
                           example: PICK
-                          x-parser-schema-id: <anonymous-schema-36>
+                          x-parser-schema-id: <anonymous-schema-37>
                         previous_expected_seconds:
                           type: integer
                           format: int64
@@ -892,13 +917,13 @@ channels:
                             so a consumer can see the size of the change without
                             joining back to the prior event.
                           example: 45
-                          x-parser-schema-id: <anonymous-schema-37>
+                          x-parser-schema-id: <anonymous-schema-38>
                         expected_seconds:
                           type: integer
                           format: int64
                           description: The newly effective expected duration.
                           example: 40
-                          x-parser-schema-id: <anonymous-schema-38>
+                          x-parser-schema-id: <anonymous-schema-39>
                         travel_component_seconds:
                           type: integer
                           format: int64
@@ -910,7 +935,7 @@ channels:
                             over from the closed prior standard. Omitted
                             entirely when the revision does not declare one.
                           example: 20
-                          x-parser-schema-id: <anonymous-schema-39>
+                          x-parser-schema-id: <anonymous-schema-40>
                         handling_unit:
                           type: string
                           enum:
@@ -923,7 +948,7 @@ channels:
                             handling unit; omitted entirely (not null) for a
                             task-type-only standard.
                           example: CASE
-                          x-parser-schema-id: <anonymous-schema-40>
+                          x-parser-schema-id: <anonymous-schema-41>
                         team_lift_threshold_g:
                           type: integer
                           format: int64
@@ -934,7 +959,7 @@ channels:
                             operators). Present only together with
                             team_lift_expected_seconds.
                           example: 18000
-                          x-parser-schema-id: <anonymous-schema-41>
+                          x-parser-schema-id: <anonymous-schema-42>
                         team_lift_expected_seconds:
                           type: integer
                           format: int64
@@ -944,7 +969,21 @@ channels:
                             engineered elapsed seconds of a team lift. Present
                             only together with team_lift_threshold_g.
                           example: 75
-                          x-parser-schema-id: <anonymous-schema-42>
+                          x-parser-schema-id: <anonymous-schema-43>
+                        site_code:
+                          type: string
+                          minLength: 1
+                          maxLength: 32
+                          pattern: ^\S+$
+                          description: >-
+                            ADDITIVE (ADR 0038). The site of the NEW standard,
+                            which is always the site of the closed prior one (a
+                            revision closes only the same (task_type,
+                            handling_unit, site_code)). Present only for a
+                            site-scoped standard; omitted entirely (not null,
+                            not "") for a site-less one.
+                          example: SITE-GRU-01
+                          x-parser-schema-id: <anonymous-schema-44>
                         effective_from:
                           type: string
                           format: date-time
@@ -953,9 +992,9 @@ channels:
                             instant the prior one was closed. The BUSINESS time
                             the projector buckets this event on.
                           example: '2026-09-05T10:00:00Z'
-                          x-parser-schema-id: <anonymous-schema-43>
+                          x-parser-schema-id: <anonymous-schema-45>
                       x-parser-schema-id: LaborStandardRevisedData
-                  x-parser-schema-id: <anonymous-schema-32>
+                  x-parser-schema-id: <anonymous-schema-33>
               x-parser-schema-id: LaborStandardRevisedCloudEvent
             examples:
               - name: tightenPickStandard
@@ -1082,11 +1121,11 @@ channels:
                     type:
                       const: >-
                         com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
-                      x-parser-schema-id: <anonymous-schema-45>
+                      x-parser-schema-id: <anonymous-schema-47>
                     dataschema:
                       const: >-
                         urn:warehouse:labor-performance:analytics:TaskPerformanceRecorded:v1
-                      x-parser-schema-id: <anonymous-schema-46>
+                      x-parser-schema-id: <anonymous-schema-48>
                     data:
                       type: object
                       required:
@@ -1105,7 +1144,7 @@ channels:
                             opaque foreign reference. This context does not own
                             or validate it.
                           example: task-10231
-                          x-parser-schema-id: <anonymous-schema-47>
+                          x-parser-schema-id: <anonymous-schema-49>
                         associate_id:
                           type: string
                           description: >-
@@ -1116,7 +1155,7 @@ channels:
                             task-type reporting; it is only excluded from
                             per-associate scorecards.
                           example: assoc-4471
-                          x-parser-schema-id: <anonymous-schema-48>
+                          x-parser-schema-id: <anonymous-schema-50>
                         task_type:
                           type: string
                           description: >-
@@ -1126,7 +1165,7 @@ channels:
                             the empty case `UNCLASSIFIED` rather than dropping
                             the row or keying its fact table on an empty string.
                           example: PICK
-                          x-parser-schema-id: <anonymous-schema-49>
+                          x-parser-schema-id: <anonymous-schema-51>
                         efficiency_pct:
                           type: number
                           format: double
@@ -1140,7 +1179,7 @@ channels:
                             a real business fact ("unmeasurable"), never an
                             error and never to be coerced to 0 by a consumer.
                           example: 86.5
-                          x-parser-schema-id: <anonymous-schema-50>
+                          x-parser-schema-id: <anonymous-schema-52>
                         actual_seconds:
                           type: integer
                           format: int64
@@ -1149,7 +1188,7 @@ channels:
                             duration_seconds. `0` means unmeasurable and is
                             excluded from any mean-duration aggregate.
                           example: 52
-                          x-parser-schema-id: <anonymous-schema-51>
+                          x-parser-schema-id: <anonymous-schema-53>
                         idle_seconds_before:
                           type: integer
                           format: int64
@@ -1167,7 +1206,7 @@ channels:
                             a Conformist unmarshaling unknown-field-tolerant
                             JSON is unaffected by its presence.
                           example: 90
-                          x-parser-schema-id: <anonymous-schema-52>
+                          x-parser-schema-id: <anonymous-schema-54>
                         handling_unit:
                           type: string
                           enum:
@@ -1181,7 +1220,7 @@ channels:
                             without one keeps the pre-ADR-0035 payload
                             byte-for-byte.
                           example: CASE
-                          x-parser-schema-id: <anonymous-schema-53>
+                          x-parser-schema-id: <anonymous-schema-55>
                         team_lift:
                           type: boolean
                           description: >-
@@ -1190,7 +1229,7 @@ channels:
                             against the CASE standard's team-lift time (the case
                             was heavier than the declared threshold).
                           example: false
-                          x-parser-schema-id: <anonymous-schema-54>
+                          x-parser-schema-id: <anonymous-schema-56>
                         completed_at:
                           type: string
                           format: date-time
@@ -1201,9 +1240,9 @@ channels:
                             late-ingested event lands in the hour the work
                             really happened.
                           example: '2026-09-05T09:30:00Z'
-                          x-parser-schema-id: <anonymous-schema-55>
+                          x-parser-schema-id: <anonymous-schema-57>
                       x-parser-schema-id: TaskPerformanceRecordedAnalyticsData
-                  x-parser-schema-id: <anonymous-schema-44>
+                  x-parser-schema-id: <anonymous-schema-46>
               x-parser-schema-id: TaskPerformanceRecordedAnalyticsCloudEvent
             examples:
               - name: scoredTask
@@ -1266,317 +1305,829 @@ channels:
       through the transactional outbox relay; the log publisher is rejected at
       boot. The first consumer is workforce-management, whose event-fed local
       cache (`laborperformancecache`) already consumes this topic in place of a
-      synchronous HTTP call.
+      synchronous HTTP call; warehouse-planning (its ADR 0022) keeps a local
+      copy of the standards from the two standard events (ADR 0038).
     x-eventcatalog-channel-version: 2.0.0
     publish:
       operationId: publishLaborIntegrationEvents
-      summary: Publish TaskPerformanceRecorded for other bounded contexts to consume.
+      summary: >-
+        Publish TaskPerformanceRecorded and the standard events for other
+        bounded contexts to consume.
       description: >-
-        Emits TaskPerformanceRecorded onto the integration topic as a
-        CloudEvents 1.0 event, type
+        Emits three types onto the integration topic as CloudEvents 1.0 events
+        whose `dataschema` is
+        `urn:warehouse:labor-performance:events:<EventName>:v1`. The CloudEvents
+        `id` is the consumer's de-duplication key; consumers dispatch on the
+        full `type` and ignore unknown types.
+
+
+        `TaskPerformanceRecorded` (ADR 0013): type
         `com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded`,
-        dataschema
-        `urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1`,
         subject = the associate id (the task id when there is no associate,
         since `subject` is never empty). The message key is the AssociateId —
         NOT the TaskType the analytics topic keys on — so every event for one
         associate lands on a single partition and is applied in publish order,
         which is what a per-associate read-cache consumer needs. A task with no
         checked-in associate (e.g. a robot station) is keyed on the empty
-        string. The CloudEvents `id` is the consumer's de-duplication key.
+        string.
 
-        Only `TaskPerformanceRecorded` is part of this contract today.
-        `LaborStandardDefined`/`LaborStandardRevised` remain analytics-only;
-        widening this topic to carry them is a future, additive change.
+
+        `LaborStandardDefined` / `LaborStandardRevised` (ADR 0038): the same
+        `type` as on the analytics topic and the SAME `data` (field names and
+        types unchanged), subject = the standard id, message key = the TaskType,
+        so every revision of one task type stays in order. A consumer keeping a
+        local copy applies them in publish order per task type.
       tags:
         - name: labor-performance
       message:
-        name: TaskPerformanceRecorded
-        title: Task Performance Recorded (integration)
-        summary: >-
-          One completed task was scored against the standard active at
-          completion time — published for other bounded contexts (ADR 0013).
-        description: >-
-          Raised by RecordTaskPerformance for every consumed TaskCompleted, the
-          SAME domain event as the analytics stream's TaskPerformanceRecorded
-          message, on a different topic and with the `:events:` dataschema.
-          Partition key is AssociateId, not TaskType.
+        oneOf:
+          - name: TaskPerformanceRecorded
+            title: Task Performance Recorded (integration)
+            summary: >-
+              One completed task was scored against the standard active at
+              completion time — published for other bounded contexts (ADR 0013).
+            description: >-
+              Raised by RecordTaskPerformance for every consumed TaskCompleted,
+              the SAME domain event as the analytics stream's
+              TaskPerformanceRecorded message, on a different topic and with the
+              `:events:` dataschema. Partition key is AssociateId, not TaskType.
 
-          `efficiency_pct` is NULLABLE and null is a real, expected value: null
-          whenever the task could not be scored — no active standard for its
-          TaskType at completion time, or a non-positive duration. Consumers
-          MUST NOT coerce null to 0.
+              `efficiency_pct` is NULLABLE and null is a real, expected value:
+              null whenever the task could not be scored — no active standard
+              for its TaskType at completion time, or a non-positive duration.
+              Consumers MUST NOT coerce null to 0.
 
-          `completed_at` is the BUSINESS time; the CloudEvents `time` attribute
-          is the domain occurred-at (scoring) instant. The two differ for any
-          replayed or late-ingested event.
-        contentType: application/cloudevents+json
-        tags:
-          - name: task
-          - name: labor-performance
-        payload:
-          title: CloudEvent + TaskPerformanceRecorded data (integration stream)
-          allOf:
-            - type: object
-              title: CloudEvents 1.0 envelope (structured mode, ADR 0021)
-              description: >-
-                The ONLY envelope on every topic this service produces or
-                consumes. Every attribute is REQUIRED in this fleet. Kafka
-                header `content-type: application/cloudevents+json;
-                charset=UTF-8`. W3C trace context travels in the
-                `traceparent`/`tracestate` Kafka headers, never as extension
-                attributes.
-              required:
-                - specversion
-                - id
-                - source
-                - type
-                - subject
-                - time
-                - datacontenttype
-                - dataschema
-                - data
-              properties:
-                specversion:
-                  type: string
-                  const: '1.0'
-                  x-parser-schema-id: <anonymous-schema-1>
-                id:
-                  type: string
-                  format: uuid
+              `completed_at` is the BUSINESS time; the CloudEvents `time`
+              attribute is the domain occurred-at (scoring) instant. The two
+              differ for any replayed or late-ingested event.
+            contentType: application/cloudevents+json
+            tags:
+              - name: task
+              - name: labor-performance
+            payload:
+              title: CloudEvent + TaskPerformanceRecorded data (integration stream)
+              allOf:
+                - type: object
+                  title: CloudEvents 1.0 envelope (structured mode, ADR 0021)
                   description: >-
-                    Minted once per domain event and persisted with the outbox
-                    row, so a relay redelivery carries the same id. The
-                    consumer's de-duplication key.
-                  x-parser-schema-id: <anonymous-schema-2>
-                source:
-                  type: string
-                  format: uri-reference
-                  description: >-
-                    `/warehouse/<repo>` of the publisher —
-                    `/warehouse/labor-performance` for everything this service
-                    publishes, `/warehouse/fulfillment-execution` for
-                    TaskCompleted.
-                  x-parser-schema-id: <anonymous-schema-3>
-                type:
-                  type: string
-                  description: >-
-                    `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
-                    Consumers dispatch on the FULL string.
-                  x-parser-schema-id: <anonymous-schema-4>
-                subject:
-                  type: string
-                  minLength: 1
-                  description: >-
-                    Id of the aggregate instance the event is about. Never
-                    empty.
-                  x-parser-schema-id: <anonymous-schema-5>
-                time:
-                  type: string
-                  format: date-time
-                  description: The domain event's occurred-at instant, UTC (RFC 3339).
-                  x-parser-schema-id: <anonymous-schema-6>
-                datacontenttype:
-                  type: string
-                  const: application/json
-                  x-parser-schema-id: <anonymous-schema-7>
-                dataschema:
-                  type: string
-                  format: uri
-                  description: '`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`'
-                  x-parser-schema-id: <anonymous-schema-8>
-                data:
-                  type: object
-                  x-parser-schema-id: <anonymous-schema-9>
-              x-parser-schema-id: CloudEventEnvelope
-            - type: object
-              properties:
-                type:
-                  const: >-
-                    com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
-                  x-parser-schema-id: <anonymous-schema-57>
-                dataschema:
-                  const: >-
-                    urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
-                  x-parser-schema-id: <anonymous-schema-58>
-                data:
-                  type: object
+                    The ONLY envelope on every topic this service produces or
+                    consumes. Every attribute is REQUIRED in this fleet. Kafka
+                    header `content-type: application/cloudevents+json;
+                    charset=UTF-8`. W3C trace context travels in the
+                    `traceparent`/`tracestate` Kafka headers, never as extension
+                    attributes.
                   required:
-                    - task_id
-                    - associate_id
-                    - task_type
-                    - efficiency_pct
-                    - actual_seconds
-                    - idle_seconds_before
-                    - completed_at
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
                   properties:
-                    task_id:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      description: >-
+                        Minted once per domain event and persisted with the
+                        outbox row, so a relay redelivery carries the same id.
+                        The consumer's de-duplication key.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      format: uri-reference
+                      description: >-
+                        `/warehouse/<repo>` of the publisher —
+                        `/warehouse/labor-performance` for everything this
+                        service publishes, `/warehouse/fulfillment-execution`
+                        for TaskCompleted.
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
                       type: string
                       description: >-
-                        fulfillment-execution's task id, treated as an opaque
-                        foreign reference. This context does not own or validate
-                        it.
-                      example: task-10231
-                      x-parser-schema-id: <anonymous-schema-59>
-                    associate_id:
+                        `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                        Consumers dispatch on the FULL string.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
                       type: string
+                      minLength: 1
                       description: >-
-                        The associate who completed the task, and the partition
-                        key of this topic. The EMPTY STRING is a legitimate,
-                        expected value: the completing station had no checked-in
-                        occupant (e.g. a robot station).
-                      example: assoc-4471
-                      x-parser-schema-id: <anonymous-schema-60>
-                    task_type:
-                      type: string
-                      description: >-
-                        PICK, PACK, SLAM, or the empty string when the task type
-                        could not be resolved (see the analytics payload's
-                        identical field for why this is common today).
-                      example: PICK
-                      x-parser-schema-id: <anonymous-schema-61>
-                    efficiency_pct:
-                      type: number
-                      format: double
-                      nullable: true
-                      description: >-
-                        100 * standard_seconds_at_completion / actual_seconds,
-                        or NULL when the task could not be scored. NULL is a
-                        real business fact ("unmeasurable"); a consumer MUST NOT
-                        coerce it to 0.
-                      example: 91.2
-                      x-parser-schema-id: <anonymous-schema-62>
-                    actual_seconds:
-                      type: integer
-                      format: int64
-                      description: The measured duration. `0` means unmeasurable.
-                      example: 41
-                      x-parser-schema-id: <anonymous-schema-63>
-                    idle_seconds_before:
-                      type: integer
-                      format: int64
-                      nullable: true
-                      description: >-
-                        The measured idle gap immediately preceding this task's
-                        claim, added by the idleness feature (ADR
-                        0014-labor-utilization-idleness). NULL — never a
-                        fabricated number — when there was no prior completion,
-                        the gap was negative/zero (out-of-order Kafka delivery),
-                        or the completing station had no checked-in occupant.
-                        ADDITIVE field: a Conformist unmarshaling unknown-field-
-                        tolerant JSON (e.g. workforce-management's
-                        laborperformancecache) is unaffected by its presence.
-                      example: 90
-                      x-parser-schema-id: <anonymous-schema-64>
-                    handling_unit:
-                      type: string
-                      enum:
-                        - EACH
-                        - CASE
-                        - PALLET
-                      description: >-
-                        ADDITIVE (ADR 0035). The handling unit the completed
-                        task carried; omitted entirely (not null) when the
-                        TaskCompleted event carried none, so a completion
-                        without one keeps the pre-ADR-0035 payload
-                        byte-for-byte.
-                      example: CASE
-                      x-parser-schema-id: <anonymous-schema-65>
-                    team_lift:
-                      type: boolean
-                      description: >-
-                        ADDITIVE (ADR 0035). Present only together with
-                        handling_unit. True when the completion was scored
-                        against the CASE standard's team-lift time (the case was
-                        heavier than the declared threshold).
-                      example: false
-                      x-parser-schema-id: <anonymous-schema-66>
-                    completed_at:
+                        Id of the aggregate instance the event is about. Never
+                        empty.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
                       type: string
                       format: date-time
+                      description: The domain event's occurred-at instant, UTC (RFC 3339).
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      format: uri
                       description: >-
-                        When the associate actually finished the task — the
-                        BUSINESS time, distinct from the CloudEvents `time`
-                        attribute.
-                      example: '2026-09-05T09:30:00Z'
-                      x-parser-schema-id: <anonymous-schema-67>
-                  x-parser-schema-id: TaskPerformanceRecordedEventsData
-              x-parser-schema-id: <anonymous-schema-56>
-          x-parser-schema-id: TaskPerformanceRecordedEventsCloudEvent
-        examples:
-          - name: scoredTaskIntegration
+                        `urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`
+                      x-parser-schema-id: <anonymous-schema-8>
+                    data:
+                      type: object
+                      x-parser-schema-id: <anonymous-schema-9>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      const: >-
+                        com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
+                      x-parser-schema-id: <anonymous-schema-59>
+                    dataschema:
+                      const: >-
+                        urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
+                      x-parser-schema-id: <anonymous-schema-60>
+                    data:
+                      type: object
+                      required:
+                        - task_id
+                        - associate_id
+                        - task_type
+                        - efficiency_pct
+                        - actual_seconds
+                        - idle_seconds_before
+                        - completed_at
+                      properties:
+                        task_id:
+                          type: string
+                          description: >-
+                            fulfillment-execution's task id, treated as an
+                            opaque foreign reference. This context does not own
+                            or validate it.
+                          example: task-10231
+                          x-parser-schema-id: <anonymous-schema-61>
+                        associate_id:
+                          type: string
+                          description: >-
+                            The associate who completed the task, and the
+                            partition key of this topic. The EMPTY STRING is a
+                            legitimate, expected value: the completing station
+                            had no checked-in occupant (e.g. a robot station).
+                          example: assoc-4471
+                          x-parser-schema-id: <anonymous-schema-62>
+                        task_type:
+                          type: string
+                          description: >-
+                            PICK, PACK, SLAM, or the empty string when the task
+                            type could not be resolved (see the analytics
+                            payload's identical field for why this is common
+                            today).
+                          example: PICK
+                          x-parser-schema-id: <anonymous-schema-63>
+                        efficiency_pct:
+                          type: number
+                          format: double
+                          nullable: true
+                          description: >-
+                            100 * standard_seconds_at_completion /
+                            actual_seconds, or NULL when the task could not be
+                            scored. NULL is a real business fact
+                            ("unmeasurable"); a consumer MUST NOT coerce it to
+                            0.
+                          example: 91.2
+                          x-parser-schema-id: <anonymous-schema-64>
+                        actual_seconds:
+                          type: integer
+                          format: int64
+                          description: The measured duration. `0` means unmeasurable.
+                          example: 41
+                          x-parser-schema-id: <anonymous-schema-65>
+                        idle_seconds_before:
+                          type: integer
+                          format: int64
+                          nullable: true
+                          description: >-
+                            The measured idle gap immediately preceding this
+                            task's claim, added by the idleness feature (ADR
+                            0014-labor-utilization-idleness). NULL — never a
+                            fabricated number — when there was no prior
+                            completion, the gap was negative/zero (out-of-order
+                            Kafka delivery), or the completing station had no
+                            checked-in occupant. ADDITIVE field: a Conformist
+                            unmarshaling unknown-field- tolerant JSON (e.g.
+                            workforce-management's laborperformancecache) is
+                            unaffected by its presence.
+                          example: 90
+                          x-parser-schema-id: <anonymous-schema-66>
+                        handling_unit:
+                          type: string
+                          enum:
+                            - EACH
+                            - CASE
+                            - PALLET
+                          description: >-
+                            ADDITIVE (ADR 0035). The handling unit the completed
+                            task carried; omitted entirely (not null) when the
+                            TaskCompleted event carried none, so a completion
+                            without one keeps the pre-ADR-0035 payload
+                            byte-for-byte.
+                          example: CASE
+                          x-parser-schema-id: <anonymous-schema-67>
+                        team_lift:
+                          type: boolean
+                          description: >-
+                            ADDITIVE (ADR 0035). Present only together with
+                            handling_unit. True when the completion was scored
+                            against the CASE standard's team-lift time (the case
+                            was heavier than the declared threshold).
+                          example: false
+                          x-parser-schema-id: <anonymous-schema-68>
+                        completed_at:
+                          type: string
+                          format: date-time
+                          description: >-
+                            When the associate actually finished the task — the
+                            BUSINESS time, distinct from the CloudEvents `time`
+                            attribute.
+                          example: '2026-09-05T09:30:00Z'
+                          x-parser-schema-id: <anonymous-schema-69>
+                      x-parser-schema-id: TaskPerformanceRecordedEventsData
+                  x-parser-schema-id: <anonymous-schema-58>
+              x-parser-schema-id: TaskPerformanceRecordedEventsCloudEvent
+            examples:
+              - name: scoredTaskIntegration
+                summary: >-
+                  A task scored at 91.2% of standard, with a 90s idle gap before
+                  it, published for a downstream consumer.
+                payload:
+                  specversion: '1.0'
+                  id: 7a2d5e91-3f04-4c8b-9e12-8b4a6d1c5f30
+                  source: /warehouse/labor-performance
+                  type: >-
+                    com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
+                  subject: assoc-4471
+                  time: '2026-09-05T11:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
+                  data:
+                    task_id: task-10231
+                    associate_id: assoc-4471
+                    task_type: PICK
+                    efficiency_pct: 91.2
+                    actual_seconds: 41
+                    idle_seconds_before: 90
+                    completed_at: '2026-09-05T09:30:00Z'
+              - name: unscorableTaskIntegration
+                summary: >-
+                  A real, counted task that could not be scored, on the
+                  integration topic. efficiency_pct is explicitly null.
+                payload:
+                  specversion: '1.0'
+                  id: 1c9f4b82-6e35-4a07-bd91-2f8e5c3a7d64
+                  source: /warehouse/labor-performance
+                  type: >-
+                    com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
+                  subject: task-10233
+                  time: '2026-09-05T11:05:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
+                  data:
+                    task_id: task-10233
+                    associate_id: ''
+                    task_type: ''
+                    efficiency_pct: null
+                    actual_seconds: 0
+                    idle_seconds_before: null
+                    completed_at: '2026-09-05T09:45:00Z'
+              - name: heavyCaseTeamLiftIntegration
+                summary: >-
+                  A CASE pick scored against the team-lift standard (ADR 0035):
+                  handling_unit and team_lift are present because the completion
+                  carried a handling unit.
+                payload:
+                  specversion: '1.0'
+                  id: 9e4b7c15-2a68-4d03-8f51-6c0a3b9d2e78
+                  source: /warehouse/labor-performance
+                  type: >-
+                    com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
+                  subject: assoc-4471
+                  time: '2026-10-24T11:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
+                  data:
+                    task_id: task-20877
+                    associate_id: assoc-4471
+                    task_type: PICK
+                    efficiency_pct: 100
+                    actual_seconds: 75
+                    idle_seconds_before: null
+                    completed_at: '2026-10-24T09:30:00Z'
+                    handling_unit: CASE
+                    team_lift: true
+            messageId: TaskPerformanceRecordedIntegration
+          - name: LaborStandardDefined
+            title: Labor Standard Defined (integration)
             summary: >-
-              A task scored at 91.2% of standard, with a 90s idle gap before it,
-              published for a downstream consumer.
+              A standard was defined where none was open for its scope —
+              published for other bounded contexts (ADR 0038).
+            description: >-
+              The SAME domain event as the analytics stream's
+              LaborStandardDefined message, with the SAME `data` (field names
+              and types unchanged), on the integration topic and with the
+              `:events:` dataschema. Subject is the standard id; the partition
+              key is the TaskType, so every revision of one task type stays in
+              order. A consumer (e.g. warehouse-planning, which keeps a local
+              copy of the standards) treats the optional fields as optional:
+              messages produced before an additive field existed simply do not
+              carry it.
+            contentType: application/cloudevents+json
+            tags:
+              - name: labor-performance
             payload:
-              specversion: '1.0'
-              id: 7a2d5e91-3f04-4c8b-9e12-8b4a6d1c5f30
-              source: /warehouse/labor-performance
-              type: >-
-                com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
-              subject: assoc-4471
-              time: '2026-09-05T11:00:00Z'
-              datacontenttype: application/json
-              dataschema: >-
-                urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
-              data:
-                task_id: task-10231
-                associate_id: assoc-4471
-                task_type: PICK
-                efficiency_pct: 91.2
-                actual_seconds: 41
-                idle_seconds_before: 90
-                completed_at: '2026-09-05T09:30:00Z'
-          - name: unscorableTaskIntegration
+              title: CloudEvent + LaborStandardDefined data (integration stream)
+              description: >-
+                ADR 0038. Same `type` and same `data` schema as the analytics
+                stream's LaborStandardDefinedCloudEvent; only the dataschema
+                stream segment differs.
+              allOf:
+                - type: object
+                  title: CloudEvents 1.0 envelope (structured mode, ADR 0021)
+                  description: >-
+                    The ONLY envelope on every topic this service produces or
+                    consumes. Every attribute is REQUIRED in this fleet. Kafka
+                    header `content-type: application/cloudevents+json;
+                    charset=UTF-8`. W3C trace context travels in the
+                    `traceparent`/`tracestate` Kafka headers, never as extension
+                    attributes.
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      description: >-
+                        Minted once per domain event and persisted with the
+                        outbox row, so a relay redelivery carries the same id.
+                        The consumer's de-duplication key.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      format: uri-reference
+                      description: >-
+                        `/warehouse/<repo>` of the publisher —
+                        `/warehouse/labor-performance` for everything this
+                        service publishes, `/warehouse/fulfillment-execution`
+                        for TaskCompleted.
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: >-
+                        `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                        Consumers dispatch on the FULL string.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      minLength: 1
+                      description: >-
+                        Id of the aggregate instance the event is about. Never
+                        empty.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      description: The domain event's occurred-at instant, UTC (RFC 3339).
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      format: uri
+                      description: >-
+                        `urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`
+                      x-parser-schema-id: <anonymous-schema-8>
+                    data:
+                      type: object
+                      x-parser-schema-id: <anonymous-schema-9>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      const: >-
+                        com.warehouse.wes.labor-performance.standard.LaborStandardDefined
+                      x-parser-schema-id: <anonymous-schema-71>
+                    dataschema:
+                      const: >-
+                        urn:warehouse:labor-performance:events:LaborStandardDefined:v1
+                      x-parser-schema-id: <anonymous-schema-72>
+                    data:
+                      type: object
+                      required:
+                        - standard_id
+                        - task_type
+                        - expected_seconds
+                        - effective_from
+                      properties:
+                        standard_id:
+                          type: string
+                          description: >-
+                            Identifies this one record in the standard's
+                            append-only history. A revision mints a new id
+                            rather than reusing the prior one.
+                          example: std-0001
+                          x-parser-schema-id: <anonymous-schema-24>
+                        task_type:
+                          type: string
+                          enum:
+                            - PICK
+                            - PACK
+                            - SLAM
+                          description: The task type this standard applies to.
+                          example: PICK
+                          x-parser-schema-id: <anonymous-schema-25>
+                        expected_seconds:
+                          type: integer
+                          format: int64
+                          description: >-
+                            The engineered expected duration. Always greater
+                            than zero.
+                          example: 45
+                          x-parser-schema-id: <anonymous-schema-26>
+                        travel_component_seconds:
+                          type: integer
+                          format: int64
+                          minimum: 0
+                          description: >-
+                            Optional declaration of how much of expected_seconds
+                            is attributable to travel between locations for this
+                            task type. Omitted entirely (not present, not null)
+                            when the standard never declared one — the default,
+                            most common case. This service never computes or
+                            validates it against a live location lookup (ADR
+                            0015).
+                          example: 15
+                          x-parser-schema-id: <anonymous-schema-27>
+                        handling_unit:
+                          type: string
+                          enum:
+                            - EACH
+                            - CASE
+                            - PALLET
+                          description: >-
+                            ADDITIVE (ADR 0035). Present only when the standard
+                            is declared for one handling unit; omitted entirely
+                            (not null) for a task-type-only standard.
+                          example: CASE
+                          x-parser-schema-id: <anonymous-schema-28>
+                        team_lift_threshold_g:
+                          type: integer
+                          format: int64
+                          minimum: 1
+                          description: >-
+                            ADDITIVE (ADR 0035). CASE standards only: the weight
+                            in grams above which a case needs a team lift (two
+                            operators). Present only together with
+                            team_lift_expected_seconds.
+                          example: 18000
+                          x-parser-schema-id: <anonymous-schema-29>
+                        team_lift_expected_seconds:
+                          type: integer
+                          format: int64
+                          minimum: 1
+                          description: >-
+                            ADDITIVE (ADR 0035). CASE standards only: the
+                            engineered elapsed seconds of a team lift. Present
+                            only together with team_lift_threshold_g.
+                          example: 75
+                          x-parser-schema-id: <anonymous-schema-30>
+                        site_code:
+                          type: string
+                          minLength: 1
+                          maxLength: 32
+                          pattern: ^\S+$
+                          description: >-
+                            ADDITIVE (ADR 0038). Present only when the standard
+                            is scoped to one site (a facility-layout site code,
+                            1-32 characters, no whitespace); omitted entirely
+                            (not null, not "") for a site-less standard, which
+                            applies to every site. At most one standard is open
+                            per (task_type, handling_unit, site_code). Scoring
+                            in this service never resolves a site-scoped
+                            standard.
+                          example: SITE-GRU-01
+                          x-parser-schema-id: <anonymous-schema-31>
+                        effective_from:
+                          type: string
+                          format: date-time
+                          description: >-
+                            When the standard came into force. The BUSINESS time
+                            the projector buckets this event on.
+                          example: '2026-09-05T09:00:00Z'
+                          x-parser-schema-id: <anonymous-schema-32>
+                      x-parser-schema-id: LaborStandardDefinedData
+                  x-parser-schema-id: <anonymous-schema-70>
+              x-parser-schema-id: LaborStandardDefinedEventsCloudEvent
+            examples:
+              - name: firstPickStandardIntegration
+                summary: The first PICK standard, 45 seconds, on the integration topic.
+                payload:
+                  specversion: '1.0'
+                  id: 4e2b7f35-a6d8-4c19-8b0e-5f1c3d7a9b62
+                  source: /warehouse/labor-performance
+                  type: >-
+                    com.warehouse.wes.labor-performance.standard.LaborStandardDefined
+                  subject: std-0001
+                  time: '2026-09-05T09:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:labor-performance:events:LaborStandardDefined:v1
+                  data:
+                    standard_id: std-0001
+                    task_type: PICK
+                    expected_seconds: 45
+                    effective_from: '2026-09-05T09:00:00Z'
+              - name: casePickStandardWithTeamLiftIntegration
+                summary: >-
+                  A CASE pick standard (ADR 0035) declaring a heavy-case team
+                  lift, on the integration topic.
+                payload:
+                  specversion: '1.0'
+                  id: 5f3c8a46-b7e9-4d2a-9c1f-6a2d4e8b0c73
+                  source: /warehouse/labor-performance
+                  type: >-
+                    com.warehouse.wes.labor-performance.standard.LaborStandardDefined
+                  subject: std-0004
+                  time: '2026-10-24T08:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:labor-performance:events:LaborStandardDefined:v1
+                  data:
+                    standard_id: std-0004
+                    task_type: PICK
+                    expected_seconds: 30
+                    effective_from: '2026-10-24T08:00:00Z'
+                    handling_unit: CASE
+                    team_lift_threshold_g: 18000
+                    team_lift_expected_seconds: 75
+            messageId: LaborStandardDefinedIntegration
+          - name: LaborStandardRevised
+            title: Labor Standard Revised (integration)
             summary: >-
-              A real, counted task that could not be scored, on the integration
-              topic. efficiency_pct is explicitly null.
+              An open standard was closed and a new one started in its place —
+              published for other bounded contexts (ADR 0038).
+            description: >-
+              The SAME domain event as the analytics stream's
+              LaborStandardRevised message, with the SAME `data`, on the
+              integration topic and with the `:events:` dataschema.
+              `standard_id` is the NEW record; the closed one is never
+              overwritten (append-only history, ADR 0004). Subject is the new
+              standard id; the partition key is the TaskType.
+            contentType: application/cloudevents+json
+            tags:
+              - name: labor-performance
             payload:
-              specversion: '1.0'
-              id: 1c9f4b82-6e35-4a07-bd91-2f8e5c3a7d64
-              source: /warehouse/labor-performance
-              type: >-
-                com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
-              subject: task-10233
-              time: '2026-09-05T11:05:00Z'
-              datacontenttype: application/json
-              dataschema: >-
-                urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
-              data:
-                task_id: task-10233
-                associate_id: ''
-                task_type: ''
-                efficiency_pct: null
-                actual_seconds: 0
-                idle_seconds_before: null
-                completed_at: '2026-09-05T09:45:00Z'
-          - name: heavyCaseTeamLiftIntegration
-            summary: >-
-              A CASE pick scored against the team-lift standard (ADR 0035):
-              handling_unit and team_lift are present because the completion
-              carried a handling unit.
-            payload:
-              specversion: '1.0'
-              id: 9e4b7c15-2a68-4d03-8f51-6c0a3b9d2e78
-              source: /warehouse/labor-performance
-              type: >-
-                com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
-              subject: assoc-4471
-              time: '2026-10-24T11:00:00Z'
-              datacontenttype: application/json
-              dataschema: >-
-                urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
-              data:
-                task_id: task-20877
-                associate_id: assoc-4471
-                task_type: PICK
-                efficiency_pct: 100
-                actual_seconds: 75
-                idle_seconds_before: null
-                completed_at: '2026-10-24T09:30:00Z'
-                handling_unit: CASE
-                team_lift: true
-        messageId: TaskPerformanceRecordedIntegration
+              title: CloudEvent + LaborStandardRevised data (integration stream)
+              description: >-
+                ADR 0038. Same `type` and same `data` schema as the analytics
+                stream's LaborStandardRevisedCloudEvent; only the dataschema
+                stream segment differs.
+              allOf:
+                - type: object
+                  title: CloudEvents 1.0 envelope (structured mode, ADR 0021)
+                  description: >-
+                    The ONLY envelope on every topic this service produces or
+                    consumes. Every attribute is REQUIRED in this fleet. Kafka
+                    header `content-type: application/cloudevents+json;
+                    charset=UTF-8`. W3C trace context travels in the
+                    `traceparent`/`tracestate` Kafka headers, never as extension
+                    attributes.
+                  required:
+                    - specversion
+                    - id
+                    - source
+                    - type
+                    - subject
+                    - time
+                    - datacontenttype
+                    - dataschema
+                    - data
+                  properties:
+                    specversion:
+                      type: string
+                      const: '1.0'
+                      x-parser-schema-id: <anonymous-schema-1>
+                    id:
+                      type: string
+                      format: uuid
+                      description: >-
+                        Minted once per domain event and persisted with the
+                        outbox row, so a relay redelivery carries the same id.
+                        The consumer's de-duplication key.
+                      x-parser-schema-id: <anonymous-schema-2>
+                    source:
+                      type: string
+                      format: uri-reference
+                      description: >-
+                        `/warehouse/<repo>` of the publisher —
+                        `/warehouse/labor-performance` for everything this
+                        service publishes, `/warehouse/fulfillment-execution`
+                        for TaskCompleted.
+                      x-parser-schema-id: <anonymous-schema-3>
+                    type:
+                      type: string
+                      description: >-
+                        `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                        Consumers dispatch on the FULL string.
+                      x-parser-schema-id: <anonymous-schema-4>
+                    subject:
+                      type: string
+                      minLength: 1
+                      description: >-
+                        Id of the aggregate instance the event is about. Never
+                        empty.
+                      x-parser-schema-id: <anonymous-schema-5>
+                    time:
+                      type: string
+                      format: date-time
+                      description: The domain event's occurred-at instant, UTC (RFC 3339).
+                      x-parser-schema-id: <anonymous-schema-6>
+                    datacontenttype:
+                      type: string
+                      const: application/json
+                      x-parser-schema-id: <anonymous-schema-7>
+                    dataschema:
+                      type: string
+                      format: uri
+                      description: >-
+                        `urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`
+                      x-parser-schema-id: <anonymous-schema-8>
+                    data:
+                      type: object
+                      x-parser-schema-id: <anonymous-schema-9>
+                  x-parser-schema-id: CloudEventEnvelope
+                - type: object
+                  properties:
+                    type:
+                      const: >-
+                        com.warehouse.wes.labor-performance.standard.LaborStandardRevised
+                      x-parser-schema-id: <anonymous-schema-74>
+                    dataschema:
+                      const: >-
+                        urn:warehouse:labor-performance:events:LaborStandardRevised:v1
+                      x-parser-schema-id: <anonymous-schema-75>
+                    data:
+                      type: object
+                      required:
+                        - standard_id
+                        - task_type
+                        - previous_expected_seconds
+                        - expected_seconds
+                        - effective_from
+                      properties:
+                        standard_id:
+                          type: string
+                          description: >-
+                            The id of the NEW standard record opened by this
+                            revision.
+                          example: std-0002
+                          x-parser-schema-id: <anonymous-schema-36>
+                        task_type:
+                          type: string
+                          enum:
+                            - PICK
+                            - PACK
+                            - SLAM
+                          example: PICK
+                          x-parser-schema-id: <anonymous-schema-37>
+                        previous_expected_seconds:
+                          type: integer
+                          format: int64
+                          description: >-
+                            The now-closed standard's expected duration, carried
+                            so a consumer can see the size of the change without
+                            joining back to the prior event.
+                          example: 45
+                          x-parser-schema-id: <anonymous-schema-38>
+                        expected_seconds:
+                          type: integer
+                          format: int64
+                          description: The newly effective expected duration.
+                          example: 40
+                          x-parser-schema-id: <anonymous-schema-39>
+                        travel_component_seconds:
+                          type: integer
+                          format: int64
+                          minimum: 0
+                          description: >-
+                            Optional declaration of how much of the NEW
+                            (revised) expected_seconds is attributable to travel
+                            — always the revision's own value, never carried
+                            over from the closed prior standard. Omitted
+                            entirely when the revision does not declare one.
+                          example: 20
+                          x-parser-schema-id: <anonymous-schema-40>
+                        handling_unit:
+                          type: string
+                          enum:
+                            - EACH
+                            - CASE
+                            - PALLET
+                          description: >-
+                            ADDITIVE (ADR 0035). Describes the NEW standard.
+                            Present only when the standard is declared for one
+                            handling unit; omitted entirely (not null) for a
+                            task-type-only standard.
+                          example: CASE
+                          x-parser-schema-id: <anonymous-schema-41>
+                        team_lift_threshold_g:
+                          type: integer
+                          format: int64
+                          minimum: 1
+                          description: >-
+                            ADDITIVE (ADR 0035). CASE standards only: the weight
+                            in grams above which a case needs a team lift (two
+                            operators). Present only together with
+                            team_lift_expected_seconds.
+                          example: 18000
+                          x-parser-schema-id: <anonymous-schema-42>
+                        team_lift_expected_seconds:
+                          type: integer
+                          format: int64
+                          minimum: 1
+                          description: >-
+                            ADDITIVE (ADR 0035). CASE standards only: the
+                            engineered elapsed seconds of a team lift. Present
+                            only together with team_lift_threshold_g.
+                          example: 75
+                          x-parser-schema-id: <anonymous-schema-43>
+                        site_code:
+                          type: string
+                          minLength: 1
+                          maxLength: 32
+                          pattern: ^\S+$
+                          description: >-
+                            ADDITIVE (ADR 0038). The site of the NEW standard,
+                            which is always the site of the closed prior one (a
+                            revision closes only the same (task_type,
+                            handling_unit, site_code)). Present only for a
+                            site-scoped standard; omitted entirely (not null,
+                            not "") for a site-less one.
+                          example: SITE-GRU-01
+                          x-parser-schema-id: <anonymous-schema-44>
+                        effective_from:
+                          type: string
+                          format: date-time
+                          description: >-
+                            When the new standard came into force — the same
+                            instant the prior one was closed. The BUSINESS time
+                            the projector buckets this event on.
+                          example: '2026-09-05T10:00:00Z'
+                          x-parser-schema-id: <anonymous-schema-45>
+                      x-parser-schema-id: LaborStandardRevisedData
+                  x-parser-schema-id: <anonymous-schema-73>
+              x-parser-schema-id: LaborStandardRevisedEventsCloudEvent
+            examples:
+              - name: tightenPickStandardIntegration
+                summary: >-
+                  The PICK standard tightened from 45s to 40s, on the
+                  integration topic.
+                payload:
+                  specversion: '1.0'
+                  id: 6a4d9b57-c8fa-4e3b-8d20-7b3e5f9c1d84
+                  source: /warehouse/labor-performance
+                  type: >-
+                    com.warehouse.wes.labor-performance.standard.LaborStandardRevised
+                  subject: std-0002
+                  time: '2026-09-05T10:00:00Z'
+                  datacontenttype: application/json
+                  dataschema: >-
+                    urn:warehouse:labor-performance:events:LaborStandardRevised:v1
+                  data:
+                    standard_id: std-0002
+                    task_type: PICK
+                    previous_expected_seconds: 45
+                    expected_seconds: 40
+                    effective_from: '2026-09-05T10:00:00Z'
+            messageId: LaborStandardRevisedIntegration
 components:
   messages:
     LaborStandardDefined:
@@ -1586,7 +2137,9 @@ components:
       description: >-
         Raised when DefineStandard creates the first engineered standard for a
         TaskType. The projector counts it into the (task_type, hour-of-
-        effective_from) rollup row.
+        effective_from) rollup row. The same occurrence is also published on the
+        integration topic with the same data (LaborStandardDefinedIntegration,
+        ADR 0038), under its own CloudEvents id.
       contentType: application/cloudevents+json
       tags:
         - name: labor-performance
@@ -1751,6 +2304,21 @@ components:
                       team_lift_threshold_g.
                     example: 75
                     x-parser-schema-id: <anonymous-schema-30>
+                  site_code:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+                    pattern: ^\S+$
+                    description: >-
+                      ADDITIVE (ADR 0038). Present only when the standard is
+                      scoped to one site (a facility-layout site code, 1-32
+                      characters, no whitespace); omitted entirely (not null,
+                      not "") for a site-less standard, which applies to every
+                      site. At most one standard is open per (task_type,
+                      handling_unit, site_code). Scoring in this service never
+                      resolves a site-scoped standard.
+                    example: SITE-GRU-01
+                    x-parser-schema-id: <anonymous-schema-31>
                   effective_from:
                     type: string
                     format: date-time
@@ -1758,7 +2326,7 @@ components:
                       When the standard came into force. The BUSINESS time the
                       projector buckets this event on.
                     example: '2026-09-05T09:00:00Z'
-                    x-parser-schema-id: <anonymous-schema-31>
+                    x-parser-schema-id: <anonymous-schema-32>
                 x-parser-schema-id: LaborStandardDefinedData
             x-parser-schema-id: <anonymous-schema-21>
         x-parser-schema-id: LaborStandardDefinedCloudEvent
@@ -1825,7 +2393,9 @@ components:
         active standard. History is append-only — the prior standard is closed,
         never overwritten (ADR 0004). A bucket with a non-zero revision count is
         one whose efficiency figures span two different yardsticks and are not
-        directly comparable across the boundary.
+        directly comparable across the boundary. The same occurrence is also
+        published on the integration topic with the same data
+        (LaborStandardRevisedIntegration, ADR 0038).
       contentType: application/cloudevents+json
       tags:
         - name: labor-performance
@@ -1906,11 +2476,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wes.labor-performance.standard.LaborStandardRevised
-                x-parser-schema-id: <anonymous-schema-33>
+                x-parser-schema-id: <anonymous-schema-34>
               dataschema:
                 const: >-
                   urn:warehouse:labor-performance:analytics:LaborStandardRevised:v1
-                x-parser-schema-id: <anonymous-schema-34>
+                x-parser-schema-id: <anonymous-schema-35>
               data:
                 type: object
                 required:
@@ -1924,7 +2494,7 @@ components:
                     type: string
                     description: The id of the NEW standard record opened by this revision.
                     example: std-0002
-                    x-parser-schema-id: <anonymous-schema-35>
+                    x-parser-schema-id: <anonymous-schema-36>
                   task_type:
                     type: string
                     enum:
@@ -1932,7 +2502,7 @@ components:
                       - PACK
                       - SLAM
                     example: PICK
-                    x-parser-schema-id: <anonymous-schema-36>
+                    x-parser-schema-id: <anonymous-schema-37>
                   previous_expected_seconds:
                     type: integer
                     format: int64
@@ -1941,13 +2511,13 @@ components:
                       consumer can see the size of the change without joining
                       back to the prior event.
                     example: 45
-                    x-parser-schema-id: <anonymous-schema-37>
+                    x-parser-schema-id: <anonymous-schema-38>
                   expected_seconds:
                     type: integer
                     format: int64
                     description: The newly effective expected duration.
                     example: 40
-                    x-parser-schema-id: <anonymous-schema-38>
+                    x-parser-schema-id: <anonymous-schema-39>
                   travel_component_seconds:
                     type: integer
                     format: int64
@@ -1959,7 +2529,7 @@ components:
                       prior standard. Omitted entirely when the revision does
                       not declare one.
                     example: 20
-                    x-parser-schema-id: <anonymous-schema-39>
+                    x-parser-schema-id: <anonymous-schema-40>
                   handling_unit:
                     type: string
                     enum:
@@ -1971,7 +2541,7 @@ components:
                       only when the standard is declared for one handling unit;
                       omitted entirely (not null) for a task-type-only standard.
                     example: CASE
-                    x-parser-schema-id: <anonymous-schema-40>
+                    x-parser-schema-id: <anonymous-schema-41>
                   team_lift_threshold_g:
                     type: integer
                     format: int64
@@ -1982,7 +2552,7 @@ components:
                       operators). Present only together with
                       team_lift_expected_seconds.
                     example: 18000
-                    x-parser-schema-id: <anonymous-schema-41>
+                    x-parser-schema-id: <anonymous-schema-42>
                   team_lift_expected_seconds:
                     type: integer
                     format: int64
@@ -1992,7 +2562,20 @@ components:
                       elapsed seconds of a team lift. Present only together with
                       team_lift_threshold_g.
                     example: 75
-                    x-parser-schema-id: <anonymous-schema-42>
+                    x-parser-schema-id: <anonymous-schema-43>
+                  site_code:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+                    pattern: ^\S+$
+                    description: >-
+                      ADDITIVE (ADR 0038). The site of the NEW standard, which
+                      is always the site of the closed prior one (a revision
+                      closes only the same (task_type, handling_unit,
+                      site_code)). Present only for a site-scoped standard;
+                      omitted entirely (not null, not "") for a site-less one.
+                    example: SITE-GRU-01
+                    x-parser-schema-id: <anonymous-schema-44>
                   effective_from:
                     type: string
                     format: date-time
@@ -2001,9 +2584,9 @@ components:
                       the prior one was closed. The BUSINESS time the projector
                       buckets this event on.
                     example: '2026-09-05T10:00:00Z'
-                    x-parser-schema-id: <anonymous-schema-43>
+                    x-parser-schema-id: <anonymous-schema-45>
                 x-parser-schema-id: LaborStandardRevisedData
-            x-parser-schema-id: <anonymous-schema-32>
+            x-parser-schema-id: <anonymous-schema-33>
         x-parser-schema-id: LaborStandardRevisedCloudEvent
       examples:
         - name: tightenPickStandard
@@ -2124,11 +2707,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
-                x-parser-schema-id: <anonymous-schema-45>
+                x-parser-schema-id: <anonymous-schema-47>
               dataschema:
                 const: >-
                   urn:warehouse:labor-performance:analytics:TaskPerformanceRecorded:v1
-                x-parser-schema-id: <anonymous-schema-46>
+                x-parser-schema-id: <anonymous-schema-48>
               data:
                 type: object
                 required:
@@ -2147,7 +2730,7 @@ components:
                       foreign reference. This context does not own or validate
                       it.
                     example: task-10231
-                    x-parser-schema-id: <anonymous-schema-47>
+                    x-parser-schema-id: <anonymous-schema-49>
                   associate_id:
                     type: string
                     description: >-
@@ -2157,7 +2740,7 @@ components:
                       is still counted in task-type reporting; it is only
                       excluded from per-associate scorecards.
                     example: assoc-4471
-                    x-parser-schema-id: <anonymous-schema-48>
+                    x-parser-schema-id: <anonymous-schema-50>
                   task_type:
                     type: string
                     description: >-
@@ -2167,7 +2750,7 @@ components:
                       case `UNCLASSIFIED` rather than dropping the row or keying
                       its fact table on an empty string.
                     example: PICK
-                    x-parser-schema-id: <anonymous-schema-49>
+                    x-parser-schema-id: <anonymous-schema-51>
                   efficiency_pct:
                     type: number
                     format: double
@@ -2181,7 +2764,7 @@ components:
                       ("unmeasurable"), never an error and never to be coerced
                       to 0 by a consumer.
                     example: 86.5
-                    x-parser-schema-id: <anonymous-schema-50>
+                    x-parser-schema-id: <anonymous-schema-52>
                   actual_seconds:
                     type: integer
                     format: int64
@@ -2190,7 +2773,7 @@ components:
                       duration_seconds. `0` means unmeasurable and is excluded
                       from any mean-duration aggregate.
                     example: 52
-                    x-parser-schema-id: <anonymous-schema-51>
+                    x-parser-schema-id: <anonymous-schema-53>
                   idle_seconds_before:
                     type: integer
                     format: int64
@@ -2207,7 +2790,7 @@ components:
                       ADDITIVE field: a Conformist unmarshaling
                       unknown-field-tolerant JSON is unaffected by its presence.
                     example: 90
-                    x-parser-schema-id: <anonymous-schema-52>
+                    x-parser-schema-id: <anonymous-schema-54>
                   handling_unit:
                     type: string
                     enum:
@@ -2220,7 +2803,7 @@ components:
                       TaskCompleted event carried none, so a completion without
                       one keeps the pre-ADR-0035 payload byte-for-byte.
                     example: CASE
-                    x-parser-schema-id: <anonymous-schema-53>
+                    x-parser-schema-id: <anonymous-schema-55>
                   team_lift:
                     type: boolean
                     description: >-
@@ -2229,7 +2812,7 @@ components:
                       the CASE standard's team-lift time (the case was heavier
                       than the declared threshold).
                     example: false
-                    x-parser-schema-id: <anonymous-schema-54>
+                    x-parser-schema-id: <anonymous-schema-56>
                   completed_at:
                     type: string
                     format: date-time
@@ -2239,9 +2822,9 @@ components:
                       the CloudEvents `time`, so a replayed or late-ingested
                       event lands in the hour the work really happened.
                     example: '2026-09-05T09:30:00Z'
-                    x-parser-schema-id: <anonymous-schema-55>
+                    x-parser-schema-id: <anonymous-schema-57>
                 x-parser-schema-id: TaskPerformanceRecordedAnalyticsData
-            x-parser-schema-id: <anonymous-schema-44>
+            x-parser-schema-id: <anonymous-schema-46>
         x-parser-schema-id: TaskPerformanceRecordedAnalyticsCloudEvent
       examples:
         - name: scoredTask
@@ -2391,11 +2974,11 @@ components:
               type:
                 const: >-
                   com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
-                x-parser-schema-id: <anonymous-schema-57>
+                x-parser-schema-id: <anonymous-schema-59>
               dataschema:
                 const: >-
                   urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
-                x-parser-schema-id: <anonymous-schema-58>
+                x-parser-schema-id: <anonymous-schema-60>
               data:
                 type: object
                 required:
@@ -2414,7 +2997,7 @@ components:
                       foreign reference. This context does not own or validate
                       it.
                     example: task-10231
-                    x-parser-schema-id: <anonymous-schema-59>
+                    x-parser-schema-id: <anonymous-schema-61>
                   associate_id:
                     type: string
                     description: >-
@@ -2423,7 +3006,7 @@ components:
                       expected value: the completing station had no checked-in
                       occupant (e.g. a robot station).
                     example: assoc-4471
-                    x-parser-schema-id: <anonymous-schema-60>
+                    x-parser-schema-id: <anonymous-schema-62>
                   task_type:
                     type: string
                     description: >-
@@ -2431,7 +3014,7 @@ components:
                       could not be resolved (see the analytics payload's
                       identical field for why this is common today).
                     example: PICK
-                    x-parser-schema-id: <anonymous-schema-61>
+                    x-parser-schema-id: <anonymous-schema-63>
                   efficiency_pct:
                     type: number
                     format: double
@@ -2442,13 +3025,13 @@ components:
                       business fact ("unmeasurable"); a consumer MUST NOT coerce
                       it to 0.
                     example: 91.2
-                    x-parser-schema-id: <anonymous-schema-62>
+                    x-parser-schema-id: <anonymous-schema-64>
                   actual_seconds:
                     type: integer
                     format: int64
                     description: The measured duration. `0` means unmeasurable.
                     example: 41
-                    x-parser-schema-id: <anonymous-schema-63>
+                    x-parser-schema-id: <anonymous-schema-65>
                   idle_seconds_before:
                     type: integer
                     format: int64
@@ -2464,7 +3047,7 @@ components:
                       tolerant JSON (e.g. workforce-management's
                       laborperformancecache) is unaffected by its presence.
                     example: 90
-                    x-parser-schema-id: <anonymous-schema-64>
+                    x-parser-schema-id: <anonymous-schema-66>
                   handling_unit:
                     type: string
                     enum:
@@ -2477,7 +3060,7 @@ components:
                       TaskCompleted event carried none, so a completion without
                       one keeps the pre-ADR-0035 payload byte-for-byte.
                     example: CASE
-                    x-parser-schema-id: <anonymous-schema-65>
+                    x-parser-schema-id: <anonymous-schema-67>
                   team_lift:
                     type: boolean
                     description: >-
@@ -2486,7 +3069,7 @@ components:
                       the CASE standard's team-lift time (the case was heavier
                       than the declared threshold).
                     example: false
-                    x-parser-schema-id: <anonymous-schema-66>
+                    x-parser-schema-id: <anonymous-schema-68>
                   completed_at:
                     type: string
                     format: date-time
@@ -2495,9 +3078,9 @@ components:
                       BUSINESS time, distinct from the CloudEvents `time`
                       attribute.
                     example: '2026-09-05T09:30:00Z'
-                    x-parser-schema-id: <anonymous-schema-67>
+                    x-parser-schema-id: <anonymous-schema-69>
                 x-parser-schema-id: TaskPerformanceRecordedEventsData
-            x-parser-schema-id: <anonymous-schema-56>
+            x-parser-schema-id: <anonymous-schema-58>
         x-parser-schema-id: TaskPerformanceRecordedEventsCloudEvent
       examples:
         - name: scoredTaskIntegration
@@ -2570,6 +3153,481 @@ components:
               handling_unit: CASE
               team_lift: true
       messageId: TaskPerformanceRecordedIntegration
+    LaborStandardDefinedIntegration:
+      name: LaborStandardDefined
+      title: Labor Standard Defined (integration)
+      summary: >-
+        A standard was defined where none was open for its scope — published for
+        other bounded contexts (ADR 0038).
+      description: >-
+        The SAME domain event as the analytics stream's LaborStandardDefined
+        message, with the SAME `data` (field names and types unchanged), on the
+        integration topic and with the `:events:` dataschema. Subject is the
+        standard id; the partition key is the TaskType, so every revision of one
+        task type stays in order. A consumer (e.g. warehouse-planning, which
+        keeps a local copy of the standards) treats the optional fields as
+        optional: messages produced before an additive field existed simply do
+        not carry it.
+      contentType: application/cloudevents+json
+      tags:
+        - name: labor-performance
+      payload:
+        title: CloudEvent + LaborStandardDefined data (integration stream)
+        description: >-
+          ADR 0038. Same `type` and same `data` schema as the analytics stream's
+          LaborStandardDefinedCloudEvent; only the dataschema stream segment
+          differs.
+        allOf:
+          - type: object
+            title: CloudEvents 1.0 envelope (structured mode, ADR 0021)
+            description: >-
+              The ONLY envelope on every topic this service produces or
+              consumes. Every attribute is REQUIRED in this fleet. Kafka header
+              `content-type: application/cloudevents+json; charset=UTF-8`. W3C
+              trace context travels in the `traceparent`/`tracestate` Kafka
+              headers, never as extension attributes.
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                description: >-
+                  Minted once per domain event and persisted with the outbox
+                  row, so a relay redelivery carries the same id. The consumer's
+                  de-duplication key.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                format: uri-reference
+                description: >-
+                  `/warehouse/<repo>` of the publisher —
+                  `/warehouse/labor-performance` for everything this service
+                  publishes, `/warehouse/fulfillment-execution` for
+                  TaskCompleted.
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: >-
+                  `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                  Consumers dispatch on the FULL string.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                minLength: 1
+                description: Id of the aggregate instance the event is about. Never empty.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                description: The domain event's occurred-at instant, UTC (RFC 3339).
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                format: uri
+                description: '`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`'
+                x-parser-schema-id: <anonymous-schema-8>
+              data:
+                type: object
+                x-parser-schema-id: <anonymous-schema-9>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                const: >-
+                  com.warehouse.wes.labor-performance.standard.LaborStandardDefined
+                x-parser-schema-id: <anonymous-schema-71>
+              dataschema:
+                const: urn:warehouse:labor-performance:events:LaborStandardDefined:v1
+                x-parser-schema-id: <anonymous-schema-72>
+              data:
+                type: object
+                required:
+                  - standard_id
+                  - task_type
+                  - expected_seconds
+                  - effective_from
+                properties:
+                  standard_id:
+                    type: string
+                    description: >-
+                      Identifies this one record in the standard's append-only
+                      history. A revision mints a new id rather than reusing the
+                      prior one.
+                    example: std-0001
+                    x-parser-schema-id: <anonymous-schema-24>
+                  task_type:
+                    type: string
+                    enum:
+                      - PICK
+                      - PACK
+                      - SLAM
+                    description: The task type this standard applies to.
+                    example: PICK
+                    x-parser-schema-id: <anonymous-schema-25>
+                  expected_seconds:
+                    type: integer
+                    format: int64
+                    description: >-
+                      The engineered expected duration. Always greater than
+                      zero.
+                    example: 45
+                    x-parser-schema-id: <anonymous-schema-26>
+                  travel_component_seconds:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    description: >-
+                      Optional declaration of how much of expected_seconds is
+                      attributable to travel between locations for this task
+                      type. Omitted entirely (not present, not null) when the
+                      standard never declared one — the default, most common
+                      case. This service never computes or validates it against
+                      a live location lookup (ADR 0015).
+                    example: 15
+                    x-parser-schema-id: <anonymous-schema-27>
+                  handling_unit:
+                    type: string
+                    enum:
+                      - EACH
+                      - CASE
+                      - PALLET
+                    description: >-
+                      ADDITIVE (ADR 0035). Present only when the standard is
+                      declared for one handling unit; omitted entirely (not
+                      null) for a task-type-only standard.
+                    example: CASE
+                    x-parser-schema-id: <anonymous-schema-28>
+                  team_lift_threshold_g:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                    description: >-
+                      ADDITIVE (ADR 0035). CASE standards only: the weight in
+                      grams above which a case needs a team lift (two
+                      operators). Present only together with
+                      team_lift_expected_seconds.
+                    example: 18000
+                    x-parser-schema-id: <anonymous-schema-29>
+                  team_lift_expected_seconds:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                    description: >-
+                      ADDITIVE (ADR 0035). CASE standards only: the engineered
+                      elapsed seconds of a team lift. Present only together with
+                      team_lift_threshold_g.
+                    example: 75
+                    x-parser-schema-id: <anonymous-schema-30>
+                  site_code:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+                    pattern: ^\S+$
+                    description: >-
+                      ADDITIVE (ADR 0038). Present only when the standard is
+                      scoped to one site (a facility-layout site code, 1-32
+                      characters, no whitespace); omitted entirely (not null,
+                      not "") for a site-less standard, which applies to every
+                      site. At most one standard is open per (task_type,
+                      handling_unit, site_code). Scoring in this service never
+                      resolves a site-scoped standard.
+                    example: SITE-GRU-01
+                    x-parser-schema-id: <anonymous-schema-31>
+                  effective_from:
+                    type: string
+                    format: date-time
+                    description: >-
+                      When the standard came into force. The BUSINESS time the
+                      projector buckets this event on.
+                    example: '2026-09-05T09:00:00Z'
+                    x-parser-schema-id: <anonymous-schema-32>
+                x-parser-schema-id: LaborStandardDefinedData
+            x-parser-schema-id: <anonymous-schema-70>
+        x-parser-schema-id: LaborStandardDefinedEventsCloudEvent
+      examples:
+        - name: firstPickStandardIntegration
+          summary: The first PICK standard, 45 seconds, on the integration topic.
+          payload:
+            specversion: '1.0'
+            id: 4e2b7f35-a6d8-4c19-8b0e-5f1c3d7a9b62
+            source: /warehouse/labor-performance
+            type: com.warehouse.wes.labor-performance.standard.LaborStandardDefined
+            subject: std-0001
+            time: '2026-09-05T09:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:labor-performance:events:LaborStandardDefined:v1
+            data:
+              standard_id: std-0001
+              task_type: PICK
+              expected_seconds: 45
+              effective_from: '2026-09-05T09:00:00Z'
+        - name: casePickStandardWithTeamLiftIntegration
+          summary: >-
+            A CASE pick standard (ADR 0035) declaring a heavy-case team lift, on
+            the integration topic.
+          payload:
+            specversion: '1.0'
+            id: 5f3c8a46-b7e9-4d2a-9c1f-6a2d4e8b0c73
+            source: /warehouse/labor-performance
+            type: com.warehouse.wes.labor-performance.standard.LaborStandardDefined
+            subject: std-0004
+            time: '2026-10-24T08:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:labor-performance:events:LaborStandardDefined:v1
+            data:
+              standard_id: std-0004
+              task_type: PICK
+              expected_seconds: 30
+              effective_from: '2026-10-24T08:00:00Z'
+              handling_unit: CASE
+              team_lift_threshold_g: 18000
+              team_lift_expected_seconds: 75
+      messageId: LaborStandardDefinedIntegration
+    LaborStandardRevisedIntegration:
+      name: LaborStandardRevised
+      title: Labor Standard Revised (integration)
+      summary: >-
+        An open standard was closed and a new one started in its place —
+        published for other bounded contexts (ADR 0038).
+      description: >-
+        The SAME domain event as the analytics stream's LaborStandardRevised
+        message, with the SAME `data`, on the integration topic and with the
+        `:events:` dataschema. `standard_id` is the NEW record; the closed one
+        is never overwritten (append-only history, ADR 0004). Subject is the new
+        standard id; the partition key is the TaskType.
+      contentType: application/cloudevents+json
+      tags:
+        - name: labor-performance
+      payload:
+        title: CloudEvent + LaborStandardRevised data (integration stream)
+        description: >-
+          ADR 0038. Same `type` and same `data` schema as the analytics stream's
+          LaborStandardRevisedCloudEvent; only the dataschema stream segment
+          differs.
+        allOf:
+          - type: object
+            title: CloudEvents 1.0 envelope (structured mode, ADR 0021)
+            description: >-
+              The ONLY envelope on every topic this service produces or
+              consumes. Every attribute is REQUIRED in this fleet. Kafka header
+              `content-type: application/cloudevents+json; charset=UTF-8`. W3C
+              trace context travels in the `traceparent`/`tracestate` Kafka
+              headers, never as extension attributes.
+            required:
+              - specversion
+              - id
+              - source
+              - type
+              - subject
+              - time
+              - datacontenttype
+              - dataschema
+              - data
+            properties:
+              specversion:
+                type: string
+                const: '1.0'
+                x-parser-schema-id: <anonymous-schema-1>
+              id:
+                type: string
+                format: uuid
+                description: >-
+                  Minted once per domain event and persisted with the outbox
+                  row, so a relay redelivery carries the same id. The consumer's
+                  de-duplication key.
+                x-parser-schema-id: <anonymous-schema-2>
+              source:
+                type: string
+                format: uri-reference
+                description: >-
+                  `/warehouse/<repo>` of the publisher —
+                  `/warehouse/labor-performance` for everything this service
+                  publishes, `/warehouse/fulfillment-execution` for
+                  TaskCompleted.
+                x-parser-schema-id: <anonymous-schema-3>
+              type:
+                type: string
+                description: >-
+                  `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                  Consumers dispatch on the FULL string.
+                x-parser-schema-id: <anonymous-schema-4>
+              subject:
+                type: string
+                minLength: 1
+                description: Id of the aggregate instance the event is about. Never empty.
+                x-parser-schema-id: <anonymous-schema-5>
+              time:
+                type: string
+                format: date-time
+                description: The domain event's occurred-at instant, UTC (RFC 3339).
+                x-parser-schema-id: <anonymous-schema-6>
+              datacontenttype:
+                type: string
+                const: application/json
+                x-parser-schema-id: <anonymous-schema-7>
+              dataschema:
+                type: string
+                format: uri
+                description: '`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`'
+                x-parser-schema-id: <anonymous-schema-8>
+              data:
+                type: object
+                x-parser-schema-id: <anonymous-schema-9>
+            x-parser-schema-id: CloudEventEnvelope
+          - type: object
+            properties:
+              type:
+                const: >-
+                  com.warehouse.wes.labor-performance.standard.LaborStandardRevised
+                x-parser-schema-id: <anonymous-schema-74>
+              dataschema:
+                const: urn:warehouse:labor-performance:events:LaborStandardRevised:v1
+                x-parser-schema-id: <anonymous-schema-75>
+              data:
+                type: object
+                required:
+                  - standard_id
+                  - task_type
+                  - previous_expected_seconds
+                  - expected_seconds
+                  - effective_from
+                properties:
+                  standard_id:
+                    type: string
+                    description: The id of the NEW standard record opened by this revision.
+                    example: std-0002
+                    x-parser-schema-id: <anonymous-schema-36>
+                  task_type:
+                    type: string
+                    enum:
+                      - PICK
+                      - PACK
+                      - SLAM
+                    example: PICK
+                    x-parser-schema-id: <anonymous-schema-37>
+                  previous_expected_seconds:
+                    type: integer
+                    format: int64
+                    description: >-
+                      The now-closed standard's expected duration, carried so a
+                      consumer can see the size of the change without joining
+                      back to the prior event.
+                    example: 45
+                    x-parser-schema-id: <anonymous-schema-38>
+                  expected_seconds:
+                    type: integer
+                    format: int64
+                    description: The newly effective expected duration.
+                    example: 40
+                    x-parser-schema-id: <anonymous-schema-39>
+                  travel_component_seconds:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    description: >-
+                      Optional declaration of how much of the NEW (revised)
+                      expected_seconds is attributable to travel — always the
+                      revision's own value, never carried over from the closed
+                      prior standard. Omitted entirely when the revision does
+                      not declare one.
+                    example: 20
+                    x-parser-schema-id: <anonymous-schema-40>
+                  handling_unit:
+                    type: string
+                    enum:
+                      - EACH
+                      - CASE
+                      - PALLET
+                    description: >-
+                      ADDITIVE (ADR 0035). Describes the NEW standard. Present
+                      only when the standard is declared for one handling unit;
+                      omitted entirely (not null) for a task-type-only standard.
+                    example: CASE
+                    x-parser-schema-id: <anonymous-schema-41>
+                  team_lift_threshold_g:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                    description: >-
+                      ADDITIVE (ADR 0035). CASE standards only: the weight in
+                      grams above which a case needs a team lift (two
+                      operators). Present only together with
+                      team_lift_expected_seconds.
+                    example: 18000
+                    x-parser-schema-id: <anonymous-schema-42>
+                  team_lift_expected_seconds:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                    description: >-
+                      ADDITIVE (ADR 0035). CASE standards only: the engineered
+                      elapsed seconds of a team lift. Present only together with
+                      team_lift_threshold_g.
+                    example: 75
+                    x-parser-schema-id: <anonymous-schema-43>
+                  site_code:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+                    pattern: ^\S+$
+                    description: >-
+                      ADDITIVE (ADR 0038). The site of the NEW standard, which
+                      is always the site of the closed prior one (a revision
+                      closes only the same (task_type, handling_unit,
+                      site_code)). Present only for a site-scoped standard;
+                      omitted entirely (not null, not "") for a site-less one.
+                    example: SITE-GRU-01
+                    x-parser-schema-id: <anonymous-schema-44>
+                  effective_from:
+                    type: string
+                    format: date-time
+                    description: >-
+                      When the new standard came into force — the same instant
+                      the prior one was closed. The BUSINESS time the projector
+                      buckets this event on.
+                    example: '2026-09-05T10:00:00Z'
+                    x-parser-schema-id: <anonymous-schema-45>
+                x-parser-schema-id: LaborStandardRevisedData
+            x-parser-schema-id: <anonymous-schema-73>
+        x-parser-schema-id: LaborStandardRevisedEventsCloudEvent
+      examples:
+        - name: tightenPickStandardIntegration
+          summary: >-
+            The PICK standard tightened from 45s to 40s, on the integration
+            topic.
+          payload:
+            specversion: '1.0'
+            id: 6a4d9b57-c8fa-4e3b-8d20-7b3e5f9c1d84
+            source: /warehouse/labor-performance
+            type: com.warehouse.wes.labor-performance.standard.LaborStandardRevised
+            subject: std-0002
+            time: '2026-09-05T10:00:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:labor-performance:events:LaborStandardRevised:v1
+            data:
+              standard_id: std-0002
+              task_type: PICK
+              previous_expected_seconds: 45
+              expected_seconds: 40
+              effective_from: '2026-09-05T10:00:00Z'
+      messageId: LaborStandardRevisedIntegration
     TaskCompleted:
       name: TaskCompleted
       title: Task Completed
@@ -3249,6 +4307,21 @@ components:
                     team_lift_threshold_g.
                   example: 75
                   x-parser-schema-id: <anonymous-schema-30>
+                site_code:
+                  type: string
+                  minLength: 1
+                  maxLength: 32
+                  pattern: ^\S+$
+                  description: >-
+                    ADDITIVE (ADR 0038). Present only when the standard is
+                    scoped to one site (a facility-layout site code, 1-32
+                    characters, no whitespace); omitted entirely (not null, not
+                    "") for a site-less standard, which applies to every site.
+                    At most one standard is open per (task_type, handling_unit,
+                    site_code). Scoring in this service never resolves a
+                    site-scoped standard.
+                  example: SITE-GRU-01
+                  x-parser-schema-id: <anonymous-schema-31>
                 effective_from:
                   type: string
                   format: date-time
@@ -3256,7 +4329,7 @@ components:
                     When the standard came into force. The BUSINESS time the
                     projector buckets this event on.
                   example: '2026-09-05T09:00:00Z'
-                  x-parser-schema-id: <anonymous-schema-31>
+                  x-parser-schema-id: <anonymous-schema-32>
               x-parser-schema-id: LaborStandardDefinedData
           x-parser-schema-id: <anonymous-schema-21>
       x-parser-schema-id: LaborStandardDefinedCloudEvent
@@ -3336,11 +4409,11 @@ components:
             type:
               const: >-
                 com.warehouse.wes.labor-performance.standard.LaborStandardRevised
-              x-parser-schema-id: <anonymous-schema-33>
+              x-parser-schema-id: <anonymous-schema-34>
             dataschema:
               const: >-
                 urn:warehouse:labor-performance:analytics:LaborStandardRevised:v1
-              x-parser-schema-id: <anonymous-schema-34>
+              x-parser-schema-id: <anonymous-schema-35>
             data:
               type: object
               required:
@@ -3354,7 +4427,7 @@ components:
                   type: string
                   description: The id of the NEW standard record opened by this revision.
                   example: std-0002
-                  x-parser-schema-id: <anonymous-schema-35>
+                  x-parser-schema-id: <anonymous-schema-36>
                 task_type:
                   type: string
                   enum:
@@ -3362,7 +4435,7 @@ components:
                     - PACK
                     - SLAM
                   example: PICK
-                  x-parser-schema-id: <anonymous-schema-36>
+                  x-parser-schema-id: <anonymous-schema-37>
                 previous_expected_seconds:
                   type: integer
                   format: int64
@@ -3371,13 +4444,13 @@ components:
                     consumer can see the size of the change without joining back
                     to the prior event.
                   example: 45
-                  x-parser-schema-id: <anonymous-schema-37>
+                  x-parser-schema-id: <anonymous-schema-38>
                 expected_seconds:
                   type: integer
                   format: int64
                   description: The newly effective expected duration.
                   example: 40
-                  x-parser-schema-id: <anonymous-schema-38>
+                  x-parser-schema-id: <anonymous-schema-39>
                 travel_component_seconds:
                   type: integer
                   format: int64
@@ -3389,7 +4462,7 @@ components:
                     prior standard. Omitted entirely when the revision does not
                     declare one.
                   example: 20
-                  x-parser-schema-id: <anonymous-schema-39>
+                  x-parser-schema-id: <anonymous-schema-40>
                 handling_unit:
                   type: string
                   enum:
@@ -3401,7 +4474,7 @@ components:
                     only when the standard is declared for one handling unit;
                     omitted entirely (not null) for a task-type-only standard.
                   example: CASE
-                  x-parser-schema-id: <anonymous-schema-40>
+                  x-parser-schema-id: <anonymous-schema-41>
                 team_lift_threshold_g:
                   type: integer
                   format: int64
@@ -3411,7 +4484,7 @@ components:
                     grams above which a case needs a team lift (two operators).
                     Present only together with team_lift_expected_seconds.
                   example: 18000
-                  x-parser-schema-id: <anonymous-schema-41>
+                  x-parser-schema-id: <anonymous-schema-42>
                 team_lift_expected_seconds:
                   type: integer
                   format: int64
@@ -3421,7 +4494,20 @@ components:
                     elapsed seconds of a team lift. Present only together with
                     team_lift_threshold_g.
                   example: 75
-                  x-parser-schema-id: <anonymous-schema-42>
+                  x-parser-schema-id: <anonymous-schema-43>
+                site_code:
+                  type: string
+                  minLength: 1
+                  maxLength: 32
+                  pattern: ^\S+$
+                  description: >-
+                    ADDITIVE (ADR 0038). The site of the NEW standard, which is
+                    always the site of the closed prior one (a revision closes
+                    only the same (task_type, handling_unit, site_code)).
+                    Present only for a site-scoped standard; omitted entirely
+                    (not null, not "") for a site-less one.
+                  example: SITE-GRU-01
+                  x-parser-schema-id: <anonymous-schema-44>
                 effective_from:
                   type: string
                   format: date-time
@@ -3430,9 +4516,9 @@ components:
                     prior one was closed. The BUSINESS time the projector
                     buckets this event on.
                   example: '2026-09-05T10:00:00Z'
-                  x-parser-schema-id: <anonymous-schema-43>
+                  x-parser-schema-id: <anonymous-schema-45>
               x-parser-schema-id: LaborStandardRevisedData
-          x-parser-schema-id: <anonymous-schema-32>
+          x-parser-schema-id: <anonymous-schema-33>
       x-parser-schema-id: LaborStandardRevisedCloudEvent
     TaskPerformanceRecordedAnalyticsCloudEvent:
       title: CloudEvent + TaskPerformanceRecorded data (analytics stream)
@@ -3510,11 +4596,11 @@ components:
             type:
               const: >-
                 com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
-              x-parser-schema-id: <anonymous-schema-45>
+              x-parser-schema-id: <anonymous-schema-47>
             dataschema:
               const: >-
                 urn:warehouse:labor-performance:analytics:TaskPerformanceRecorded:v1
-              x-parser-schema-id: <anonymous-schema-46>
+              x-parser-schema-id: <anonymous-schema-48>
             data:
               type: object
               required:
@@ -3532,7 +4618,7 @@ components:
                     fulfillment-execution's task id, treated as an opaque
                     foreign reference. This context does not own or validate it.
                   example: task-10231
-                  x-parser-schema-id: <anonymous-schema-47>
+                  x-parser-schema-id: <anonymous-schema-49>
                 associate_id:
                   type: string
                   description: >-
@@ -3542,7 +4628,7 @@ components:
                     still counted in task-type reporting; it is only excluded
                     from per-associate scorecards.
                   example: assoc-4471
-                  x-parser-schema-id: <anonymous-schema-48>
+                  x-parser-schema-id: <anonymous-schema-50>
                 task_type:
                   type: string
                   description: >-
@@ -3552,7 +4638,7 @@ components:
                     `UNCLASSIFIED` rather than dropping the row or keying its
                     fact table on an empty string.
                   example: PICK
-                  x-parser-schema-id: <anonymous-schema-49>
+                  x-parser-schema-id: <anonymous-schema-51>
                 efficiency_pct:
                   type: number
                   format: double
@@ -3565,7 +4651,7 @@ components:
                     duration. NULL is a real business fact ("unmeasurable"),
                     never an error and never to be coerced to 0 by a consumer.
                   example: 86.5
-                  x-parser-schema-id: <anonymous-schema-50>
+                  x-parser-schema-id: <anonymous-schema-52>
                 actual_seconds:
                   type: integer
                   format: int64
@@ -3574,7 +4660,7 @@ components:
                     duration_seconds. `0` means unmeasurable and is excluded
                     from any mean-duration aggregate.
                   example: 52
-                  x-parser-schema-id: <anonymous-schema-51>
+                  x-parser-schema-id: <anonymous-schema-53>
                 idle_seconds_before:
                   type: integer
                   format: int64
@@ -3590,7 +4676,7 @@ components:
                     occupant. ADDITIVE field: a Conformist unmarshaling
                     unknown-field-tolerant JSON is unaffected by its presence.
                   example: 90
-                  x-parser-schema-id: <anonymous-schema-52>
+                  x-parser-schema-id: <anonymous-schema-54>
                 handling_unit:
                   type: string
                   enum:
@@ -3603,7 +4689,7 @@ components:
                     event carried none, so a completion without one keeps the
                     pre-ADR-0035 payload byte-for-byte.
                   example: CASE
-                  x-parser-schema-id: <anonymous-schema-53>
+                  x-parser-schema-id: <anonymous-schema-55>
                 team_lift:
                   type: boolean
                   description: >-
@@ -3612,7 +4698,7 @@ components:
                     the CASE standard's team-lift time (the case was heavier
                     than the declared threshold).
                   example: false
-                  x-parser-schema-id: <anonymous-schema-54>
+                  x-parser-schema-id: <anonymous-schema-56>
                 completed_at:
                   type: string
                   format: date-time
@@ -3622,9 +4708,9 @@ components:
                     CloudEvents `time`, so a replayed or late-ingested event
                     lands in the hour the work really happened.
                   example: '2026-09-05T09:30:00Z'
-                  x-parser-schema-id: <anonymous-schema-55>
+                  x-parser-schema-id: <anonymous-schema-57>
               x-parser-schema-id: TaskPerformanceRecordedAnalyticsData
-          x-parser-schema-id: <anonymous-schema-44>
+          x-parser-schema-id: <anonymous-schema-46>
       x-parser-schema-id: TaskPerformanceRecordedAnalyticsCloudEvent
     TaskPerformanceRecordedEventsCloudEvent:
       title: CloudEvent + TaskPerformanceRecorded data (integration stream)
@@ -3702,11 +4788,11 @@ components:
             type:
               const: >-
                 com.warehouse.wes.labor-performance.performance.TaskPerformanceRecorded
-              x-parser-schema-id: <anonymous-schema-57>
+              x-parser-schema-id: <anonymous-schema-59>
             dataschema:
               const: >-
                 urn:warehouse:labor-performance:events:TaskPerformanceRecorded:v1
-              x-parser-schema-id: <anonymous-schema-58>
+              x-parser-schema-id: <anonymous-schema-60>
             data:
               type: object
               required:
@@ -3724,7 +4810,7 @@ components:
                     fulfillment-execution's task id, treated as an opaque
                     foreign reference. This context does not own or validate it.
                   example: task-10231
-                  x-parser-schema-id: <anonymous-schema-59>
+                  x-parser-schema-id: <anonymous-schema-61>
                 associate_id:
                   type: string
                   description: >-
@@ -3733,7 +4819,7 @@ components:
                     value: the completing station had no checked-in occupant
                     (e.g. a robot station).
                   example: assoc-4471
-                  x-parser-schema-id: <anonymous-schema-60>
+                  x-parser-schema-id: <anonymous-schema-62>
                 task_type:
                   type: string
                   description: >-
@@ -3741,7 +4827,7 @@ components:
                     could not be resolved (see the analytics payload's identical
                     field for why this is common today).
                   example: PICK
-                  x-parser-schema-id: <anonymous-schema-61>
+                  x-parser-schema-id: <anonymous-schema-63>
                 efficiency_pct:
                   type: number
                   format: double
@@ -3752,13 +4838,13 @@ components:
                     business fact ("unmeasurable"); a consumer MUST NOT coerce
                     it to 0.
                   example: 91.2
-                  x-parser-schema-id: <anonymous-schema-62>
+                  x-parser-schema-id: <anonymous-schema-64>
                 actual_seconds:
                   type: integer
                   format: int64
                   description: The measured duration. `0` means unmeasurable.
                   example: 41
-                  x-parser-schema-id: <anonymous-schema-63>
+                  x-parser-schema-id: <anonymous-schema-65>
                 idle_seconds_before:
                   type: integer
                   format: int64
@@ -3774,7 +4860,7 @@ components:
                     JSON (e.g. workforce-management's laborperformancecache) is
                     unaffected by its presence.
                   example: 90
-                  x-parser-schema-id: <anonymous-schema-64>
+                  x-parser-schema-id: <anonymous-schema-66>
                 handling_unit:
                   type: string
                   enum:
@@ -3787,7 +4873,7 @@ components:
                     event carried none, so a completion without one keeps the
                     pre-ADR-0035 payload byte-for-byte.
                   example: CASE
-                  x-parser-schema-id: <anonymous-schema-65>
+                  x-parser-schema-id: <anonymous-schema-67>
                 team_lift:
                   type: boolean
                   description: >-
@@ -3796,7 +4882,7 @@ components:
                     the CASE standard's team-lift time (the case was heavier
                     than the declared threshold).
                   example: false
-                  x-parser-schema-id: <anonymous-schema-66>
+                  x-parser-schema-id: <anonymous-schema-68>
                 completed_at:
                   type: string
                   format: date-time
@@ -3804,10 +4890,386 @@ components:
                     When the associate actually finished the task — the BUSINESS
                     time, distinct from the CloudEvents `time` attribute.
                   example: '2026-09-05T09:30:00Z'
-                  x-parser-schema-id: <anonymous-schema-67>
+                  x-parser-schema-id: <anonymous-schema-69>
               x-parser-schema-id: TaskPerformanceRecordedEventsData
-          x-parser-schema-id: <anonymous-schema-56>
+          x-parser-schema-id: <anonymous-schema-58>
       x-parser-schema-id: TaskPerformanceRecordedEventsCloudEvent
+    LaborStandardDefinedEventsCloudEvent:
+      title: CloudEvent + LaborStandardDefined data (integration stream)
+      description: >-
+        ADR 0038. Same `type` and same `data` schema as the analytics stream's
+        LaborStandardDefinedCloudEvent; only the dataschema stream segment
+        differs.
+      allOf:
+        - type: object
+          title: CloudEvents 1.0 envelope (structured mode, ADR 0021)
+          description: >-
+            The ONLY envelope on every topic this service produces or consumes.
+            Every attribute is REQUIRED in this fleet. Kafka header
+            `content-type: application/cloudevents+json; charset=UTF-8`. W3C
+            trace context travels in the `traceparent`/`tracestate` Kafka
+            headers, never as extension attributes.
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              description: >-
+                Minted once per domain event and persisted with the outbox row,
+                so a relay redelivery carries the same id. The consumer's
+                de-duplication key.
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              format: uri-reference
+              description: >-
+                `/warehouse/<repo>` of the publisher —
+                `/warehouse/labor-performance` for everything this service
+                publishes, `/warehouse/fulfillment-execution` for TaskCompleted.
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              description: >-
+                `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                Consumers dispatch on the FULL string.
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              minLength: 1
+              description: Id of the aggregate instance the event is about. Never empty.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              description: The domain event's occurred-at instant, UTC (RFC 3339).
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              format: uri
+              description: '`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`'
+              x-parser-schema-id: <anonymous-schema-8>
+            data:
+              type: object
+              x-parser-schema-id: <anonymous-schema-9>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            type:
+              const: >-
+                com.warehouse.wes.labor-performance.standard.LaborStandardDefined
+              x-parser-schema-id: <anonymous-schema-71>
+            dataschema:
+              const: urn:warehouse:labor-performance:events:LaborStandardDefined:v1
+              x-parser-schema-id: <anonymous-schema-72>
+            data:
+              type: object
+              required:
+                - standard_id
+                - task_type
+                - expected_seconds
+                - effective_from
+              properties:
+                standard_id:
+                  type: string
+                  description: >-
+                    Identifies this one record in the standard's append-only
+                    history. A revision mints a new id rather than reusing the
+                    prior one.
+                  example: std-0001
+                  x-parser-schema-id: <anonymous-schema-24>
+                task_type:
+                  type: string
+                  enum:
+                    - PICK
+                    - PACK
+                    - SLAM
+                  description: The task type this standard applies to.
+                  example: PICK
+                  x-parser-schema-id: <anonymous-schema-25>
+                expected_seconds:
+                  type: integer
+                  format: int64
+                  description: The engineered expected duration. Always greater than zero.
+                  example: 45
+                  x-parser-schema-id: <anonymous-schema-26>
+                travel_component_seconds:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: >-
+                    Optional declaration of how much of expected_seconds is
+                    attributable to travel between locations for this task type.
+                    Omitted entirely (not present, not null) when the standard
+                    never declared one — the default, most common case. This
+                    service never computes or validates it against a live
+                    location lookup (ADR 0015).
+                  example: 15
+                  x-parser-schema-id: <anonymous-schema-27>
+                handling_unit:
+                  type: string
+                  enum:
+                    - EACH
+                    - CASE
+                    - PALLET
+                  description: >-
+                    ADDITIVE (ADR 0035). Present only when the standard is
+                    declared for one handling unit; omitted entirely (not null)
+                    for a task-type-only standard.
+                  example: CASE
+                  x-parser-schema-id: <anonymous-schema-28>
+                team_lift_threshold_g:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: >-
+                    ADDITIVE (ADR 0035). CASE standards only: the weight in
+                    grams above which a case needs a team lift (two operators).
+                    Present only together with team_lift_expected_seconds.
+                  example: 18000
+                  x-parser-schema-id: <anonymous-schema-29>
+                team_lift_expected_seconds:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: >-
+                    ADDITIVE (ADR 0035). CASE standards only: the engineered
+                    elapsed seconds of a team lift. Present only together with
+                    team_lift_threshold_g.
+                  example: 75
+                  x-parser-schema-id: <anonymous-schema-30>
+                site_code:
+                  type: string
+                  minLength: 1
+                  maxLength: 32
+                  pattern: ^\S+$
+                  description: >-
+                    ADDITIVE (ADR 0038). Present only when the standard is
+                    scoped to one site (a facility-layout site code, 1-32
+                    characters, no whitespace); omitted entirely (not null, not
+                    "") for a site-less standard, which applies to every site.
+                    At most one standard is open per (task_type, handling_unit,
+                    site_code). Scoring in this service never resolves a
+                    site-scoped standard.
+                  example: SITE-GRU-01
+                  x-parser-schema-id: <anonymous-schema-31>
+                effective_from:
+                  type: string
+                  format: date-time
+                  description: >-
+                    When the standard came into force. The BUSINESS time the
+                    projector buckets this event on.
+                  example: '2026-09-05T09:00:00Z'
+                  x-parser-schema-id: <anonymous-schema-32>
+              x-parser-schema-id: LaborStandardDefinedData
+          x-parser-schema-id: <anonymous-schema-70>
+      x-parser-schema-id: LaborStandardDefinedEventsCloudEvent
+    LaborStandardRevisedEventsCloudEvent:
+      title: CloudEvent + LaborStandardRevised data (integration stream)
+      description: >-
+        ADR 0038. Same `type` and same `data` schema as the analytics stream's
+        LaborStandardRevisedCloudEvent; only the dataschema stream segment
+        differs.
+      allOf:
+        - type: object
+          title: CloudEvents 1.0 envelope (structured mode, ADR 0021)
+          description: >-
+            The ONLY envelope on every topic this service produces or consumes.
+            Every attribute is REQUIRED in this fleet. Kafka header
+            `content-type: application/cloudevents+json; charset=UTF-8`. W3C
+            trace context travels in the `traceparent`/`tracestate` Kafka
+            headers, never as extension attributes.
+          required:
+            - specversion
+            - id
+            - source
+            - type
+            - subject
+            - time
+            - datacontenttype
+            - dataschema
+            - data
+          properties:
+            specversion:
+              type: string
+              const: '1.0'
+              x-parser-schema-id: <anonymous-schema-1>
+            id:
+              type: string
+              format: uuid
+              description: >-
+                Minted once per domain event and persisted with the outbox row,
+                so a relay redelivery carries the same id. The consumer's
+                de-duplication key.
+              x-parser-schema-id: <anonymous-schema-2>
+            source:
+              type: string
+              format: uri-reference
+              description: >-
+                `/warehouse/<repo>` of the publisher —
+                `/warehouse/labor-performance` for everything this service
+                publishes, `/warehouse/fulfillment-execution` for TaskCompleted.
+              x-parser-schema-id: <anonymous-schema-3>
+            type:
+              type: string
+              description: >-
+                `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`.
+                Consumers dispatch on the FULL string.
+              x-parser-schema-id: <anonymous-schema-4>
+            subject:
+              type: string
+              minLength: 1
+              description: Id of the aggregate instance the event is about. Never empty.
+              x-parser-schema-id: <anonymous-schema-5>
+            time:
+              type: string
+              format: date-time
+              description: The domain event's occurred-at instant, UTC (RFC 3339).
+              x-parser-schema-id: <anonymous-schema-6>
+            datacontenttype:
+              type: string
+              const: application/json
+              x-parser-schema-id: <anonymous-schema-7>
+            dataschema:
+              type: string
+              format: uri
+              description: '`urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`'
+              x-parser-schema-id: <anonymous-schema-8>
+            data:
+              type: object
+              x-parser-schema-id: <anonymous-schema-9>
+          x-parser-schema-id: CloudEventEnvelope
+        - type: object
+          properties:
+            type:
+              const: >-
+                com.warehouse.wes.labor-performance.standard.LaborStandardRevised
+              x-parser-schema-id: <anonymous-schema-74>
+            dataschema:
+              const: urn:warehouse:labor-performance:events:LaborStandardRevised:v1
+              x-parser-schema-id: <anonymous-schema-75>
+            data:
+              type: object
+              required:
+                - standard_id
+                - task_type
+                - previous_expected_seconds
+                - expected_seconds
+                - effective_from
+              properties:
+                standard_id:
+                  type: string
+                  description: The id of the NEW standard record opened by this revision.
+                  example: std-0002
+                  x-parser-schema-id: <anonymous-schema-36>
+                task_type:
+                  type: string
+                  enum:
+                    - PICK
+                    - PACK
+                    - SLAM
+                  example: PICK
+                  x-parser-schema-id: <anonymous-schema-37>
+                previous_expected_seconds:
+                  type: integer
+                  format: int64
+                  description: >-
+                    The now-closed standard's expected duration, carried so a
+                    consumer can see the size of the change without joining back
+                    to the prior event.
+                  example: 45
+                  x-parser-schema-id: <anonymous-schema-38>
+                expected_seconds:
+                  type: integer
+                  format: int64
+                  description: The newly effective expected duration.
+                  example: 40
+                  x-parser-schema-id: <anonymous-schema-39>
+                travel_component_seconds:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: >-
+                    Optional declaration of how much of the NEW (revised)
+                    expected_seconds is attributable to travel — always the
+                    revision's own value, never carried over from the closed
+                    prior standard. Omitted entirely when the revision does not
+                    declare one.
+                  example: 20
+                  x-parser-schema-id: <anonymous-schema-40>
+                handling_unit:
+                  type: string
+                  enum:
+                    - EACH
+                    - CASE
+                    - PALLET
+                  description: >-
+                    ADDITIVE (ADR 0035). Describes the NEW standard. Present
+                    only when the standard is declared for one handling unit;
+                    omitted entirely (not null) for a task-type-only standard.
+                  example: CASE
+                  x-parser-schema-id: <anonymous-schema-41>
+                team_lift_threshold_g:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: >-
+                    ADDITIVE (ADR 0035). CASE standards only: the weight in
+                    grams above which a case needs a team lift (two operators).
+                    Present only together with team_lift_expected_seconds.
+                  example: 18000
+                  x-parser-schema-id: <anonymous-schema-42>
+                team_lift_expected_seconds:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: >-
+                    ADDITIVE (ADR 0035). CASE standards only: the engineered
+                    elapsed seconds of a team lift. Present only together with
+                    team_lift_threshold_g.
+                  example: 75
+                  x-parser-schema-id: <anonymous-schema-43>
+                site_code:
+                  type: string
+                  minLength: 1
+                  maxLength: 32
+                  pattern: ^\S+$
+                  description: >-
+                    ADDITIVE (ADR 0038). The site of the NEW standard, which is
+                    always the site of the closed prior one (a revision closes
+                    only the same (task_type, handling_unit, site_code)).
+                    Present only for a site-scoped standard; omitted entirely
+                    (not null, not "") for a site-less one.
+                  example: SITE-GRU-01
+                  x-parser-schema-id: <anonymous-schema-44>
+                effective_from:
+                  type: string
+                  format: date-time
+                  description: >-
+                    When the new standard came into force — the same instant the
+                    prior one was closed. The BUSINESS time the projector
+                    buckets this event on.
+                  example: '2026-09-05T10:00:00Z'
+                  x-parser-schema-id: <anonymous-schema-45>
+              x-parser-schema-id: LaborStandardRevisedData
+          x-parser-schema-id: <anonymous-schema-73>
+      x-parser-schema-id: LaborStandardRevisedEventsCloudEvent
     TaskCompletedData:
       type: object
       required:
@@ -3974,6 +5436,20 @@ components:
             team_lift_threshold_g.
           example: 75
           x-parser-schema-id: <anonymous-schema-30>
+        site_code:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: ^\S+$
+          description: >-
+            ADDITIVE (ADR 0038). Present only when the standard is scoped to one
+            site (a facility-layout site code, 1-32 characters, no whitespace);
+            omitted entirely (not null, not "") for a site-less standard, which
+            applies to every site. At most one standard is open per (task_type,
+            handling_unit, site_code). Scoring in this service never resolves a
+            site-scoped standard.
+          example: SITE-GRU-01
+          x-parser-schema-id: <anonymous-schema-31>
         effective_from:
           type: string
           format: date-time
@@ -3981,7 +5457,7 @@ components:
             When the standard came into force. The BUSINESS time the projector
             buckets this event on.
           example: '2026-09-05T09:00:00Z'
-          x-parser-schema-id: <anonymous-schema-31>
+          x-parser-schema-id: <anonymous-schema-32>
       x-parser-schema-id: LaborStandardDefinedData
     LaborStandardRevisedData:
       type: object
@@ -3996,7 +5472,7 @@ components:
           type: string
           description: The id of the NEW standard record opened by this revision.
           example: std-0002
-          x-parser-schema-id: <anonymous-schema-35>
+          x-parser-schema-id: <anonymous-schema-36>
         task_type:
           type: string
           enum:
@@ -4004,7 +5480,7 @@ components:
             - PACK
             - SLAM
           example: PICK
-          x-parser-schema-id: <anonymous-schema-36>
+          x-parser-schema-id: <anonymous-schema-37>
         previous_expected_seconds:
           type: integer
           format: int64
@@ -4013,13 +5489,13 @@ components:
             can see the size of the change without joining back to the prior
             event.
           example: 45
-          x-parser-schema-id: <anonymous-schema-37>
+          x-parser-schema-id: <anonymous-schema-38>
         expected_seconds:
           type: integer
           format: int64
           description: The newly effective expected duration.
           example: 40
-          x-parser-schema-id: <anonymous-schema-38>
+          x-parser-schema-id: <anonymous-schema-39>
         travel_component_seconds:
           type: integer
           format: int64
@@ -4030,7 +5506,7 @@ components:
             own value, never carried over from the closed prior standard.
             Omitted entirely when the revision does not declare one.
           example: 20
-          x-parser-schema-id: <anonymous-schema-39>
+          x-parser-schema-id: <anonymous-schema-40>
         handling_unit:
           type: string
           enum:
@@ -4042,7 +5518,7 @@ components:
             the standard is declared for one handling unit; omitted entirely
             (not null) for a task-type-only standard.
           example: CASE
-          x-parser-schema-id: <anonymous-schema-40>
+          x-parser-schema-id: <anonymous-schema-41>
         team_lift_threshold_g:
           type: integer
           format: int64
@@ -4052,7 +5528,7 @@ components:
             which a case needs a team lift (two operators). Present only
             together with team_lift_expected_seconds.
           example: 18000
-          x-parser-schema-id: <anonymous-schema-41>
+          x-parser-schema-id: <anonymous-schema-42>
         team_lift_expected_seconds:
           type: integer
           format: int64
@@ -4062,7 +5538,20 @@ components:
             seconds of a team lift. Present only together with
             team_lift_threshold_g.
           example: 75
-          x-parser-schema-id: <anonymous-schema-42>
+          x-parser-schema-id: <anonymous-schema-43>
+        site_code:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: ^\S+$
+          description: >-
+            ADDITIVE (ADR 0038). The site of the NEW standard, which is always
+            the site of the closed prior one (a revision closes only the same
+            (task_type, handling_unit, site_code)). Present only for a
+            site-scoped standard; omitted entirely (not null, not "") for a
+            site-less one.
+          example: SITE-GRU-01
+          x-parser-schema-id: <anonymous-schema-44>
         effective_from:
           type: string
           format: date-time
@@ -4071,7 +5560,7 @@ components:
             one was closed. The BUSINESS time the projector buckets this event
             on.
           example: '2026-09-05T10:00:00Z'
-          x-parser-schema-id: <anonymous-schema-43>
+          x-parser-schema-id: <anonymous-schema-45>
       x-parser-schema-id: LaborStandardRevisedData
     TaskPerformanceRecordedAnalyticsData:
       type: object
@@ -4090,7 +5579,7 @@ components:
             fulfillment-execution's task id, treated as an opaque foreign
             reference. This context does not own or validate it.
           example: task-10231
-          x-parser-schema-id: <anonymous-schema-47>
+          x-parser-schema-id: <anonymous-schema-49>
         associate_id:
           type: string
           description: >-
@@ -4100,7 +5589,7 @@ components:
             task-type reporting; it is only excluded from per-associate
             scorecards.
           example: assoc-4471
-          x-parser-schema-id: <anonymous-schema-48>
+          x-parser-schema-id: <anonymous-schema-50>
         task_type:
           type: string
           description: >-
@@ -4109,7 +5598,7 @@ components:
             The projector labels the empty case `UNCLASSIFIED` rather than
             dropping the row or keying its fact table on an empty string.
           example: PICK
-          x-parser-schema-id: <anonymous-schema-49>
+          x-parser-schema-id: <anonymous-schema-51>
         efficiency_pct:
           type: number
           format: double
@@ -4122,7 +5611,7 @@ components:
             fact ("unmeasurable"), never an error and never to be coerced to 0
             by a consumer.
           example: 86.5
-          x-parser-schema-id: <anonymous-schema-50>
+          x-parser-schema-id: <anonymous-schema-52>
         actual_seconds:
           type: integer
           format: int64
@@ -4131,7 +5620,7 @@ components:
             `0` means unmeasurable and is excluded from any mean-duration
             aggregate.
           example: 52
-          x-parser-schema-id: <anonymous-schema-51>
+          x-parser-schema-id: <anonymous-schema-53>
         idle_seconds_before:
           type: integer
           format: int64
@@ -4147,7 +5636,7 @@ components:
             unmarshaling unknown-field-tolerant JSON is unaffected by its
             presence.
           example: 90
-          x-parser-schema-id: <anonymous-schema-52>
+          x-parser-schema-id: <anonymous-schema-54>
         handling_unit:
           type: string
           enum:
@@ -4160,7 +5649,7 @@ components:
             none, so a completion without one keeps the pre-ADR-0035 payload
             byte-for-byte.
           example: CASE
-          x-parser-schema-id: <anonymous-schema-53>
+          x-parser-schema-id: <anonymous-schema-55>
         team_lift:
           type: boolean
           description: >-
@@ -4168,7 +5657,7 @@ components:
             when the completion was scored against the CASE standard's team-lift
             time (the case was heavier than the declared threshold).
           example: false
-          x-parser-schema-id: <anonymous-schema-54>
+          x-parser-schema-id: <anonymous-schema-56>
         completed_at:
           type: string
           format: date-time
@@ -4178,7 +5667,7 @@ components:
             replayed or late-ingested event lands in the hour the work really
             happened.
           example: '2026-09-05T09:30:00Z'
-          x-parser-schema-id: <anonymous-schema-55>
+          x-parser-schema-id: <anonymous-schema-57>
       x-parser-schema-id: TaskPerformanceRecordedAnalyticsData
     TaskPerformanceRecordedEventsData:
       type: object
@@ -4197,7 +5686,7 @@ components:
             fulfillment-execution's task id, treated as an opaque foreign
             reference. This context does not own or validate it.
           example: task-10231
-          x-parser-schema-id: <anonymous-schema-59>
+          x-parser-schema-id: <anonymous-schema-61>
         associate_id:
           type: string
           description: >-
@@ -4206,7 +5695,7 @@ components:
             completing station had no checked-in occupant (e.g. a robot
             station).
           example: assoc-4471
-          x-parser-schema-id: <anonymous-schema-60>
+          x-parser-schema-id: <anonymous-schema-62>
         task_type:
           type: string
           description: >-
@@ -4214,7 +5703,7 @@ components:
             be resolved (see the analytics payload's identical field for why
             this is common today).
           example: PICK
-          x-parser-schema-id: <anonymous-schema-61>
+          x-parser-schema-id: <anonymous-schema-63>
         efficiency_pct:
           type: number
           format: double
@@ -4224,13 +5713,13 @@ components:
             the task could not be scored. NULL is a real business fact
             ("unmeasurable"); a consumer MUST NOT coerce it to 0.
           example: 91.2
-          x-parser-schema-id: <anonymous-schema-62>
+          x-parser-schema-id: <anonymous-schema-64>
         actual_seconds:
           type: integer
           format: int64
           description: The measured duration. `0` means unmeasurable.
           example: 41
-          x-parser-schema-id: <anonymous-schema-63>
+          x-parser-schema-id: <anonymous-schema-65>
         idle_seconds_before:
           type: integer
           format: int64
@@ -4245,7 +5734,7 @@ components:
             workforce-management's laborperformancecache) is unaffected by its
             presence.
           example: 90
-          x-parser-schema-id: <anonymous-schema-64>
+          x-parser-schema-id: <anonymous-schema-66>
         handling_unit:
           type: string
           enum:
@@ -4258,7 +5747,7 @@ components:
             none, so a completion without one keeps the pre-ADR-0035 payload
             byte-for-byte.
           example: CASE
-          x-parser-schema-id: <anonymous-schema-65>
+          x-parser-schema-id: <anonymous-schema-67>
         team_lift:
           type: boolean
           description: >-
@@ -4266,7 +5755,7 @@ components:
             when the completion was scored against the CASE standard's team-lift
             time (the case was heavier than the declared threshold).
           example: false
-          x-parser-schema-id: <anonymous-schema-66>
+          x-parser-schema-id: <anonymous-schema-68>
         completed_at:
           type: string
           format: date-time
@@ -4274,7 +5763,7 @@ components:
             When the associate actually finished the task — the BUSINESS time,
             distinct from the CloudEvents `time` attribute.
           example: '2026-09-05T09:30:00Z'
-          x-parser-schema-id: <anonymous-schema-67>
+          x-parser-schema-id: <anonymous-schema-69>
       x-parser-schema-id: TaskPerformanceRecordedEventsData
 x-parser-spec-parsed: true
 x-parser-api-version: 3

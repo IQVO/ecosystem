@@ -24,11 +24,16 @@ info:
       a tolerant failure, never a 500. At most five packages per authorization (`packageNo` 1..5).
     - **Method.** `DROP_OFF` (default) or `PICKUP`. PICKUP requires a window inside `[authorizedAt, expiresAt]` and is never KEEP. The pickup leg of last-mile is a later
       wave: the window is recorded, the state machine already knows `PICKUP_FAILED`.
-    - **Expiry.** An authorization expires 30 days after it was authorized; expiry is checked lazily on the next touch (read, label, outcome) and cancels the
-      authorization (`422 authorization-expired`, the event says `EXPIRED`). There is no sweeper.
+    - **Expiry.** An authorization expires 30 days after it was authorized; expiry is checked lazily by the next command that touches it, never by a read
+      (ADR 0002 A4 as amended by A11): a label request cancels it and answers `422 authorization-expired`, a cancellation cancels it and answers `200`, and a
+      graded outcome cancels it before recording the outcome as a fact; the event says `EXPIRED` in every case. There is no sweeper.
     - **No authentication** (consistent with the fleet): the storefront is the only caller and names the order in the body.
     - Every `POST` takes `Idempotency-Key` (1 to 128 printable ASCII characters; missing is `400 idempotency-key-required`, malformed `400 idempotency-key-invalid`); a
-      repeat replays the first response with the header `Idempotency-Replayed` set to `true`, and the same key on a different method, path or body is `409 idempotency-key-reused`.
+      repeat replays the first response with the header `Idempotency-Replayed` set to `true` when that response is final for the request: a success, and
+      `422 authorization-expired` (the lazy expiry was committed with it). A refusal that depends on state that can change is NOT stored and its key is released:
+      `group-not-shipped`, `no-return-destination`, `label-unavailable`, `concurrent-update`, `illegal-transition`, `not-found` and `validation-failed`
+      (so "retry later, same key" is true: the retry executes again, and a different body under the released key is a new request). A 5xx is never stored. The same key
+      on a different method, path or body is `409 idempotency-key-reused`.
     - A NUL character (U+0000) is refused before anything else runs: in a path it is `404 not-found`; in a query string or a JSON body it is `422 validation-failed`,
       and the `Idempotency-Key` of such a request is not recorded. Request bodies are decoded strictly: an unknown field, malformed JSON, trailing data or a body over
       4 MiB is `422 validation-failed`.
@@ -59,8 +64,9 @@ paths:
       operationId: authorizeReturn
       summary: Authorize a return (AuthorizeReturn)
       description: Authorizes one order group's return and publishes `ReturnAuthorized`. The group must be SHIPPED or DELIVERED (`group-not-shipped` otherwise); the
-        lines are resolved against the placed group (`validation-failed` on an unknown lineNo) and the disposition is decided from the read models. A replayed key
-        replays the first answer.
+        lines are resolved against the placed group (`validation-failed` on an unknown lineNo) and the disposition is decided from the read models. A repeat of the same
+        key and body replays the first answer when it was the 201. A refusal that depends on state that can change (`group-not-shipped`, `no-return-destination`,
+        `validation-failed`, `concurrent-update`) is not stored -- the key is released and the same key and body executes again.
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -195,8 +201,8 @@ paths:
       - Return Authorizations
       operationId: getReturnAuthorization
       summary: Read one return authorization (GetReturnAuthorization)
-      description: The authorization with its lines, disposition, labels and state. An expired-but-untouched authorization is lazily cancelled on this read and
-        returned `CANCELLED`. The MCP tool `get_return_authorization` and the A2A skill of the same name answer the same query.
+      description: The authorization with its lines, disposition, labels and state. A pure read (ADR 0002 A11) that never writes; an authorization past its
+        `expiresAt` that no command has touched yet is answered in its stored state (still `AUTHORIZED`) until the next label, cancellation or outcome expires it. The MCP tool `get_return_authorization` and the A2A skill of the same name answer the same query.
       parameters:
       - $ref: '#/components/parameters/AuthorizationIdPath'
       responses:
@@ -235,9 +241,10 @@ paths:
       - Return Authorizations
       operationId: cancelReturn
       summary: Cancel a return (CancelReturn)
-      description: The shopper's cancellation, allowed while AUTHORIZED (before anything is in transit) and by lazy expiry; publishes `ReturnCancelled` with reason
-        `SHOPPER_REQUESTED`. Cancelling again, or after RECEIVED/CLOSED_KEEP, is `409 illegal-transition`; an authorization that expired untouched answers
-        `422 authorization-expired` (and is cancelled by that very read).
+      description: The shopper's cancellation, allowed while AUTHORIZED (before anything is in transit); publishes `ReturnCancelled` with reason `SHOPPER_REQUESTED`
+        and answers `200` with the CANCELLED authorization. An authorization whose `expiresAt` passed untouched is cancelled by this very call with reason
+        `EXPIRED` and also answers `200` (the lazy expiry IS the cancellation; this route never answers `authorization-expired`). Cancelling again, or after
+        RECEIVED/CLOSED_KEEP, is `409 illegal-transition`.
       parameters:
       - $ref: '#/components/parameters/AuthorizationIdPath'
       - $ref: '#/components/parameters/IdempotencyKey'
@@ -458,7 +465,9 @@ components:
       in: header
       required: true
       description: The fleet idempotency key, 1 to 128 printable ASCII characters. A repeat with the same method, path and body replays the first response with
-        `Idempotency-Replayed` set to true; the same key on a different request is `409 idempotency-key-reused`.
+        `Idempotency-Replayed` set to true when that response is a success or `authorization-expired`. A refusal that depends on state that can change
+        (`group-not-shipped`, `no-return-destination`, `label-unavailable`, `concurrent-update`, `illegal-transition`, `not-found`, `validation-failed`) and every 5xx is
+        not stored -- the key is released and the same request executes again. The same key on a different request is `409 idempotency-key-reused`.
       schema:
         type: string
         minLength: 1

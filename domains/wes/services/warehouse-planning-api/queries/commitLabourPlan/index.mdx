@@ -1,0 +1,77 @@
+---
+id: warehouse-planning-api-commitLabourPlan
+version: 0.1.0
+name: commitLabourPlan
+summary: Commit the labour plan of a process path for a shift at a site
+schemaPath: request-body.json
+badges:
+  - content: PUT
+    textColor: blue
+    backgroundColor: blue
+  - content: 'tag:labour-plans'
+    textColor: blue
+    backgroundColor: blue
+operation:
+  method: PUT
+  path: '/labour-plans/{site_id}/{shift_id}/{path_id}'
+  statusCodes:
+    - '200'
+    - '201'
+    - '400'
+    - '409'
+    - '422'
+    - '500'
+owners:
+  - claudioed
+sidebar:
+  badge: PUT
+---
+## Overview
+Stores the heads a process path needs for one shift at one site, at a planned rate for a number of hours (docs/adr/0023 decision 2; it was wes-work-planning's path plan). planned_heads must not exceed installed_stations, hours and the rate must be positive and rate x heads x hours finite. When planned_heads is omitted it is DERIVED: ceil(forecast units with a cpt in [shift_start, shift_start + hours) / (rate x hours)), which needs shift_start and a stored workload forecast for (site_id, path_id) with at least one bucket in the shift; otherwise 422 missing-planned-heads (zero buckets in the shift is no data, never zero heads). heads_source says which happened. When the facility tally knows at least one but fewer stations of the activity named like the path (the path id upper-cased) than installed_stations, the plan is still stored with the number as sent and the answer carries a warning. 201 with version 1 for a first commit; 200 with version + 1 for a revision; 200 with the stored plan and version unchanged when the plan equals the stored one (no event). A change raises LabourPlanCommitted (integration and analytics topics, asyncapi.yaml) in the same transaction. The PUT is naturally idempotent and takes no Idempotency-Key.
+
+
+
+
+
+## PUT `(/labour-plans/{site_id}/{shift_id}/{path_id})`
+
+### Parameters
+- **site_id** (path) (required): Canonical facility-layout site code (ADR 0012).
+- **shift_id** (path) (required): The shift the labour plan is for (the planner's shift identifier, also carried by workforce-management's shift plan).
+- **path_id** (path) (required): The process path code: case-insensitive; stored and published in upper case (trimmed), so "pick" and "PICK" name the same forecast and labour plan. Upper-cased, it also names the facility-tally activity whose stations the labour plan's warning compares with.
+
+
+
+### Request Body
+<SchemaViewer file="request-body.json" maxHeight="500" id="request-body" />
+
+
+### Responses
+
+#### <span className="text-green-500">200 OK</span>
+<SchemaViewer file="response-200.json" maxHeight="500" id="response-200" />
+
+#### <span className="text-green-500">201 Created</span>
+<SchemaViewer file="response-201.json" maxHeight="500" id="response-201" />
+
+#### <span className="text-orange-500">400 Bad Request</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-400.json" maxHeight="500" id="response-400" />
+
+#### <span className="text-orange-500">409 Conflict</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-409.json" maxHeight="500" id="response-409" />
+
+#### <span className="text-orange-500">422 Unprocessable Entity</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-422.json" maxHeight="500" id="response-422" />
+
+#### <span className="text-red-500">500 Internal Server Error</span>
+RFC 7807 problem detail.
+<SchemaViewer file="response-500.json" maxHeight="500" id="response-500" />
+
+
+
+## Architecture
+
+<NodeGraph />

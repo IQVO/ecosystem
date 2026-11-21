@@ -42,9 +42,11 @@ info:
     with `ReplenishmentPolicyDeclared`, which is analytics-only.
 
 
-    **Consumed (ADR 0003).** `BinStockLevelChanged` (pending producer change P1)
+    **Consumed (ADR 0003).** `BinStockLevelChanged` (producer change P1, built
+    in
 
-    and `StockRelocated` from inventory-storage, `SlotPlanApproved` from
+    inventory-storage) and `StockRelocated` from inventory-storage,
+    `SlotPlanApproved` from
 
     slotting-optimization, and `ZoneRegistered`, `LocationSlotRegistered` and
 
@@ -1121,13 +1123,10 @@ channels:
 
               packaging view (pack level -> eaches factor for case-level scans).
 
-              NOTE: the consumer decodes camelCase keys (`unitsPerPack`,
-              `effectiveFrom`),
+              The keys are snake_case, exactly as product-master's encoder
+              writes them
 
-              while product-master's encoder writes snake_case
-              (`units_per_pack`,
-
-              `effective_from`); see the PR notes.
+              (`units_per_pack`, `effective_from`, `effective_to`).
             contentType: application/cloudevents+json
             tags:
               - name: consumed
@@ -1185,8 +1184,8 @@ channels:
                         - sku
                         - level
                         - gtin
-                        - unitsPerPack
-                        - effectiveFrom
+                        - units_per_pack
+                        - effective_from
                         - version
                       properties:
                         sku:
@@ -1214,14 +1213,11 @@ channels:
                           maximum: 1000000
                           description: Absent for EACH.
                           x-parser-schema-id: <anonymous-schema-53>
-                        unitsPerPack:
+                        units_per_pack:
                           type: integer
                           minimum: 1
                           maximum: 1000000
-                          description: >-
-                            Direct factor to eaches; 1 for EACH. The consumer
-                            decodes this camelCase key (see the product-master
-                            note in the message).
+                          description: Direct factor to eaches; 1 for EACH.
                           x-parser-schema-id: <anonymous-schema-54>
                         is_orderable:
                           type: boolean
@@ -1229,10 +1225,9 @@ channels:
                         is_despatch_unit:
                           type: boolean
                           x-parser-schema-id: <anonymous-schema-56>
-                        effectiveFrom:
+                        effective_from:
                           type: string
                           format: date-time
-                          description: camelCase key as decoded by the consumer.
                           x-parser-schema-id: <anonymous-schema-57>
                         version:
                           type: integer
@@ -1314,7 +1309,7 @@ channels:
                         - sku
                         - level
                         - gtin
-                        - effectiveTo
+                        - effective_to
                         - version
                       properties:
                         sku:
@@ -1332,10 +1327,9 @@ channels:
                           type: string
                           pattern: ^[0-9]{14}$
                           x-parser-schema-id: <anonymous-schema-63>
-                        effectiveTo:
+                        effective_to:
                           type: string
                           format: date-time
-                          description: camelCase key as decoded by the consumer.
                           x-parser-schema-id: <anonymous-schema-64>
                         reason:
                           type: string
@@ -1363,8 +1357,8 @@ channels:
       `BinStockLevelChanged` (keyed by `<bin>:<sku>`, ADR 0040) and the promoted
       exception facts `DiscrepancyDetected`, `ItemUnlocated` and `ItemStowed`
       (ADR 0043 — byte-identical copies of the analytics feed, consumed by
-      exception-management and returns-processing) and the container events
-      `ContainerRegistered`, `ContainerStowed`, `CaseBroken` and
+      exception-management; `ItemStowed` has no consumer yet) and the container
+      events `ContainerRegistered`, `ContainerStowed`, `CaseBroken` and
       `ContainerEmptied` (keyed by LPN, ADR 0045/0046) and the held-stock events
       `StockHeld`, `StockReleased` and `StockDispositioned` (keyed by held unit
       id, ADR 0052). The legacy `ProductClassified` was retired at
@@ -1401,11 +1395,10 @@ channels:
               The absolute on-hand and reserved level of one SKU in one bin
               changed.
             description: >
-              PENDING PRODUCER CHANGE P1: inventory-storage does not publish
-              this type
+              Producer change P1 is built: inventory-storage publishes this type
+              (its
 
-              yet; this contract is pinned consumer-first and the producer will
-              match it.
+              ADR 0040). The contract was pinned here consumer-first.
 
               `type` =
               `com.warehouse.wms.inventory-storage.stock.BinStockLevelChanged`,
@@ -1571,13 +1564,13 @@ channels:
 
               contract (its ADR 0039), never imported. Act only when `reason` is
 
-              `REPLENISHMENT`, a value inventory-storage adds with producer
+              `REPLENISHMENT`, a value inventory-storage added with producer
               change P4
 
-              (today it publishes `SLOTTING`, `CONSOLIDATION` and `MANUAL`);
-              ignore every
+              (its ADR 0041; it also publishes `SLOTTING`, `CONSOLIDATION` and
+              `MANUAL`);
 
-              other reason.
+              ignore every other reason.
             contentType: application/cloudevents+json
             tags:
               - name: consumed
@@ -3177,10 +3170,9 @@ components:
       title: BinStockLevelChanged (consumed, inventory-storage)
       summary: The absolute on-hand and reserved level of one SKU in one bin changed.
       description: >
-        PENDING PRODUCER CHANGE P1: inventory-storage does not publish this type
+        Producer change P1 is built: inventory-storage publishes this type (its
 
-        yet; this contract is pinned consumer-first and the producer will match
-        it.
+        ADR 0040). The contract was pinned here consumer-first.
 
         `type` =
         `com.warehouse.wms.inventory-storage.stock.BinStockLevelChanged`,
@@ -3334,12 +3326,12 @@ components:
 
         contract (its ADR 0039), never imported. Act only when `reason` is
 
-        `REPLENISHMENT`, a value inventory-storage adds with producer change P4
+        `REPLENISHMENT`, a value inventory-storage added with producer change P4
 
-        (today it publishes `SLOTTING`, `CONSOLIDATION` and `MANUAL`); ignore
-        every
+        (its ADR 0041; it also publishes `SLOTTING`, `CONSOLIDATION` and
+        `MANUAL`);
 
-        other reason.
+        ignore every other reason.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -3995,12 +3987,9 @@ components:
 
         packaging view (pack level -> eaches factor for case-level scans).
 
-        NOTE: the consumer decodes camelCase keys (`unitsPerPack`,
-        `effectiveFrom`),
+        The keys are snake_case, exactly as product-master's encoder writes them
 
-        while product-master's encoder writes snake_case (`units_per_pack`,
-
-        `effective_from`); see the PR notes.
+        (`units_per_pack`, `effective_from`, `effective_to`).
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -4056,8 +4045,8 @@ components:
                   - sku
                   - level
                   - gtin
-                  - unitsPerPack
-                  - effectiveFrom
+                  - units_per_pack
+                  - effective_from
                   - version
                 properties:
                   sku:
@@ -4085,14 +4074,11 @@ components:
                     maximum: 1000000
                     description: Absent for EACH.
                     x-parser-schema-id: <anonymous-schema-53>
-                  unitsPerPack:
+                  units_per_pack:
                     type: integer
                     minimum: 1
                     maximum: 1000000
-                    description: >-
-                      Direct factor to eaches; 1 for EACH. The consumer decodes
-                      this camelCase key (see the product-master note in the
-                      message).
+                    description: Direct factor to eaches; 1 for EACH.
                     x-parser-schema-id: <anonymous-schema-54>
                   is_orderable:
                     type: boolean
@@ -4100,10 +4086,9 @@ components:
                   is_despatch_unit:
                     type: boolean
                     x-parser-schema-id: <anonymous-schema-56>
-                  effectiveFrom:
+                  effective_from:
                     type: string
                     format: date-time
-                    description: camelCase key as decoded by the consumer.
                     x-parser-schema-id: <anonymous-schema-57>
                   version:
                     type: integer
@@ -4184,7 +4169,7 @@ components:
                   - sku
                   - level
                   - gtin
-                  - effectiveTo
+                  - effective_to
                   - version
                 properties:
                   sku:
@@ -4202,10 +4187,9 @@ components:
                     type: string
                     pattern: ^[0-9]{14}$
                     x-parser-schema-id: <anonymous-schema-63>
-                  effectiveTo:
+                  effective_to:
                     type: string
                     format: date-time
-                    description: camelCase key as decoded by the consumer.
                     x-parser-schema-id: <anonymous-schema-64>
                   reason:
                     type: string
@@ -4274,8 +4258,8 @@ components:
                 - sku
                 - level
                 - gtin
-                - unitsPerPack
-                - effectiveFrom
+                - units_per_pack
+                - effective_from
                 - version
               properties:
                 sku:
@@ -4303,14 +4287,11 @@ components:
                   maximum: 1000000
                   description: Absent for EACH.
                   x-parser-schema-id: <anonymous-schema-53>
-                unitsPerPack:
+                units_per_pack:
                   type: integer
                   minimum: 1
                   maximum: 1000000
-                  description: >-
-                    Direct factor to eaches; 1 for EACH. The consumer decodes
-                    this camelCase key (see the product-master note in the
-                    message).
+                  description: Direct factor to eaches; 1 for EACH.
                   x-parser-schema-id: <anonymous-schema-54>
                 is_orderable:
                   type: boolean
@@ -4318,10 +4299,9 @@ components:
                 is_despatch_unit:
                   type: boolean
                   x-parser-schema-id: <anonymous-schema-56>
-                effectiveFrom:
+                effective_from:
                   type: string
                   format: date-time
-                  description: camelCase key as decoded by the consumer.
                   x-parser-schema-id: <anonymous-schema-57>
                 version:
                   type: integer
@@ -4382,7 +4362,7 @@ components:
                 - sku
                 - level
                 - gtin
-                - effectiveTo
+                - effective_to
                 - version
               properties:
                 sku:
@@ -4400,10 +4380,9 @@ components:
                   type: string
                   pattern: ^[0-9]{14}$
                   x-parser-schema-id: <anonymous-schema-63>
-                effectiveTo:
+                effective_to:
                   type: string
                   format: date-time
-                  description: camelCase key as decoded by the consumer.
                   x-parser-schema-id: <anonymous-schema-64>
                 reason:
                   type: string
