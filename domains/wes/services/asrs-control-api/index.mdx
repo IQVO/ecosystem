@@ -1,0 +1,81 @@
+---
+id: asrs-control-api
+version: 1.0.0
+name: Asrs Control API
+summary: >-
+  REST API of asrs-control. Store and retrieve containers in the automated
+  storage and retrieval system at the throughput the WCS needs, and own where
+  each container sits inside the rack: position assignment, one storage job per
+  aisle at a time, port presentation, reshuffles and PackML equipment state,
+  over a telegram protocol on MQTT to the shuttles and lifts.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: asrs-control API
+badges:
+  - content: storage-jobs
+    textColor: blue
+    backgroundColor: blue
+  - content: asrs
+    textColor: blue
+    backgroundColor: blue
+  - content: health
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: asrs-control-api-getLiveness
+    version: 1.0.0
+  - id: asrs-control-api-getReadiness
+    version: 1.0.0
+  - id: asrs-control-api-getAsrs
+    version: 1.0.0
+  - id: asrs-control-api-createStorageJob
+    version: 1.0.0
+  - id: asrs-control-api-getStorageJob
+    version: 1.0.0
+  - id: asrs-control-api-cancelStorageJob
+    version: 1.0.0
+  - id: asrs-control-api-confirmPortPickup
+    version: 1.0.0
+---
+## Purpose
+Store and retrieve containers in the automated storage and retrieval system at the throughput the WCS needs, and own where each container sits inside the rack: position assignment, one storage job per aisle at a time, port presentation, reshuffles and PackML equipment state, over a telegram protocol on MQTT to the shuttles and lifts. To the WMS the whole AS/RS is one logical location; no rack position is ever published.
+
+| | |
+|---|---|
+| Bounded context | `asrs-control` |
+| Domain | WES (`wes`) |
+| DDD classification | Generic |
+| Tier | WES, WCS subsystem controller |
+| Repository | [IQVO/asrs-control](https://github.com/IQVO/asrs-control) |
+| Events | [asrs-control](/docs/services/asrs-control) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+The subsystem-controller interface of **asrs-control** (WCS tier, Generic; ADR 0001), called by
+material-flow-control (WCS context map relationship 5). A store or retrieve is accepted or refused at once
+(`202` or `422`); its progress is reported only by events on `warehouse.asrs-control.events`
+(ContainerStored, ContainerPresentedAtPort, StorageJobFailed). Rack positions never appear here.
+
+**Idempotency.** Every POST requires `Idempotency-Key` (1-128 characters). The first request executes; a
+retry with the same key and body returns the stored answer with `Idempotency-Replayed: true`; the same key
+with another body is `409 idempotency-key-reused`. Only 2xx and FINAL refusals are stored (24 hours):
+`bad-request`, `invalid-parameter`, `asrs-not-found`, `storage-job-not-found`, `unknown-port`,
+`wrong-port-kind`. RETRYABLE refusals release the key, so a retry under the same key executes again:
+`unknown-container`, `container-busy`, `container-already-stored`, `storage-full`, `aisle-unavailable`,
+`port-unreachable`, `port-not-presenting`, `job-not-cancellable`, `job-ended`.
+
+**Errors** are RFC 9457 `application/problem+json` with a stable `code`. No authentication (fleet rule).
+  
+
+## Architecture diagram
+<NodeGraph />

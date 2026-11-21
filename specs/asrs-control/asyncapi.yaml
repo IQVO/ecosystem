@@ -1,0 +1,653 @@
+asyncapi: 2.6.0
+
+info:
+  title: asrs-control Domain Events
+  version: 1.0.0
+  contact:
+    name: asrs-control maintainers
+    url: https://github.com/IQVO/asrs-control
+    email: asrs-control@iqvo.example.com
+  license:
+    name: UNLICENSED
+  description: |
+    Event contract of the **asrs-control** bounded context (WCS tier, Generic, segment `wes`; ADR 0001, ADR 0003).
+    Five facts for material-flow-control's subsystem-controller interface (WCS context map relationship 5) and,
+    for `StorageJobFailed` with reason `EQUIPMENT_FAULT`, exception-management.
+
+    **Published** through a transactional outbox to `warehouse.asrs-control.events`, and the same occurrence
+    (same CloudEvents `id`, `type` and `data`) to `warehouse.asrs-control.analytics` with the `analytics`
+    `dataschema` segment. Kafka key = `subject`.
+
+    **Envelope (mandatory).** CloudEvents 1.0 structured mode, header
+    `content-type: application/cloudevents+json; charset=UTF-8`,
+    `type` = `com.warehouse.wes.asrs-control.<entity>.<EventName>`. Dispatch on the full `type`, ignore unknown
+    types, dedupe on `id`.
+
+    **Time.** `time` and every `*_at` field are asrs-control's clock. `plc_timestamp` is the PLC telegram's
+    timestamp (the emulator's simulated time), present only on facts that came from a telegram.
+
+    No rack position, reshuffle or internal move is ever published (invariant 6).
+
+    **PLC link (MQTT).** The second half of this contract is the AS/RS telegram protocol v1 link to the PLC
+    (emulated by IQVO/equipment-emulator, `docs/telegram-protocol.md`; ADR 0002): channels `asrs/v1/{asrsId}/down`
+    and `asrs/v1/{asrsId}/up` on the `plc-link` MQTT server, flat JSON (`application/json`, not CloudEvents),
+    QoS 1, not retained. asrs-control is the protocol's WCS side, so the operations are written from asrs-control's
+    point of view: `subscribe` = asrs-control publishes (the down topic), `publish` = asrs-control receives (the up
+    topic). equipment-emulator's `apis/asyncapi.yaml` describes the same two channels from the PLC side. The
+    telegrams carry rack positions; they never leave the link (invariant 6).
+
+servers:
+  production:
+    url: '{brokers}'
+    protocol: kafka
+    description: Fleet-shared Kafka broker (host supplied by the deployment environment).
+    variables:
+      brokers:
+        default: kafka.warehouse-systems.internal:9092
+  plc-link:
+    url: mosquitto.warehouse-systems.svc.cluster.local:1883
+    protocol: mqtt
+    protocolVersion: '3.1.1'
+    description: The MQTT broker of the PLC link (`MQTT_URL`). One client per AS/RS, client id `<MQTT_CLIENT_ID>-<asrsId>`. No authentication layer.
+
+tags:
+  - name: asrs-control
+    description: The asrs-control bounded context (WCS tier).
+  - name: storagejob
+    description: Events raised by the StorageJob aggregate.
+  - name: equipmentunit
+    description: Events raised by the EquipmentUnit aggregate.
+  - name: asrs
+    description: Capacity facts of a whole AS/RS.
+  - name: telegram
+    description: AS/RS telegram protocol v1, the MQTT link between asrs-control and the PLC (ADR 0002).
+
+defaultContentType: application/cloudevents+json
+
+channels:
+  warehouse.asrs-control.events:
+    description: The integration topic. Written by the outbox relay; key = subject.
+    servers: [production]
+    subscribe:
+      operationId: receiveAsrsControlEvents
+      summary: Receive asrs-control's facts.
+      description: Route on the full `type`. material-flow-control (plan 04, not built yet) is the intended consumer of every type.
+      tags:
+        - name: asrs-control
+      message:
+        oneOf:
+          - $ref: '#/components/messages/ContainerStored'
+          - $ref: '#/components/messages/ContainerPresentedAtPort'
+          - $ref: '#/components/messages/StorageJobFailed'
+          - $ref: '#/components/messages/EquipmentStateChanged'
+          - $ref: '#/components/messages/AsrsCapacityChanged'
+  warehouse.asrs-control.analytics:
+    description: The analytics twin of every integration event (same id, type and data; analytics dataschema). Not an integration contract.
+    servers: [production]
+    subscribe:
+      operationId: receiveAsrsControlAnalytics
+      summary: Receive the analytics twin of every asrs-control event.
+      description: Payloads are byte-for-byte the integration payloads; only the `dataschema` stream segment differs.
+      tags:
+        - name: asrs-control
+      message:
+        oneOf:
+          - $ref: '#/components/messages/ContainerStoredAnalytics'
+          - $ref: '#/components/messages/ContainerPresentedAtPort'
+          - $ref: '#/components/messages/StorageJobFailed'
+          - $ref: '#/components/messages/EquipmentStateChanged'
+          - $ref: '#/components/messages/AsrsCapacityChanged'
+
+  asrs/v1/{asrsId}/down:
+    description: |
+      asrs-control to PLC telegrams of one AS/RS (`internal/adapters/telegram` `DownTopic`). Not retained.
+      A command (STORE, RETRIEVE, MOVE, CANCEL) is published only after the unit of work that dispatched it
+      committed (`UnitOfWork.AfterCommit`); the ACK of an up telegram only after its effect committed.
+    servers: [plc-link]
+    parameters:
+      asrsId: {$ref: '#/components/parameters/asrsId'}
+    bindings:
+      mqtt: {qos: 1, retain: false}
+    subscribe:
+      operationId: sendDownTelegram
+      summary: asrs-control sends a command telegram, or the ACK of an up telegram.
+      description: |
+        At most one STORE, RETRIEVE or MOVE (a reshuffle) per aisle is with the PLC at a time: the next job of an
+        aisle is dispatched only after the previous one's JOB_DONE or JOB_FAILED (ADR 0002 decision 3). An
+        unacknowledged command or STATE_REQUEST (never an ACK) is retransmitted with the same telegramId after 2 s real time, at most 3 times; when
+        that expires a command fails its job with EQUIPMENT_UNREACHABLE and a CANCEL is reverted. Boot recovery
+        resends every unacknowledged command and every pending CANCEL, then a STATE_REQUEST. Every non-ACK up
+        telegram is ACKed; one that cannot be decoded but carries a telegramId is ACKed `accepted: false`,
+        `reason: MALFORMED`.
+      tags: [{name: telegram}]
+      message:
+        oneOf:
+          - $ref: '#/components/messages/StoreTelegram'
+          - $ref: '#/components/messages/RetrieveTelegram'
+          - $ref: '#/components/messages/MoveTelegram'
+          - $ref: '#/components/messages/CancelTelegram'
+          - $ref: '#/components/messages/StateRequestTelegram'
+          - $ref: '#/components/messages/AckTelegram'
+  asrs/v1/{asrsId}/up:
+    description: |
+      PLC to asrs-control telegrams of one AS/RS (`internal/adapters/telegram` `UpTopic`). Not retained. The link
+      subscribes on every (re)connection; paho runs with ordered delivery and one worker per link applies the
+      telegrams and the retransmit expiries in order (ADR 0002 decision 2).
+    servers: [plc-link]
+    parameters:
+      asrsId: {$ref: '#/components/parameters/asrsId'}
+    bindings:
+      mqtt: {qos: 1, retain: false}
+    publish:
+      operationId: receiveUpTelegram
+      summary: asrs-control receives an ACK, a job outcome, a unit state or a port arrival.
+      description: |
+        Each up telegram is claimed in `processed_telegrams` with its ACK id inside the effect's transaction, so a
+        retransmission changes nothing and gets the identical ACK, also after a restart. JOB_DONE ends a store
+        (ContainerStored) or a reshuffle, or moves a retrieve to AWAITING_ARRIVAL; PORT_ARRIVAL presents the oldest
+        retrieve awaiting that port (ContainerPresentedAtPort); JOB_FAILED fails the job with the mapped reason
+        (StorageJobFailed); UNIT_STATE may raise EquipmentStateChanged, and HELD fails the aisle's queued jobs with
+        EQUIPMENT_FAULT. An up telegram whose effect failed to commit is not ACKed, so the PLC retransmits it. An ACK
+        with `reason: NOT_READY` is transient: the down telegram is tracked again and resent.
+      tags: [{name: telegram}]
+      message:
+        oneOf:
+          - $ref: '#/components/messages/AckTelegram'
+          - $ref: '#/components/messages/JobDoneTelegram'
+          - $ref: '#/components/messages/JobFailedTelegram'
+          - $ref: '#/components/messages/UnitStateTelegram'
+          - $ref: '#/components/messages/PortArrivalTelegram'
+
+components:
+  parameters:
+    asrsId:
+      description: AS/RS id from the layout file (`ASRS_LAYOUT_FILE`), 1-32 characters `[A-Za-z0-9_-]`.
+      schema: {type: string, pattern: '^[A-Za-z0-9_-]{1,32}$', examples: [ASRS1]}
+
+  messages:
+    ContainerStored:
+      x-no-consumer-reason: "pending: material-flow-control (plan WCS-04, designed in warehouse-docs wcs/, not built yet) is the intended consumer (WCS context map relationship 5, ADR 0003 type catalogue); no fleet context declares or handles this type yet."
+      name: ContainerStored
+      title: Container stored
+      summary: A store job's container is in the rack.
+      description: '`type` = `com.warehouse.wes.asrs-control.storagejob.ContainerStored`; subject and key = the storage job id. The rack position is not published.'
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        $ref: '#/components/schemas/ContainerStoredEvent'
+      examples:
+        - name: stored
+          summary: Container C-0001 stored from input port IN1.
+          payload:
+            specversion: '1.0'
+            id: 11111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.ContainerStored
+            subject: sj-7f3a
+            time: '2026-11-20T08:00:01Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:ContainerStored:v1
+            data: {storage_job_id: sj-7f3a, asrs_id: ASRS1, container_id: C-0001, port_id: IN1, reference: leg-9, stored_at: '2026-11-20T08:00:01Z', plc_timestamp: '2026-11-20T08:09:30.5Z'}
+    ContainerStoredAnalytics:
+      name: ContainerStored
+      title: Container stored (analytics twin)
+      summary: A store job's container is in the rack, on the analytics topic.
+      description: 'The analytics twin of `ContainerStored`: same `id`, `type`, `subject` and `data`; only the `dataschema` stream segment is `analytics` (`urn:warehouse:asrs-control:analytics:ContainerStored:v1`). Not an integration contract.'
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        $ref: '#/components/schemas/ContainerStoredEvent'
+      examples:
+        - name: stored-analytics
+          summary: Container C-0001 stored from input port IN1 (analytics twin).
+          payload:
+            specversion: '1.0'
+            id: 11111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.ContainerStored
+            subject: sj-7f3a
+            time: '2026-11-20T08:00:01Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:analytics:ContainerStored:v1
+            data: {storage_job_id: sj-7f3a, asrs_id: ASRS1, container_id: C-0001, port_id: IN1, reference: leg-9, stored_at: '2026-11-20T08:00:01Z', plc_timestamp: '2026-11-20T08:09:30.5Z'}
+    ContainerPresentedAtPort:
+      x-no-consumer-reason: "pending: material-flow-control (plan WCS-04, designed in warehouse-docs wcs/, not built yet) is the intended consumer (WCS context map relationship 5, ADR 0003 type catalogue); no fleet context declares or handles this type yet."
+      name: ContainerPresentedAtPort
+      title: Container presented at port
+      summary: A retrieve job's container arrived at its output port, in request order per port.
+      description: '`type` = `com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort`; subject = the storage job id. `scan_result` NO_READ or MISMATCH sends the container to clarification (material-flow-control).'
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        $ref: '#/components/schemas/ContainerPresentedAtPortEvent'
+      examples:
+        - name: presented
+          summary: Container C-0001 presented at OUT1 and read correctly.
+          payload:
+            specversion: '1.0'
+            id: 21111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort
+            subject: sj-8b21
+            time: '2026-11-20T08:05:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:ContainerPresentedAtPort:v1
+            data: {storage_job_id: sj-8b21, asrs_id: ASRS1, container_id: C-0001, port_id: OUT1, scan_result: READ, scanned_container_id: C-0001, presented_at: '2026-11-20T08:05:00Z', plc_timestamp: '2026-11-20T08:55:00Z'}
+    StorageJobFailed:
+      x-no-consumer-reason: "pending: material-flow-control (plan WCS-04, designed in warehouse-docs wcs/, not built yet) and, for reason EQUIPMENT_FAULT, exception-management (plan WCS-05b, not built yet) are the intended consumers (ADR 0003 type catalogue); neither declares or handles this type yet."
+      name: StorageJobFailed
+      title: Storage job failed
+      summary: A store or retrieve job ended without its outcome, or was cancelled.
+      description: '`type` = `com.warehouse.wes.asrs-control.storagejob.StorageJobFailed`; subject = the storage job id. Intended for exception-management to open a case for reason EQUIPMENT_FAULT (plan WCS-05b, not built yet).'
+      contentType: application/cloudevents+json
+      tags:
+        - name: storagejob
+      payload:
+        $ref: '#/components/schemas/StorageJobFailedEvent'
+      examples:
+        - name: equipment-fault
+          summary: A queued retrieve failed because its aisle's unit was held.
+          payload:
+            specversion: '1.0'
+            id: 31111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.storagejob.StorageJobFailed
+            subject: sj-9c02
+            time: '2026-11-20T08:06:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:StorageJobFailed:v1
+            data: {storage_job_id: sj-9c02, asrs_id: ASRS1, job_kind: RETRIEVE, container_id: C-0002, port_id: OUT1, reason: EQUIPMENT_FAULT, failed_at: '2026-11-20T08:06:00Z', plc_timestamp: '2026-11-20T09:05:00Z'}
+    EquipmentStateChanged:
+      x-no-consumer-reason: "pending: material-flow-control (plan WCS-04, designed in warehouse-docs wcs/, not built yet) is the intended consumer (WCS context map relationship 5, ADR 0003 type catalogue); no fleet context declares or handles this type yet."
+      name: EquipmentStateChanged
+      title: Equipment state changed
+      summary: An aisle's shuttle-and-lift unit changed its PackML state.
+      description: '`type` = `com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged`; subject = `<asrsId>/<unitId>`.'
+      contentType: application/cloudevents+json
+      tags:
+        - name: equipmentunit
+      payload:
+        $ref: '#/components/schemas/EquipmentStateChangedEvent'
+      examples:
+        - name: held
+          summary: Unit A1 went to HELD.
+          payload:
+            specversion: '1.0'
+            id: 41111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged
+            subject: ASRS1/A1
+            time: '2026-11-20T08:06:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:EquipmentStateChanged:v1
+            data: {asrs_id: ASRS1, unit_id: A1, aisle: 1, state: HELD, previous_state: EXECUTE, changed_at: '2026-11-20T08:06:00Z', plc_timestamp: '2026-11-20T09:05:00Z'}
+    AsrsCapacityChanged:
+      x-no-consumer-reason: "pending: material-flow-control (plan WCS-04, designed in warehouse-docs wcs/, not built yet) is the intended consumer, for its capacity loop (ADR 0003 type catalogue); no fleet context declares or handles this type yet."
+      name: AsrsCapacityChanged
+      title: AS/RS capacity changed
+      summary: Units available, free positions or open jobs of an AS/RS changed.
+      description: '`type` = `com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged`; subject = the AS/RS id. Intended to feed material-flow-control''s SubsystemCapacityChanged (plan 04, not built yet).'
+      contentType: application/cloudevents+json
+      tags:
+        - name: asrs
+      payload:
+        $ref: '#/components/schemas/AsrsCapacityChangedEvent'
+      examples:
+        - name: one-unit-held
+          summary: One of two units is held.
+          payload:
+            specversion: '1.0'
+            id: 51111111-2222-4333-8444-555555555555
+            source: /warehouse/asrs-control
+            type: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged
+            subject: ASRS1
+            time: '2026-11-20T08:06:00Z'
+            datacontenttype: application/json
+            dataschema: urn:warehouse:asrs-control:events:AsrsCapacityChanged:v1
+            data: {asrs_id: ASRS1, units_total: 2, units_available: 1, positions_total: 1280, positions_free: 1200, open_jobs: 3, measured_at: '2026-11-20T08:06:00Z'}
+
+    StoreTelegram:
+      name: STORE
+      title: STORE telegram
+      summary: Store the container waiting on an input port into the position reserved for it.
+      description: Sent when a STORE job is dispatched; `to` is the position reserved at acceptance (depth rules D1/D2).
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/StoreTelegram'}
+      examples:
+        - name: store
+          summary: Store C-0001 from IN1 into aisle 1, level 2, slot 10, front.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b01, type: STORE, timestamp: '2026-11-20T08:00:00.000Z', jobId: sj-7f3a, containerId: C-0001, portId: IN1, to: {aisle: 1, level: 2, slot: 10, depth: 1}}
+    RetrieveTelegram:
+      name: RETRIEVE
+      title: RETRIEVE telegram
+      summary: Retrieve a container from its position to an output port.
+      description: Sent when a RETRIEVE job is dispatched; `from` is read from the aisle's StorageMap at dispatch.
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/RetrieveTelegram'}
+      examples:
+        - name: retrieve
+          summary: Retrieve C-0001 to OUT1.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b02, type: RETRIEVE, timestamp: '2026-11-20T08:04:00.000Z', jobId: sj-8b21, containerId: C-0001, portId: OUT1, from: {aisle: 1, level: 2, slot: 10, depth: 1}}
+    MoveTelegram:
+      name: MOVE
+      title: MOVE telegram
+      summary: A reshuffle - move a blocking front container to another position of the same aisle.
+      description: Internal to the context; its JOB_DONE publishes nothing (invariant 6).
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/MoveTelegram'}
+      examples:
+        - name: reshuffle
+          summary: Move C-0003 out of the way of a back position.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b03, type: MOVE, timestamp: '2026-11-20T08:04:10.000Z', jobId: sj-11c0, containerId: C-0003, from: {aisle: 1, level: 3, slot: 4, depth: 1}, to: {aisle: 1, level: 5, slot: 7, depth: 1}}
+    CancelTelegram:
+      name: CANCEL
+      title: CANCEL telegram
+      summary: Ask the PLC to cancel the job it holds for an aisle.
+      description: Sent for `POST .../cancellation` of a DISPATCHED or ACKNOWLEDGED job; a QUEUED job is cancelled without a telegram.
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/CancelTelegram'}
+      examples:
+        - name: cancel
+          summary: Cancel sj-8b21.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b04, type: CANCEL, timestamp: '2026-11-20T08:04:01.000Z', jobId: sj-8b21}
+    StateRequestTelegram:
+      name: STATE_REQUEST
+      title: STATE_REQUEST telegram
+      summary: Ask the PLC for the state of every unit.
+      description: Sent by boot recovery; the PLC answers with one UNIT_STATE per aisle unit.
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/StateRequestTelegram'}
+      examples:
+        - name: stateRequest
+          summary: Boot recovery asks for the unit states.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b05, type: STATE_REQUEST, timestamp: '2026-11-20T07:59:59.000Z'}
+    AckTelegram:
+      name: ACK
+      title: ACK telegram
+      summary: Acknowledges a received telegram, in both directions.
+      description: asrs-control ACKs every non-ACK up telegram after its effect committed (refusing only with MALFORMED); the PLC ACKs every down telegram, refusing with one of the listed codes.
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/AckTelegram'}
+      examples:
+        - name: refused
+          summary: The PLC refuses a STORE to an unknown port.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b06, type: ACK, timestamp: '2026-11-20T08:00:00.100Z', ackTelegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b01, accepted: false, reason: UNKNOWN_PORT}
+    JobDoneTelegram:
+      name: JOB_DONE
+      title: JOB_DONE telegram
+      summary: The PLC completed a job's motion.
+      description: A store ends DONE (ContainerStored), a reshuffle ends DONE silently, a retrieve waits for its PORT_ARRIVAL.
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/JobDoneTelegram'}
+      examples:
+        - name: done
+          summary: sj-7f3a is done.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b07, type: JOB_DONE, timestamp: '2026-11-20T08:00:30.500Z', jobId: sj-7f3a}
+    JobFailedTelegram:
+      name: JOB_FAILED
+      title: JOB_FAILED telegram
+      summary: An accepted job failed when the PLC started it.
+      description: 'CONTAINER_NOT_AT_PORT and PORT_OCCUPIED keep their name as the job reason; CONTAINER_NOT_AT_POSITION, POSITION_OCCUPIED and POSITION_BLOCKED become STORAGE_MAP_MISMATCH; any other code EQUIPMENT_FAULT. The bare code is kept as `plc_reason`.'
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/JobFailedTelegram'}
+      examples:
+        - name: failed
+          summary: The container was not where the map said.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b08, type: JOB_FAILED, timestamp: '2026-11-20T08:04:30.000Z', jobId: sj-8b21, reason: CONTAINER_NOT_AT_POSITION}
+    UnitStateTelegram:
+      name: UNIT_STATE
+      title: UNIT_STATE telegram
+      summary: The PackML state of one aisle unit.
+      description: A change raises EquipmentStateChanged; HELD fails the aisle's queued jobs with EQUIPMENT_FAULT and refuses new ones.
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/UnitStateTelegram'}
+      examples:
+        - name: held
+          summary: Unit A1 is held.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b09, type: UNIT_STATE, timestamp: '2026-11-20T08:06:00.000Z', unitId: A1, state: HELD}
+    PortArrivalTelegram:
+      name: PORT_ARRIVAL
+      title: PORT_ARRIVAL telegram
+      summary: A retrieved container arrived at an output port.
+      description: Presents the oldest retrieve awaiting the port; an absent `containerId` is a no-read (scan_result NO_READ), another id a MISMATCH.
+      contentType: application/json
+      tags: [{name: telegram}]
+      payload: {$ref: '#/components/schemas/PortArrivalTelegram'}
+      examples:
+        - name: arrival
+          summary: C-0001 arrived at OUT1 and was read.
+          payload: {telegramId: 3f1c2a3e-6a52-4a44-9a55-0a1f0d6e1b0a, type: PORT_ARRIVAL, timestamp: '2026-11-20T08:05:00.000Z', containerId: C-0001, portId: OUT1}
+
+  schemas:
+    CloudEventEnvelope:
+      type: object
+      required: [specversion, id, source, type, subject, time, datacontenttype, dataschema, data]
+      properties:
+        specversion: {type: string, const: '1.0'}
+        id: {type: string, description: UUID minted once per occurrence; consumers dedupe on it.}
+        source: {type: string, const: /warehouse/asrs-control}
+        type: {type: string, description: 'com.warehouse.wes.asrs-control.<entity>.<EventName>.'}
+        subject: {type: string}
+        time: {type: string, format: date-time}
+        datacontenttype: {type: string, const: application/json}
+        dataschema: {type: string, description: 'urn:warehouse:asrs-control:<events|analytics>:<EventName>:v1.'}
+    PlcTimestamp:
+      type: string
+      format: date-time
+      description: The PLC telegram's timestamp (simulated time in the emulator). Absent when the fact did not come from a telegram.
+    ContainerStoredEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventEnvelope'
+        - type: object
+          properties:
+            type: {type: string, const: com.warehouse.wes.asrs-control.storagejob.ContainerStored}
+            data:
+              type: object
+              required: [storage_job_id, asrs_id, container_id, port_id, stored_at]
+              properties:
+                storage_job_id: {type: string}
+                asrs_id: {type: string}
+                container_id: {type: string}
+                port_id: {type: string, description: The input port.}
+                reference: {type: string, description: The caller's reference from the request, when given.}
+                stored_at: {type: string, format: date-time}
+                plc_timestamp: {$ref: '#/components/schemas/PlcTimestamp'}
+    ContainerPresentedAtPortEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventEnvelope'
+        - type: object
+          properties:
+            type: {type: string, const: com.warehouse.wes.asrs-control.storagejob.ContainerPresentedAtPort}
+            data:
+              type: object
+              required: [storage_job_id, asrs_id, container_id, port_id, scan_result, presented_at]
+              properties:
+                storage_job_id: {type: string}
+                asrs_id: {type: string}
+                container_id: {type: string, description: The container the job retrieved.}
+                port_id: {type: string, description: The output port.}
+                reference: {type: string}
+                scan_result: {type: string, enum: [READ, NO_READ, MISMATCH]}
+                scanned_container_id: {type: string, description: What the port read; absent on NO_READ.}
+                presented_at: {type: string, format: date-time}
+                plc_timestamp: {$ref: '#/components/schemas/PlcTimestamp'}
+    StorageJobFailedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventEnvelope'
+        - type: object
+          properties:
+            type: {type: string, const: com.warehouse.wes.asrs-control.storagejob.StorageJobFailed}
+            data:
+              type: object
+              required: [storage_job_id, asrs_id, job_kind, container_id, port_id, reason, failed_at]
+              properties:
+                storage_job_id: {type: string}
+                asrs_id: {type: string}
+                job_kind: {type: string, enum: [STORE, RETRIEVE]}
+                container_id: {type: string}
+                port_id: {type: string}
+                reference: {type: string}
+                reason: {type: string, enum: [CANCELLED, EQUIPMENT_FAULT, EQUIPMENT_UNREACHABLE, COMMAND_REFUSED, CONTAINER_NOT_AT_PORT, STORAGE_MAP_MISMATCH, PORT_OCCUPIED, RESHUFFLE_FAILED, NO_RESHUFFLE_POSITION]}
+                plc_reason: {type: string, description: The PLC's bare reason code, when the failure came from the PLC.}
+                failed_at: {type: string, format: date-time}
+                plc_timestamp: {$ref: '#/components/schemas/PlcTimestamp'}
+    EquipmentStateChangedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventEnvelope'
+        - type: object
+          properties:
+            type: {type: string, const: com.warehouse.wes.asrs-control.equipmentunit.EquipmentStateChanged}
+            data:
+              type: object
+              required: [asrs_id, unit_id, aisle, state, previous_state, changed_at]
+              properties:
+                asrs_id: {type: string}
+                unit_id: {type: string, description: 'A<aisle>: the aisle''s combined shuttle-and-lift unit.'}
+                aisle: {type: integer, minimum: 1}
+                state: {type: string, enum: [IDLE, EXECUTE, HELD]}
+                previous_state: {type: string, enum: [IDLE, EXECUTE, HELD]}
+                changed_at: {type: string, format: date-time}
+                plc_timestamp: {$ref: '#/components/schemas/PlcTimestamp'}
+    AsrsCapacityChangedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventEnvelope'
+        - type: object
+          properties:
+            type: {type: string, const: com.warehouse.wes.asrs-control.asrs.AsrsCapacityChanged}
+            data:
+              type: object
+              required: [asrs_id, units_total, units_available, positions_total, positions_free, open_jobs, measured_at]
+              properties:
+                asrs_id: {type: string}
+                units_total: {type: integer, minimum: 1}
+                units_available: {type: integer, minimum: 0, description: Units not HELD.}
+                positions_total: {type: integer, minimum: 1}
+                positions_free: {type: integer, minimum: 0, description: Positions neither occupied nor reserved.}
+                open_jobs: {type: integer, minimum: 0, description: Store and retrieve jobs without an outcome.}
+                measured_at: {type: string, format: date-time}
+    TelegramPosition:
+      type: object
+      required: [aisle, level, slot, depth]
+      description: One rack position; only ever on the PLC link.
+      properties:
+        aisle: {type: integer, minimum: 1}
+        level: {type: integer, minimum: 1}
+        slot: {type: integer, minimum: 1}
+        depth: {type: integer, enum: [1, 2], description: 1 front, 2 back (double-deep racks only).}
+    TelegramBase:
+      type: object
+      required: [telegramId, type, timestamp]
+      properties:
+        telegramId: {type: string, description: 'A UUID; a retransmission keeps it, the receiver dedupes on it.'}
+        type: {type: string}
+        timestamp: {type: string, description: 'RFC 3339 UTC with milliseconds (`2006-01-02T15:04:05.000Z`). On up telegrams it is the PLC''s (simulated) time and becomes `plc_timestamp` on the events.'}
+    StoreTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          required: [jobId, containerId, portId, to]
+          properties:
+            type: {type: string, const: STORE}
+            jobId: {type: string}
+            containerId: {type: string}
+            portId: {type: string, description: Input port.}
+            to: {$ref: '#/components/schemas/TelegramPosition'}
+    RetrieveTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          required: [jobId, containerId, portId, from]
+          properties:
+            type: {type: string, const: RETRIEVE}
+            jobId: {type: string}
+            containerId: {type: string}
+            portId: {type: string, description: Output port.}
+            from: {$ref: '#/components/schemas/TelegramPosition'}
+    MoveTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          required: [jobId, containerId, from, to]
+          properties:
+            type: {type: string, const: MOVE}
+            jobId: {type: string}
+            containerId: {type: string}
+            from: {$ref: '#/components/schemas/TelegramPosition'}
+            to: {$ref: '#/components/schemas/TelegramPosition'}
+    CancelTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          required: [jobId]
+          properties:
+            type: {type: string, const: CANCEL}
+            jobId: {type: string}
+    StateRequestTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          properties:
+            type: {type: string, const: STATE_REQUEST}
+    AckTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          required: [ackTelegramId, accepted]
+          properties:
+            type: {type: string, const: ACK}
+            ackTelegramId: {type: string, description: The telegramId being acknowledged.}
+            accepted: {type: boolean}
+            reason:
+              type: string
+              description: Bare code, present when not accepted. asrs-control only ever refuses with MALFORMED. NOT_READY from the PLC is transient (the telegram is resent); every other refusal of a command fails its job with COMMAND_REFUSED, and a refused CANCEL is reverted.
+              enum: [UNKNOWN_PORT, WRONG_PORT_KIND, INVALID_POSITION, DUPLICATE_JOB, AISLE_MISMATCH, UNKNOWN_JOB, JOB_RUNNING, MALFORMED, NOT_READY]
+    JobDoneTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          required: [jobId]
+          properties:
+            type: {type: string, const: JOB_DONE}
+            jobId: {type: string}
+    JobFailedTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          required: [jobId, reason]
+          properties:
+            type: {type: string, const: JOB_FAILED}
+            jobId: {type: string}
+            reason:
+              type: string
+              description: Bare code.
+              enum: [CONTAINER_NOT_AT_PORT, CONTAINER_NOT_AT_POSITION, POSITION_OCCUPIED, POSITION_BLOCKED, PORT_OCCUPIED]
+    UnitStateTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          required: [unitId, state]
+          properties:
+            type: {type: string, const: UNIT_STATE}
+            unitId: {type: string, description: 'A<aisle>.'}
+            state: {type: string, enum: [IDLE, EXECUTE, HELD], description: PackML names; protocol v1 sends no other state.}
+    PortArrivalTelegram:
+      allOf:
+        - $ref: '#/components/schemas/TelegramBase'
+        - type: object
+          required: [portId]
+          properties:
+            type: {type: string, const: PORT_ARRIVAL}
+            containerId: {type: string, description: What the port read; absent means no-read.}
+            portId: {type: string}

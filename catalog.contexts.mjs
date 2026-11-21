@@ -210,6 +210,17 @@ export const CONTEXTS = {
       "Shift planning and labor assignment. Stops deliberately at the process-path boundary: it assigns people to paths, it does not plan work.",
     topics: ["warehouse.workforce.events", "warehouse.workforce.analytics"],
   },
+  // WCS tier (warehouse-docs wcs/): subsystem controllers below the WES, CloudEvents segment wes.
+  // equipment-emulator (the simulated AMRs and AS/RS behind them) is test infrastructure, not a
+  // bounded context, and is deliberately not catalogued.
+  'asrs-control': {
+    subdomain: 'wes',
+    classification: 'Generic',
+    tier: 'WES, WCS subsystem controller',
+    purpose:
+      "Store and retrieve containers in the automated storage and retrieval system at the throughput the WCS needs, and own where each container sits inside the rack: position assignment, one storage job per aisle at a time, port presentation, reshuffles and PackML equipment state, over a telegram protocol on MQTT to the shuttles and lifts. To the WMS the whole AS/RS is one logical location; no rack position is ever published.",
+    topics: ["warehouse.asrs-control.events", "warehouse.asrs-control.analytics"],
+  },
   // --- Retail Network (separate organization; see SUBDOMAINS['retail-network']) ---
   'node-topology': {
     subdomain: 'retail-network',

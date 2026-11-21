@@ -1,0 +1,136 @@
+---
+id: asrs-control
+name: Asrs Control (events)
+version: 1.0.0
+summary: >-
+  Store and retrieve containers in the automated storage and retrieval system at
+  the throughput the WCS needs, and own where each container sits inside the
+  rack: position assignment, one storage job per aisle at a time, port
+  presentation, reshuffles and PackML equipment state, over a telegram protocol
+  on MQTT to the shuttles and lifts.
+badges:
+  - content: asrs-control
+    textColor: blue
+    backgroundColor: blue
+  - content: storagejob
+    textColor: blue
+    backgroundColor: blue
+  - content: equipmentunit
+    textColor: blue
+    backgroundColor: blue
+  - content: asrs
+    textColor: blue
+    backgroundColor: blue
+  - content: telegram
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: ContainerStored
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.events
+        version: 1.0.0
+  - id: ContainerPresentedAtPort
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.events
+        version: 1.0.0
+  - id: StorageJobFailed
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.events
+        version: 1.0.0
+  - id: EquipmentStateChanged
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.events
+        version: 1.0.0
+  - id: AsrsCapacityChanged
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.events
+        version: 1.0.0
+  - id: ContainerStoredAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.analytics
+        version: 1.0.0
+  - id: ContainerPresentedAtPortAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.analytics
+        version: 1.0.0
+  - id: StorageJobFailedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.analytics
+        version: 1.0.0
+  - id: EquipmentStateChangedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.analytics
+        version: 1.0.0
+  - id: AsrsCapacityChangedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.asrs-control.analytics
+        version: 1.0.0
+receives: []
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+Store and retrieve containers in the automated storage and retrieval system at the throughput the WCS needs, and own where each container sits inside the rack: position assignment, one storage job per aisle at a time, port presentation, reshuffles and PackML equipment state, over a telegram protocol on MQTT to the shuttles and lifts. To the WMS the whole AS/RS is one logical location; no rack position is ever published.
+
+| | |
+|---|---|
+| Bounded context | `asrs-control` |
+| Domain | WES (`wes`) |
+| DDD classification | Generic |
+| Tier | WES, WCS subsystem controller |
+| Publishes (Kafka) | `warehouse.asrs-control.events`<br/>`warehouse.asrs-control.analytics` |
+| Consumes (Kafka) | nothing: this context is a pure publisher |
+| CloudEvents type prefix | `com.warehouse.wes.asrs-control.` |
+| Event source | `/warehouse/asrs-control` |
+| Repository | [IQVO/asrs-control](https://github.com/IQVO/asrs-control) |
+| REST API | [asrs-control-api](/docs/services/asrs-control-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event contract of the **asrs-control** bounded context (WCS tier, Generic, segment `wes`; ADR 0001, ADR 0003).
+Five facts for material-flow-control's subsystem-controller interface (WCS context map relationship 5) and,
+for `StorageJobFailed` with reason `EQUIPMENT_FAULT`, exception-management.
+
+**Published** through a transactional outbox to `warehouse.asrs-control.events`, and the same occurrence
+(same CloudEvents `id`, `type` and `data`) to `warehouse.asrs-control.analytics` with the `analytics`
+`dataschema` segment. Kafka key = `subject`.
+
+**Envelope (mandatory).** CloudEvents 1.0 structured mode, header
+`content-type: application/cloudevents+json; charset=UTF-8`,
+`type` = `com.warehouse.wes.asrs-control.<entity>.<EventName>`. Dispatch on the full `type`, ignore unknown
+types, dedupe on `id`.
+
+**Time.** `time` and every `*_at` field are asrs-control's clock. `plc_timestamp` is the PLC telegram's
+timestamp (the emulator's simulated time), present only on facts that came from a telegram.
+
+No rack position, reshuffle or internal move is ever published (invariant 6).
+
+**PLC link (MQTT).** The second half of this contract is the AS/RS telegram protocol v1 link to the PLC
+(emulated by IQVO/equipment-emulator, `docs/telegram-protocol.md`; ADR 0002): channels `asrs/v1/{asrsId}/down`
+and `asrs/v1/{asrsId}/up` on the `plc-link` MQTT server, flat JSON (`application/json`, not CloudEvents),
+QoS 1, not retained. asrs-control is the protocol's WCS side, so the operations are written from asrs-control's
+point of view: `subscribe` = asrs-control publishes (the down topic), `publish` = asrs-control receives (the up
+topic). equipment-emulator's `apis/asyncapi.yaml` describes the same two channels from the PLC side. The
+telegrams carry rack positions; they never leave the link (invariant 6).
+
+
+## Architecture diagram
+<NodeGraph />

@@ -30,7 +30,8 @@
           "inbound_appointments",
           "inbound_labour_minutes",
           "inbound_average_heads",
-          "inbound_standard_missing"
+          "inbound_standard_missing",
+          "labour_requirement"
         ],
         "properties": {
           "id": {
@@ -73,17 +74,30 @@
             "type": "string",
             "enum": [
               "request",
-              "orders"
+              "orders",
+              "forecast"
             ],
-            "description": "Additive (docs/adr/0004). \"request\": assigned_demand was stated by the caller (also every plan created before demand ingestion); \"orders\": it was omitted and defaulted from the order-management read model.\n",
+            "description": "Additive (docs/adr/0004). \"request\": assigned_demand was stated by the caller (also every plan created before demand ingestion); \"orders\": it was omitted and defaulted from the order-management read model; \"forecast\": it was derived from the workload forecast of forecast_path_id (docs/adr/0024).\n",
             "example": "request"
+          },
+          "forecast_path_id": {
+            "type": "string",
+            "description": "Additive (docs/adr/0024). The canonical path code of the workload forecast the demand was read from; present only when demand_source is \"forecast\".\n",
+            "example": "PICK"
+          },
+          "scenario": {
+            "type": "string",
+            "description": "Additive (docs/adr/0024). The plan's what-if label; absent when it carries none.\n",
+            "example": "second pack line open"
           },
           "status": {
             "type": "string",
             "enum": [
               "DRAFT",
-              "PUBLISHED"
-            ]
+              "PUBLISHED",
+              "SUPERSEDED"
+            ],
+            "description": "SUPERSEDED (additive, docs/adr/0024 decision 3) is terminal: a newer plan of the same site_id, location, path_id and window was published (superseded_by). Clients that switch on status must accept it.\n"
           },
           "path_capacity": {
             "type": "number",
@@ -114,7 +128,12 @@
           "published_at": {
             "type": "string",
             "format": "date-time",
-            "description": "Present only once PUBLISHED."
+            "description": "Present only once PUBLISHED (kept when SUPERSEDED)."
+          },
+          "superseded_by": {
+            "type": "string",
+            "description": "Additive (docs/adr/0024 decision 3). The id of the plan whose publication superseded this one; present only when status is SUPERSEDED.\n",
+            "example": "9d1f0c2a-7b3e-4f5a-8c6d-2e4b1a0f9c87"
           },
           "bottleneck_constraint": {
             "type": "string",
@@ -150,6 +169,71 @@
             "type": "boolean",
             "description": "True when appointments exist but no inbound standard is declared for the plan's (location, path_id); they contribute no labour demand.",
             "example": false
+          },
+          "labour_requirement": {
+            "type": "array",
+            "description": "Additive (docs/adr/0022). The labour each step of the plan's path requires, in path order (never null; [] for plans stored before migration 0013).\n",
+            "items": {
+              "type": "object",
+              "description": "Additive (docs/adr/0022). The labour one step of the plan's path requires: tasks x the engineered standard seconds of the step's task type (labor-performance's standard in force for the plan's site at the window start; a step's process type names its task type). Computed when the plan was created and stored with it: a later revision of a standard never rewrites it. Informational: the ORDER shortage, the bottleneck and every published event do not depend on it. When known is false the figures are 0 and reason says why.\n",
+              "required": [
+                "process_type",
+                "standard_seconds",
+                "standard_site_scoped",
+                "tasks",
+                "required_labour_hours",
+                "required_average_heads",
+                "known"
+              ],
+              "properties": {
+                "process_type": {
+                  "type": "string",
+                  "example": "PACK"
+                },
+                "standard_seconds": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "expected_seconds of the standard in force; 0 when there is none.",
+                  "example": 90
+                },
+                "standard_site_scoped": {
+                  "type": "boolean",
+                  "description": "True when that standard is scoped to the plan's site rather than every site.",
+                  "example": false
+                },
+                "tasks": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "Tasks the step's demand is (released lines for PICK with demand_source orders, else assigned_demand x tasks_per_order[step]).",
+                  "example": 12000
+                },
+                "required_labour_hours": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "tasks x standard_seconds / 3600.",
+                  "example": 300
+                },
+                "required_average_heads": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "required_labour_hours over the plan window length, in people.",
+                  "example": 37.5
+                },
+                "known": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "no-labor-standard",
+                    "no-task-factor"
+                  ],
+                  "description": "Present only when known is false. no-labor-standard: no labor-performance standard of the step's task type is in force for the plan's site and window (or the step is not a task type it measures, e.g. REBIN). no-task-factor: a standard exists but the step's tasks cannot be counted (no tasks_per_order factor).\n",
+                  "example": "no-task-factor"
+                }
+              }
+            }
           }
         }
       }
