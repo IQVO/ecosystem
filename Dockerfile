@@ -39,5 +39,6 @@ USER root
 RUN apk upgrade --no-cache
 USER nginx
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.legacy-event-ids.map /etc/nginx/legacy-event-ids.map
 COPY --from=build --chown=nginx:nginx /app/dist /usr/share/nginx/html
 EXPOSE 8080
