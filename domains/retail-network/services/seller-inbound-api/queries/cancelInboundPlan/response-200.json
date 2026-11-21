@@ -5,8 +5,10 @@
     "sellerId",
     "destinationNodeId",
     "packingOption",
+    "placementOption",
     "state",
     "lines",
+    "capacityEnforced",
     "createdAt"
   ],
   "properties": {
@@ -30,6 +32,16 @@
       ],
       "example": "CASE_PACKED",
       "description": "`CASE_PACKED` cartons hold one item at the case GTIN's units per pack; `INDIVIDUAL` cartons are packed by the seller as it sees fit."
+    },
+    "placementOption": {
+      "type": "string",
+      "enum": [
+        "SELLER_SPLIT",
+        "NETWORK_SPLIT"
+      ],
+      "default": "SELLER_SPLIT",
+      "example": "NETWORK_SPLIT",
+      "description": "`SELLER_SPLIT` (the default) sends everything to the destination the seller picked; `NETWORK_SPLIT` destinations an ACTIVE `INBOUND_CROSS_DOCK` and records a redistribution of the plan's eaches across the region's fulfilment centres (ADR 0015). The redistribution is a recorded fact: nothing downstream executes it."
     },
     "state": {
       "type": "string",
@@ -69,9 +81,95 @@
             "maximum": 2147483647,
             "example": 24,
             "description": "Eaches, never cases."
+          },
+          "unitVolumeDm3": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000,
+            "example": 8,
+            "description": "The seller-declared volume of one each, in cubic decimetres (ADR 0015). Omitted or 0 = undeclared: the capacity gate then records itself unenforced and never blocks the plan."
           }
         }
       }
+    },
+    "redistribution": {
+      "type": "array",
+      "description": "The recorded capacity-split-v1 redistribution; present only for NETWORK_SPLIT (ADR 0015).",
+      "items": {
+        "type": "object",
+        "description": "One (node, line) share of a NETWORK_SPLIT plan's recorded redistribution (capacity-split-v1, ADR 0015).",
+        "required": [
+          "nodeId",
+          "lineNo",
+          "qtyEaches"
+        ],
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "example": "node-b41"
+          },
+          "lineNo": {
+            "type": "integer",
+            "minimum": 1,
+            "example": 1,
+            "description": "The line's 1-based position in the plan."
+          },
+          "qtyEaches": {
+            "type": "integer",
+            "minimum": 1,
+            "example": 20
+          }
+        }
+      }
+    },
+    "placementFeeBasis": {
+      "description": "The recorded fee-basis fact; present only for NETWORK_SPLIT (ADR 0015).",
+      "allOf": [
+        {
+          "type": "object",
+          "description": "The recorded placement fee basis of a NETWORK_SPLIT plan (ADR 0015) - a fact for a future vendor-settlement context, never a charge.",
+          "required": [
+            "basis",
+            "month",
+            "dm3",
+            "nodeIds"
+          ],
+          "properties": {
+            "basis": {
+              "type": "string",
+              "enum": [
+                "NETWORK_SPLIT"
+              ]
+            },
+            "month": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "example": "2026-11"
+            },
+            "dm3": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0,
+              "example": 160,
+              "description": "The plan's total declared volume; 0 when any line's unit volume is undeclared."
+            },
+            "nodeIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "The redistribution's recipients, unique and sorted."
+            }
+          }
+        }
+      ]
+    },
+    "capacityEnforced": {
+      "type": "boolean",
+      "example": true,
+      "description": "Whether the monthly capacity gate was actually applied - both the node's declared monthly volume and every line's unit volume known (ADR 0015). false never blocks the plan; the unenforced fact is recorded."
     },
     "createdAt": {
       "type": "string",

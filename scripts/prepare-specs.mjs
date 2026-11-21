@@ -27,6 +27,10 @@
 //  5. channels    Several contracts re-declare channels they only consume. The generator
 //                 writes channels globally (last writer wins), so every declaration of a topic
 //                 is aligned to the OWNER's description and version.
+//  7. kafka only  The catalog documents the Kafka contract. A 2.6 channel served only by
+//                 non-Kafka servers (asrs-control's MQTT telegram link to the PLC, its ADR 0002)
+//                 is dropped from the copy, with the messages only such channels reference and
+//                 the servers nothing references any more; ./specs keeps the full contract.
 import fs from 'node:fs';
 import path from 'node:path';
 import { load, dump } from 'js-yaml';
@@ -160,7 +164,32 @@ function renameV3MessageKeys(doc) {
   walk(doc);
 }
 
+function dropNonKafkaChannels(doc) {
+  if (!String(doc.asyncapi ?? '').startsWith('2.')) return;
+  const servers = doc.servers ?? {};
+  const kafka = (name) => /^kafka/.test(servers[name]?.protocol ?? '');
+  const refs = (def) => {
+    const m = (def.publish ?? {}).message, n = (def.subscribe ?? {}).message;
+    return [m, n].flatMap((x) => (x ? (x.oneOf ?? [x]) : []))
+      .map((i) => /^#\/components\/messages\/(.+)$/.exec(i.$ref ?? '')?.[1]).filter(Boolean);
+  };
+  const dropped = new Set(), kept = new Set(), usedServers = new Set();
+  for (const [channel, def] of Object.entries(doc.channels ?? {})) {
+    const on = def?.servers ?? [];
+    if (on.length && !on.some(kafka)) {
+      refs(def).forEach((k) => dropped.add(k));
+      delete doc.channels[channel];
+    } else {
+      refs(def).forEach((k) => kept.add(k));
+      (on.length ? on : Object.keys(servers)).forEach((n) => usedServers.add(n));
+    }
+  }
+  for (const k of dropped) if (!kept.has(k)) delete doc.components?.messages?.[k];
+  for (const n of Object.keys(servers)) if (!kafka(n) && !usedServers.has(n)) delete servers[n];
+}
+
 function normalise(ctx, doc) {
+  dropNonKafkaChannels(doc);
   const owned = new Set(CONTEXTS[ctx]?.topics ?? []);
 
   // (4) channel metadata aligned to the owner. AsyncAPI 3 channels may be keyed
@@ -198,7 +227,9 @@ function normalise(ctx, doc) {
   // (2) clones for components referenced from more than one channel
   const seen = new Set();
   for (const [channel, def] of Object.entries(doc.channels ?? {})) {
-    const stream = pascal(channel.split('.').pop());
+    // Last segment of a dotted Kafka topic (…events/…analytics) or of a slashed MQTT
+    // topic (asrs/v1/{asrsId}/up -> Up); braces would make the clone's $ref invalid.
+    const stream = pascal(channel.split(/[./]/).pop().replace(/[{}]/g, ''));
     const m = (def.publish ?? def.subscribe)?.message;
     if (!m) continue;
     for (const item of m.oneOf ?? [m]) {

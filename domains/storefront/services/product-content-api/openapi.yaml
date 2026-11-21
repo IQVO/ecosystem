@@ -5,7 +5,7 @@ info:
   contact:
     name: product-content maintainers
     url: https://github.com/IQVO/product-content
-  description: 'REST contract of the product-content bounded context of the digital storefront (model: warehouse-docs storefront/model/model.yaml, contexts[product-content], with the FINAL model-gap decisions applied). Product Content enriches the network''s catalogue item with description, bullets (&lt;= 10), attributes (&lt;= 50), media (&lt;= 12, URLs to static assets only; upload is out of scope) and the category tree. The title stays the item master''s. Content publishes only when complete: a description, exactly one PRIMARY medium and a category. Content lifecycle: DRAFT (revisable, discardable) -> PUBLISHED (revisable, publishable again with the new revision) -> RETIRED (terminal). The category tree is ONE live aggregate without a draft state: every category write applies to the live tree and publishes a new version (CategoryTreePublished). Categories are never deleted. Errors are RFC 9457 problem details (application/problem+json) whose type is /problems/&lt;slug>; shared types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422), plus one kebab-case slug per Err of the model. Every POST takes an Idempotency-Key header (24 hours); PUT and DELETE are idempotent by method. Routes follow the fleet REST API guideline: nouns, never verbs (a lifecycle transition is a transition resource such as /revisions or /publications). No authentication.'
+  description: 'REST contract of the product-content bounded context of the digital storefront (model: warehouse-docs storefront/model/model.yaml, contexts[product-content], with the FINAL model-gap decisions applied). Product Content enriches the network''s catalogue item with description, bullets (&lt;= 10), attributes (&lt;= 50), media (&lt;= 12, URLs to static assets only; upload is out of scope) and the category tree. The title stays the item master''s. Content publishes only when complete: a description, exactly one PRIMARY medium and a category. Content lifecycle: DRAFT (revisable, discardable) -> PUBLISHED (revisable, publishable again with the new revision) -> RETIRED (terminal). The category tree is ONE live aggregate without a draft state: every category write applies to the live tree and publishes a new version (CategoryTreePublished). Categories are never deleted. Errors are RFC 9457 problem details (application/problem+json) whose type is /problems/&lt;slug>; shared types are not-found (404), illegal-transition (409), concurrent-update (409) and validation-failed (422), plus one kebab-case slug per Err of the model. Every POST takes an Idempotency-Key header (24 hours); PUT and DELETE are idempotent by method. A 2xx and a FINAL refusal are stored under the key and replayed to a retry; a RETRYABLE refusal (nothing committed, the answer depends on state that can change) is not stored: the key is released, a retry executes again, and another request under the released key is new. Routes follow the fleet REST API guideline: nouns, never verbs (a lifecycle transition is a transition resource such as /revisions or /publications). No authentication.'
 servers:
   - url: http://localhost:8080
 tags:
@@ -387,7 +387,7 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: 'Client-generated UUID per logical submit (1 to 128 printable ASCII characters); a retry reuses it. The same key with the same request (method, path, body) replays the stored answer with Idempotency-Replayed: true; the same key with another request is 409 idempotency-key-reused. Missing is 400 idempotency-key-required, malformed is 400 idempotency-key-invalid.'
+      description: 'Client-generated UUID per logical submit (1 to 128 printable ASCII characters); a retry reuses it. The same key with the same request (method, path, body) replays the stored answer with Idempotency-Replayed: true; the same key with another request is 409 idempotency-key-reused. Stored answers are a 2xx and a FINAL refusal (malformed-request, too-many-*); a RETRYABLE refusal (unknown-catalog-item, unknown-category, not-found, incomplete-content, concurrent-update, illegal-transition, ...) is not stored and releases the key, so the same key executes the work again. Missing is 400 idempotency-key-required, malformed is 400 idempotency-key-invalid.'
       schema:
         type: string
         minLength: 1
@@ -460,7 +460,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
     Conflict:
-      description: concurrent-update (another writer got in between the load and the save), a business conflict, or idempotency-key-reused (the Idempotency-Key was already used with a different method, path or body).
+      description: 'concurrent-update (another writer got in between the load and the save; RETRYABLE: not stored, the key is released and a retry executes again), a business conflict, or idempotency-key-reused (the Idempotency-Key was already used with a different method, path or body).'
       content:
         application/problem+json:
           schema:

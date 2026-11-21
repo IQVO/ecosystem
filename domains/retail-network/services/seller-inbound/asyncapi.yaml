@@ -989,7 +989,11 @@ channels:
   sellerInboundAnalytics:
     address: retailnetwork.seller-inbound.analytics
     title: seller-inbound analytics topic
-    description: Analytics-only events. No context consumes them.
+    description: >-
+      Analytics-only events. No other context consumes them; this context's own
+      analytics projector (`cmd/si-projector`, consumer group
+      `ANALYTICS_CONSUMER_GROUP`, ADR 0017) reads `InboundPlanConfirmed` from
+      here, together with the events topic, into a separate analytical database.
     messages:
       SellerOnboarded:
         name: SellerOnboarded
@@ -1181,6 +1185,15 @@ channels:
                         - INDIVIDUAL
                         - CASE_PACKED
                       x-parser-schema-id: <anonymous-schema-85>
+                    placementOption:
+                      type: string
+                      enum:
+                        - SELLER_SPLIT
+                        - NETWORK_SPLIT
+                      description: >-
+                        Who splits the inbound (ADR 0015); always present since
+                        that ADR.
+                      x-parser-schema-id: <anonymous-schema-86>
                     lines:
                       type: array
                       items:
@@ -1192,21 +1205,96 @@ channels:
                         properties:
                           catalogItemId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-87>
+                            x-parser-schema-id: <anonymous-schema-88>
                           gtin:
                             type: string
                             pattern: ^[0-9]{14}$
-                            x-parser-schema-id: <anonymous-schema-88>
+                            x-parser-schema-id: <anonymous-schema-89>
                           qtyEaches:
                             type: integer
                             minimum: 1
-                            x-parser-schema-id: <anonymous-schema-89>
+                            x-parser-schema-id: <anonymous-schema-90>
+                          unitVolumeDm3:
+                            type: integer
+                            minimum: 1
+                            maximum: 100000
+                            description: >-
+                              The seller-declared volume of one each, in cubic
+                              decimetres (ADR 0015). Omitted when undeclared.
+                            x-parser-schema-id: <anonymous-schema-91>
                         x-parser-schema-id: PlanLine
-                      x-parser-schema-id: <anonymous-schema-86>
+                      x-parser-schema-id: <anonymous-schema-87>
+                    redistribution:
+                      type: array
+                      description: >-
+                        The recorded capacity-split-v1 redistribution; present
+                        only for NETWORK_SPLIT (ADR 0015). Nothing downstream
+                        executes it.
+                      items:
+                        type: object
+                        description: >-
+                          One (node, line) share of a NETWORK_SPLIT plan's
+                          recorded redistribution (ADR 0015).
+                        required:
+                          - nodeId
+                          - lineNo
+                          - qtyEaches
+                        properties:
+                          nodeId:
+                            type: string
+                            x-parser-schema-id: <anonymous-schema-93>
+                          lineNo:
+                            type: integer
+                            minimum: 1
+                            x-parser-schema-id: <anonymous-schema-94>
+                          qtyEaches:
+                            type: integer
+                            minimum: 1
+                            x-parser-schema-id: <anonymous-schema-95>
+                        x-parser-schema-id: RedistributionLine
+                      x-parser-schema-id: <anonymous-schema-92>
+                    placementFeeBasis:
+                      description: >-
+                        The recorded fee-basis fact; present only for
+                        NETWORK_SPLIT (ADR 0015).
+                      allOf:
+                        - type: object
+                          description: >-
+                            The recorded placement fee basis of a NETWORK_SPLIT
+                            plan (ADR 0015), a fact for a later
+                            vendor-settlement context, never a charge.
+                          required:
+                            - basis
+                            - month
+                            - dm3
+                            - nodeIds
+                          properties:
+                            basis:
+                              type: string
+                              enum:
+                                - NETWORK_SPLIT
+                              x-parser-schema-id: <anonymous-schema-97>
+                            month:
+                              type: string
+                              pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
+                              x-parser-schema-id: <anonymous-schema-98>
+                            dm3:
+                              type: integer
+                              format: int64
+                              minimum: 0
+                              x-parser-schema-id: <anonymous-schema-99>
+                            nodeIds:
+                              type: array
+                              items:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-101>
+                              x-parser-schema-id: <anonymous-schema-100>
+                          x-parser-schema-id: PlacementFeeBasis
+                      x-parser-schema-id: <anonymous-schema-96>
                     confirmedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-90>
+                      x-parser-schema-id: <anonymous-schema-102>
                   x-parser-schema-id: <anonymous-schema-81>
               x-parser-schema-id: <anonymous-schema-80>
           x-parser-schema-id: InboundPlanConfirmedEvent
@@ -1318,40 +1406,40 @@ channels:
                   properties:
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-93>
+                      x-parser-schema-id: <anonymous-schema-105>
                     sellerId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-94>
+                      x-parser-schema-id: <anonymous-schema-106>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-95>
+                      x-parser-schema-id: <anonymous-schema-107>
                     sscc:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-96>
+                      x-parser-schema-id: <anonymous-schema-108>
                     kind:
                       type: string
                       description: >-
                         The carton discrepancy kind string: MissingCarton,
                         UnexpectedCarton, Damaged, Short or Over.
-                      x-parser-schema-id: <anonymous-schema-97>
+                      x-parser-schema-id: <anonymous-schema-109>
                     expected:
                       type: string
                       description: >-
                         Short and Over only, `<gtin>:<qtyEaches>`; omitted
                         otherwise.
-                      x-parser-schema-id: <anonymous-schema-98>
+                      x-parser-schema-id: <anonymous-schema-110>
                     actual:
                       type: string
                       description: >-
                         Short and Over only, `<gtin>:<qtyEaches>`; omitted
                         otherwise.
-                      x-parser-schema-id: <anonymous-schema-99>
+                      x-parser-schema-id: <anonymous-schema-111>
                     recordedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-100>
-                  x-parser-schema-id: <anonymous-schema-92>
-              x-parser-schema-id: <anonymous-schema-91>
+                      x-parser-schema-id: <anonymous-schema-112>
+                  x-parser-schema-id: <anonymous-schema-104>
+              x-parser-schema-id: <anonymous-schema-103>
           x-parser-schema-id: InboundDiscrepancyRecordedEvent
         examples:
           - name: inboundDiscrepancyRecorded
@@ -1454,19 +1542,19 @@ channels:
                   properties:
                     sellerId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-103>
+                      x-parser-schema-id: <anonymous-schema-115>
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-104>
+                      x-parser-schema-id: <anonymous-schema-116>
                     code:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-105>
+                      x-parser-schema-id: <anonymous-schema-117>
                     recordedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-106>
-                  x-parser-schema-id: <anonymous-schema-102>
-              x-parser-schema-id: <anonymous-schema-101>
+                      x-parser-schema-id: <anonymous-schema-118>
+                  x-parser-schema-id: <anonymous-schema-114>
+              x-parser-schema-id: <anonymous-schema-113>
           x-parser-schema-id: SellerComplianceViolationRecordedEvent
         examples:
           - name: sellerComplianceViolationRecorded
@@ -1567,12 +1655,12 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-109>
+                      x-parser-schema-id: <anonymous-schema-121>
                     nodeType:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-110>
-                  x-parser-schema-id: <anonymous-schema-108>
-              x-parser-schema-id: <anonymous-schema-107>
+                      x-parser-schema-id: <anonymous-schema-122>
+                  x-parser-schema-id: <anonymous-schema-120>
+              x-parser-schema-id: <anonymous-schema-119>
           x-parser-schema-id: NodeRegisteredIn
         examples:
           - name: nodeRegistered
@@ -1658,10 +1746,10 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-113>
+                      x-parser-schema-id: <anonymous-schema-125>
                     profileRevision:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-114>
+                      x-parser-schema-id: <anonymous-schema-126>
                     inbound:
                       type: object
                       description: >-
@@ -1670,7 +1758,7 @@ channels:
                       properties:
                         maxCartonWeightG:
                           type: integer
-                          x-parser-schema-id: <anonymous-schema-115>
+                          x-parser-schema-id: <anonymous-schema-127>
                         maxCartonDimsMm:
                           type: object
                           required:
@@ -1680,23 +1768,23 @@ channels:
                           properties:
                             l:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-117>
+                              x-parser-schema-id: <anonymous-schema-129>
                             w:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-118>
+                              x-parser-schema-id: <anonymous-schema-130>
                             h:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-119>
-                          x-parser-schema-id: <anonymous-schema-116>
+                              x-parser-schema-id: <anonymous-schema-131>
+                          x-parser-schema-id: <anonymous-schema-128>
                         acceptsPallets:
                           type: boolean
-                          x-parser-schema-id: <anonymous-schema-120>
+                          x-parser-schema-id: <anonymous-schema-132>
                         requiresSscc:
                           type: boolean
-                          x-parser-schema-id: <anonymous-schema-121>
+                          x-parser-schema-id: <anonymous-schema-133>
                       x-parser-schema-id: InboundLimits
-                  x-parser-schema-id: <anonymous-schema-112>
-              x-parser-schema-id: <anonymous-schema-111>
+                  x-parser-schema-id: <anonymous-schema-124>
+              x-parser-schema-id: <anonymous-schema-123>
           x-parser-schema-id: NodeOperationalProfileDeclaredIn
         examples:
           - name: nodeOperationalProfileDeclared
@@ -1791,9 +1879,9 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-124>
-                  x-parser-schema-id: <anonymous-schema-123>
-              x-parser-schema-id: <anonymous-schema-122>
+                      x-parser-schema-id: <anonymous-schema-136>
+                  x-parser-schema-id: <anonymous-schema-135>
+              x-parser-schema-id: <anonymous-schema-134>
           x-parser-schema-id: NodeActivatedIn
         examples:
           - name: nodeActivated
@@ -1878,9 +1966,9 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-127>
-                  x-parser-schema-id: <anonymous-schema-126>
-              x-parser-schema-id: <anonymous-schema-125>
+                      x-parser-schema-id: <anonymous-schema-139>
+                  x-parser-schema-id: <anonymous-schema-138>
+              x-parser-schema-id: <anonymous-schema-137>
           x-parser-schema-id: NodeSuspendedIn
         examples:
           - name: nodeSuspended
@@ -1966,9 +2054,9 @@ channels:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-130>
-                  x-parser-schema-id: <anonymous-schema-129>
-              x-parser-schema-id: <anonymous-schema-128>
+                      x-parser-schema-id: <anonymous-schema-142>
+                  x-parser-schema-id: <anonymous-schema-141>
+              x-parser-schema-id: <anonymous-schema-140>
           x-parser-schema-id: NodeRetiredIn
         examples:
           - name: nodeRetired
@@ -2067,7 +2155,7 @@ channels:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-133>
+                      x-parser-schema-id: <anonymous-schema-145>
                     level:
                       type: string
                       enum:
@@ -2079,19 +2167,19 @@ channels:
                       x-parser-schema-id: PackLevel
                     gtin:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-134>
+                      x-parser-schema-id: <anonymous-schema-146>
                     childGtin:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-135>
+                      x-parser-schema-id: <anonymous-schema-147>
                     unitsPerPack:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-136>
+                      x-parser-schema-id: <anonymous-schema-148>
                     declaredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-137>
-                  x-parser-schema-id: <anonymous-schema-132>
-              x-parser-schema-id: <anonymous-schema-131>
+                      x-parser-schema-id: <anonymous-schema-149>
+                  x-parser-schema-id: <anonymous-schema-144>
+              x-parser-schema-id: <anonymous-schema-143>
           x-parser-schema-id: CatalogItemPackagingDeclaredIn
         examples:
           - name: catalogItemPackagingDeclared
@@ -2184,7 +2272,7 @@ channels:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-140>
+                      x-parser-schema-id: <anonymous-schema-152>
                     level:
                       type: string
                       enum:
@@ -2196,13 +2284,13 @@ channels:
                       x-parser-schema-id: PackLevel
                     gtin:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-141>
+                      x-parser-schema-id: <anonymous-schema-153>
                     retiredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-142>
-                  x-parser-schema-id: <anonymous-schema-139>
-              x-parser-schema-id: <anonymous-schema-138>
+                      x-parser-schema-id: <anonymous-schema-154>
+                  x-parser-schema-id: <anonymous-schema-151>
+              x-parser-schema-id: <anonymous-schema-150>
           x-parser-schema-id: CatalogItemPackLevelRetiredIn
         examples:
           - name: catalogItemPackLevelRetired
@@ -2296,25 +2384,25 @@ channels:
                   properties:
                     listingId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-145>
+                      x-parser-schema-id: <anonymous-schema-157>
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-146>
+                      x-parser-schema-id: <anonymous-schema-158>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-147>
+                      x-parser-schema-id: <anonymous-schema-159>
                     availableQty:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-148>
+                      x-parser-schema-id: <anonymous-schema-160>
                     basis:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-149>
+                      x-parser-schema-id: <anonymous-schema-161>
                     asOf:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-150>
-                  x-parser-schema-id: <anonymous-schema-144>
-              x-parser-schema-id: <anonymous-schema-143>
+                      x-parser-schema-id: <anonymous-schema-162>
+                  x-parser-schema-id: <anonymous-schema-156>
+              x-parser-schema-id: <anonymous-schema-155>
           x-parser-schema-id: ListingAvailabilityChangedIn
         examples:
           - name: listingAvailabilityChanged
@@ -2418,14 +2506,14 @@ channels:
                   properties:
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-153>
+                      x-parser-schema-id: <anonymous-schema-165>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-154>
+                      x-parser-schema-id: <anonymous-schema-166>
                     receivedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-155>
+                      x-parser-schema-id: <anonymous-schema-167>
                     cartons:
                       type: array
                       items:
@@ -2436,7 +2524,7 @@ channels:
                         properties:
                           sscc:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-158>
+                            x-parser-schema-id: <anonymous-schema-170>
                           status:
                             type: string
                             enum:
@@ -2452,22 +2540,22 @@ channels:
                               properties:
                                 gtin:
                                   type: string
-                                  x-parser-schema-id: <anonymous-schema-161>
+                                  x-parser-schema-id: <anonymous-schema-173>
                                 qtyEaches:
                                   type: integer
-                                  x-parser-schema-id: <anonymous-schema-162>
-                              x-parser-schema-id: <anonymous-schema-160>
-                            x-parser-schema-id: <anonymous-schema-159>
+                                  x-parser-schema-id: <anonymous-schema-174>
+                              x-parser-schema-id: <anonymous-schema-172>
+                            x-parser-schema-id: <anonymous-schema-171>
                           complianceCodes:
                             type: array
                             items:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-164>
-                            x-parser-schema-id: <anonymous-schema-163>
-                        x-parser-schema-id: <anonymous-schema-157>
-                      x-parser-schema-id: <anonymous-schema-156>
-                  x-parser-schema-id: <anonymous-schema-152>
-              x-parser-schema-id: <anonymous-schema-151>
+                              x-parser-schema-id: <anonymous-schema-176>
+                            x-parser-schema-id: <anonymous-schema-175>
+                        x-parser-schema-id: <anonymous-schema-169>
+                      x-parser-schema-id: <anonymous-schema-168>
+                  x-parser-schema-id: <anonymous-schema-164>
+              x-parser-schema-id: <anonymous-schema-163>
           x-parser-schema-id: InboundReceiptSubmittedIn
         examples:
           - name: inboundReceiptSubmitted
@@ -2589,19 +2677,19 @@ channels:
                   properties:
                     assignmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-167>
+                      x-parser-schema-id: <anonymous-schema-179>
                     releaseNo:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-168>
+                      x-parser-schema-id: <anonymous-schema-180>
                     orderId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-169>
+                      x-parser-schema-id: <anonymous-schema-181>
                     groupNo:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-170>
+                      x-parser-schema-id: <anonymous-schema-182>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-171>
+                      x-parser-schema-id: <anonymous-schema-183>
                     lines:
                       type: array
                       items:
@@ -2612,17 +2700,17 @@ channels:
                         properties:
                           catalogItemId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-174>
+                            x-parser-schema-id: <anonymous-schema-186>
                           listingId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-175>
+                            x-parser-schema-id: <anonymous-schema-187>
                           quantity:
                             type: integer
-                            x-parser-schema-id: <anonymous-schema-176>
-                        x-parser-schema-id: <anonymous-schema-173>
-                      x-parser-schema-id: <anonymous-schema-172>
-                  x-parser-schema-id: <anonymous-schema-166>
-              x-parser-schema-id: <anonymous-schema-165>
+                            x-parser-schema-id: <anonymous-schema-188>
+                        x-parser-schema-id: <anonymous-schema-185>
+                      x-parser-schema-id: <anonymous-schema-184>
+                  x-parser-schema-id: <anonymous-schema-178>
+              x-parser-schema-id: <anonymous-schema-177>
           x-parser-schema-id: FulfillmentReleasedToNodeIn
         examples:
           - name: fulfillmentReleasedToNode
@@ -2722,18 +2810,18 @@ channels:
                   properties:
                     assignmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-179>
+                      x-parser-schema-id: <anonymous-schema-191>
                     orderId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-180>
+                      x-parser-schema-id: <anonymous-schema-192>
                     groupNo:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-181>
+                      x-parser-schema-id: <anonymous-schema-193>
                     reason:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-182>
-                  x-parser-schema-id: <anonymous-schema-178>
-              x-parser-schema-id: <anonymous-schema-177>
+                      x-parser-schema-id: <anonymous-schema-194>
+                  x-parser-schema-id: <anonymous-schema-190>
+              x-parser-schema-id: <anonymous-schema-189>
           x-parser-schema-id: FulfillmentCancelledIn
         examples:
           - name: fulfillmentCancelled
@@ -4565,7 +4653,12 @@ operations:
     channel:
       address: retailnetwork.seller-inbound.analytics
       title: seller-inbound analytics topic
-      description: Analytics-only events. No context consumes them.
+      description: >-
+        Analytics-only events. No other context consumes them; this context's
+        own analytics projector (`cmd/si-projector`, consumer group
+        `ANALYTICS_CONSUMER_GROUP`, ADR 0017) reads `InboundPlanConfirmed` from
+        here, together with the events topic, into a separate analytical
+        database.
       messages:
         SellerOnboarded:
           name: SellerOnboarded
@@ -4758,6 +4851,15 @@ operations:
                           - INDIVIDUAL
                           - CASE_PACKED
                         x-parser-schema-id: <anonymous-schema-85>
+                      placementOption:
+                        type: string
+                        enum:
+                          - SELLER_SPLIT
+                          - NETWORK_SPLIT
+                        description: >-
+                          Who splits the inbound (ADR 0015); always present
+                          since that ADR.
+                        x-parser-schema-id: <anonymous-schema-86>
                       lines:
                         type: array
                         items:
@@ -4769,21 +4871,96 @@ operations:
                           properties:
                             catalogItemId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-87>
+                              x-parser-schema-id: <anonymous-schema-88>
                             gtin:
                               type: string
                               pattern: ^[0-9]{14}$
-                              x-parser-schema-id: <anonymous-schema-88>
+                              x-parser-schema-id: <anonymous-schema-89>
                             qtyEaches:
                               type: integer
                               minimum: 1
-                              x-parser-schema-id: <anonymous-schema-89>
+                              x-parser-schema-id: <anonymous-schema-90>
+                            unitVolumeDm3:
+                              type: integer
+                              minimum: 1
+                              maximum: 100000
+                              description: >-
+                                The seller-declared volume of one each, in cubic
+                                decimetres (ADR 0015). Omitted when undeclared.
+                              x-parser-schema-id: <anonymous-schema-91>
                           x-parser-schema-id: PlanLine
-                        x-parser-schema-id: <anonymous-schema-86>
+                        x-parser-schema-id: <anonymous-schema-87>
+                      redistribution:
+                        type: array
+                        description: >-
+                          The recorded capacity-split-v1 redistribution; present
+                          only for NETWORK_SPLIT (ADR 0015). Nothing downstream
+                          executes it.
+                        items:
+                          type: object
+                          description: >-
+                            One (node, line) share of a NETWORK_SPLIT plan's
+                            recorded redistribution (ADR 0015).
+                          required:
+                            - nodeId
+                            - lineNo
+                            - qtyEaches
+                          properties:
+                            nodeId:
+                              type: string
+                              x-parser-schema-id: <anonymous-schema-93>
+                            lineNo:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-94>
+                            qtyEaches:
+                              type: integer
+                              minimum: 1
+                              x-parser-schema-id: <anonymous-schema-95>
+                          x-parser-schema-id: RedistributionLine
+                        x-parser-schema-id: <anonymous-schema-92>
+                      placementFeeBasis:
+                        description: >-
+                          The recorded fee-basis fact; present only for
+                          NETWORK_SPLIT (ADR 0015).
+                        allOf:
+                          - type: object
+                            description: >-
+                              The recorded placement fee basis of a
+                              NETWORK_SPLIT plan (ADR 0015), a fact for a later
+                              vendor-settlement context, never a charge.
+                            required:
+                              - basis
+                              - month
+                              - dm3
+                              - nodeIds
+                            properties:
+                              basis:
+                                type: string
+                                enum:
+                                  - NETWORK_SPLIT
+                                x-parser-schema-id: <anonymous-schema-97>
+                              month:
+                                type: string
+                                pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
+                                x-parser-schema-id: <anonymous-schema-98>
+                              dm3:
+                                type: integer
+                                format: int64
+                                minimum: 0
+                                x-parser-schema-id: <anonymous-schema-99>
+                              nodeIds:
+                                type: array
+                                items:
+                                  type: string
+                                  x-parser-schema-id: <anonymous-schema-101>
+                                x-parser-schema-id: <anonymous-schema-100>
+                            x-parser-schema-id: PlacementFeeBasis
+                        x-parser-schema-id: <anonymous-schema-96>
                       confirmedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-90>
+                        x-parser-schema-id: <anonymous-schema-102>
                     x-parser-schema-id: <anonymous-schema-81>
                 x-parser-schema-id: <anonymous-schema-80>
             x-parser-schema-id: InboundPlanConfirmedEvent
@@ -4895,40 +5072,40 @@ operations:
                     properties:
                       shipmentId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-93>
+                        x-parser-schema-id: <anonymous-schema-105>
                       sellerId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-94>
+                        x-parser-schema-id: <anonymous-schema-106>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-95>
+                        x-parser-schema-id: <anonymous-schema-107>
                       sscc:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-96>
+                        x-parser-schema-id: <anonymous-schema-108>
                       kind:
                         type: string
                         description: >-
                           The carton discrepancy kind string: MissingCarton,
                           UnexpectedCarton, Damaged, Short or Over.
-                        x-parser-schema-id: <anonymous-schema-97>
+                        x-parser-schema-id: <anonymous-schema-109>
                       expected:
                         type: string
                         description: >-
                           Short and Over only, `<gtin>:<qtyEaches>`; omitted
                           otherwise.
-                        x-parser-schema-id: <anonymous-schema-98>
+                        x-parser-schema-id: <anonymous-schema-110>
                       actual:
                         type: string
                         description: >-
                           Short and Over only, `<gtin>:<qtyEaches>`; omitted
                           otherwise.
-                        x-parser-schema-id: <anonymous-schema-99>
+                        x-parser-schema-id: <anonymous-schema-111>
                       recordedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-100>
-                    x-parser-schema-id: <anonymous-schema-92>
-                x-parser-schema-id: <anonymous-schema-91>
+                        x-parser-schema-id: <anonymous-schema-112>
+                    x-parser-schema-id: <anonymous-schema-104>
+                x-parser-schema-id: <anonymous-schema-103>
             x-parser-schema-id: InboundDiscrepancyRecordedEvent
           examples:
             - name: inboundDiscrepancyRecorded
@@ -5031,19 +5208,19 @@ operations:
                     properties:
                       sellerId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-103>
+                        x-parser-schema-id: <anonymous-schema-115>
                       shipmentId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-104>
+                        x-parser-schema-id: <anonymous-schema-116>
                       code:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-105>
+                        x-parser-schema-id: <anonymous-schema-117>
                       recordedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-106>
-                    x-parser-schema-id: <anonymous-schema-102>
-                x-parser-schema-id: <anonymous-schema-101>
+                        x-parser-schema-id: <anonymous-schema-118>
+                    x-parser-schema-id: <anonymous-schema-114>
+                x-parser-schema-id: <anonymous-schema-113>
             x-parser-schema-id: SellerComplianceViolationRecordedEvent
           examples:
             - name: sellerComplianceViolationRecorded
@@ -5256,6 +5433,15 @@ operations:
                         - INDIVIDUAL
                         - CASE_PACKED
                       x-parser-schema-id: <anonymous-schema-85>
+                    placementOption:
+                      type: string
+                      enum:
+                        - SELLER_SPLIT
+                        - NETWORK_SPLIT
+                      description: >-
+                        Who splits the inbound (ADR 0015); always present since
+                        that ADR.
+                      x-parser-schema-id: <anonymous-schema-86>
                     lines:
                       type: array
                       items:
@@ -5267,21 +5453,96 @@ operations:
                         properties:
                           catalogItemId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-87>
+                            x-parser-schema-id: <anonymous-schema-88>
                           gtin:
                             type: string
                             pattern: ^[0-9]{14}$
-                            x-parser-schema-id: <anonymous-schema-88>
+                            x-parser-schema-id: <anonymous-schema-89>
                           qtyEaches:
                             type: integer
                             minimum: 1
-                            x-parser-schema-id: <anonymous-schema-89>
+                            x-parser-schema-id: <anonymous-schema-90>
+                          unitVolumeDm3:
+                            type: integer
+                            minimum: 1
+                            maximum: 100000
+                            description: >-
+                              The seller-declared volume of one each, in cubic
+                              decimetres (ADR 0015). Omitted when undeclared.
+                            x-parser-schema-id: <anonymous-schema-91>
                         x-parser-schema-id: PlanLine
-                      x-parser-schema-id: <anonymous-schema-86>
+                      x-parser-schema-id: <anonymous-schema-87>
+                    redistribution:
+                      type: array
+                      description: >-
+                        The recorded capacity-split-v1 redistribution; present
+                        only for NETWORK_SPLIT (ADR 0015). Nothing downstream
+                        executes it.
+                      items:
+                        type: object
+                        description: >-
+                          One (node, line) share of a NETWORK_SPLIT plan's
+                          recorded redistribution (ADR 0015).
+                        required:
+                          - nodeId
+                          - lineNo
+                          - qtyEaches
+                        properties:
+                          nodeId:
+                            type: string
+                            x-parser-schema-id: <anonymous-schema-93>
+                          lineNo:
+                            type: integer
+                            minimum: 1
+                            x-parser-schema-id: <anonymous-schema-94>
+                          qtyEaches:
+                            type: integer
+                            minimum: 1
+                            x-parser-schema-id: <anonymous-schema-95>
+                        x-parser-schema-id: RedistributionLine
+                      x-parser-schema-id: <anonymous-schema-92>
+                    placementFeeBasis:
+                      description: >-
+                        The recorded fee-basis fact; present only for
+                        NETWORK_SPLIT (ADR 0015).
+                      allOf:
+                        - type: object
+                          description: >-
+                            The recorded placement fee basis of a NETWORK_SPLIT
+                            plan (ADR 0015), a fact for a later
+                            vendor-settlement context, never a charge.
+                          required:
+                            - basis
+                            - month
+                            - dm3
+                            - nodeIds
+                          properties:
+                            basis:
+                              type: string
+                              enum:
+                                - NETWORK_SPLIT
+                              x-parser-schema-id: <anonymous-schema-97>
+                            month:
+                              type: string
+                              pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
+                              x-parser-schema-id: <anonymous-schema-98>
+                            dm3:
+                              type: integer
+                              format: int64
+                              minimum: 0
+                              x-parser-schema-id: <anonymous-schema-99>
+                            nodeIds:
+                              type: array
+                              items:
+                                type: string
+                                x-parser-schema-id: <anonymous-schema-101>
+                              x-parser-schema-id: <anonymous-schema-100>
+                          x-parser-schema-id: PlacementFeeBasis
+                      x-parser-schema-id: <anonymous-schema-96>
                     confirmedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-90>
+                      x-parser-schema-id: <anonymous-schema-102>
                   x-parser-schema-id: <anonymous-schema-81>
               x-parser-schema-id: <anonymous-schema-80>
           x-parser-schema-id: InboundPlanConfirmedEvent
@@ -5392,40 +5653,40 @@ operations:
                   properties:
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-93>
+                      x-parser-schema-id: <anonymous-schema-105>
                     sellerId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-94>
+                      x-parser-schema-id: <anonymous-schema-106>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-95>
+                      x-parser-schema-id: <anonymous-schema-107>
                     sscc:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-96>
+                      x-parser-schema-id: <anonymous-schema-108>
                     kind:
                       type: string
                       description: >-
                         The carton discrepancy kind string: MissingCarton,
                         UnexpectedCarton, Damaged, Short or Over.
-                      x-parser-schema-id: <anonymous-schema-97>
+                      x-parser-schema-id: <anonymous-schema-109>
                     expected:
                       type: string
                       description: >-
                         Short and Over only, `<gtin>:<qtyEaches>`; omitted
                         otherwise.
-                      x-parser-schema-id: <anonymous-schema-98>
+                      x-parser-schema-id: <anonymous-schema-110>
                     actual:
                       type: string
                       description: >-
                         Short and Over only, `<gtin>:<qtyEaches>`; omitted
                         otherwise.
-                      x-parser-schema-id: <anonymous-schema-99>
+                      x-parser-schema-id: <anonymous-schema-111>
                     recordedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-100>
-                  x-parser-schema-id: <anonymous-schema-92>
-              x-parser-schema-id: <anonymous-schema-91>
+                      x-parser-schema-id: <anonymous-schema-112>
+                  x-parser-schema-id: <anonymous-schema-104>
+              x-parser-schema-id: <anonymous-schema-103>
           x-parser-schema-id: InboundDiscrepancyRecordedEvent
         examples:
           - name: inboundDiscrepancyRecorded
@@ -5527,19 +5788,19 @@ operations:
                   properties:
                     sellerId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-103>
+                      x-parser-schema-id: <anonymous-schema-115>
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-104>
+                      x-parser-schema-id: <anonymous-schema-116>
                     code:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-105>
+                      x-parser-schema-id: <anonymous-schema-117>
                     recordedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-106>
-                  x-parser-schema-id: <anonymous-schema-102>
-              x-parser-schema-id: <anonymous-schema-101>
+                      x-parser-schema-id: <anonymous-schema-118>
+                  x-parser-schema-id: <anonymous-schema-114>
+              x-parser-schema-id: <anonymous-schema-113>
           x-parser-schema-id: SellerComplianceViolationRecordedEvent
         examples:
           - name: sellerComplianceViolationRecorded
@@ -5653,12 +5914,12 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-109>
+                        x-parser-schema-id: <anonymous-schema-121>
                       nodeType:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-110>
-                    x-parser-schema-id: <anonymous-schema-108>
-                x-parser-schema-id: <anonymous-schema-107>
+                        x-parser-schema-id: <anonymous-schema-122>
+                    x-parser-schema-id: <anonymous-schema-120>
+                x-parser-schema-id: <anonymous-schema-119>
             x-parser-schema-id: NodeRegisteredIn
           examples:
             - name: nodeRegistered
@@ -5744,10 +6005,10 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-113>
+                        x-parser-schema-id: <anonymous-schema-125>
                       profileRevision:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-114>
+                        x-parser-schema-id: <anonymous-schema-126>
                       inbound:
                         type: object
                         description: >-
@@ -5756,7 +6017,7 @@ operations:
                         properties:
                           maxCartonWeightG:
                             type: integer
-                            x-parser-schema-id: <anonymous-schema-115>
+                            x-parser-schema-id: <anonymous-schema-127>
                           maxCartonDimsMm:
                             type: object
                             required:
@@ -5766,23 +6027,23 @@ operations:
                             properties:
                               l:
                                 type: integer
-                                x-parser-schema-id: <anonymous-schema-117>
+                                x-parser-schema-id: <anonymous-schema-129>
                               w:
                                 type: integer
-                                x-parser-schema-id: <anonymous-schema-118>
+                                x-parser-schema-id: <anonymous-schema-130>
                               h:
                                 type: integer
-                                x-parser-schema-id: <anonymous-schema-119>
-                            x-parser-schema-id: <anonymous-schema-116>
+                                x-parser-schema-id: <anonymous-schema-131>
+                            x-parser-schema-id: <anonymous-schema-128>
                           acceptsPallets:
                             type: boolean
-                            x-parser-schema-id: <anonymous-schema-120>
+                            x-parser-schema-id: <anonymous-schema-132>
                           requiresSscc:
                             type: boolean
-                            x-parser-schema-id: <anonymous-schema-121>
+                            x-parser-schema-id: <anonymous-schema-133>
                         x-parser-schema-id: InboundLimits
-                    x-parser-schema-id: <anonymous-schema-112>
-                x-parser-schema-id: <anonymous-schema-111>
+                    x-parser-schema-id: <anonymous-schema-124>
+                x-parser-schema-id: <anonymous-schema-123>
             x-parser-schema-id: NodeOperationalProfileDeclaredIn
           examples:
             - name: nodeOperationalProfileDeclared
@@ -5877,9 +6138,9 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-124>
-                    x-parser-schema-id: <anonymous-schema-123>
-                x-parser-schema-id: <anonymous-schema-122>
+                        x-parser-schema-id: <anonymous-schema-136>
+                    x-parser-schema-id: <anonymous-schema-135>
+                x-parser-schema-id: <anonymous-schema-134>
             x-parser-schema-id: NodeActivatedIn
           examples:
             - name: nodeActivated
@@ -5964,9 +6225,9 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-127>
-                    x-parser-schema-id: <anonymous-schema-126>
-                x-parser-schema-id: <anonymous-schema-125>
+                        x-parser-schema-id: <anonymous-schema-139>
+                    x-parser-schema-id: <anonymous-schema-138>
+                x-parser-schema-id: <anonymous-schema-137>
             x-parser-schema-id: NodeSuspendedIn
           examples:
             - name: nodeSuspended
@@ -6052,9 +6313,9 @@ operations:
                     properties:
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-130>
-                    x-parser-schema-id: <anonymous-schema-129>
-                x-parser-schema-id: <anonymous-schema-128>
+                        x-parser-schema-id: <anonymous-schema-142>
+                    x-parser-schema-id: <anonymous-schema-141>
+                x-parser-schema-id: <anonymous-schema-140>
             x-parser-schema-id: NodeRetiredIn
           examples:
             - name: nodeRetired
@@ -6142,12 +6403,12 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-109>
+                      x-parser-schema-id: <anonymous-schema-121>
                     nodeType:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-110>
-                  x-parser-schema-id: <anonymous-schema-108>
-              x-parser-schema-id: <anonymous-schema-107>
+                      x-parser-schema-id: <anonymous-schema-122>
+                  x-parser-schema-id: <anonymous-schema-120>
+              x-parser-schema-id: <anonymous-schema-119>
           x-parser-schema-id: NodeRegisteredIn
         examples:
           - name: nodeRegistered
@@ -6232,10 +6493,10 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-113>
+                      x-parser-schema-id: <anonymous-schema-125>
                     profileRevision:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-114>
+                      x-parser-schema-id: <anonymous-schema-126>
                     inbound:
                       type: object
                       description: >-
@@ -6244,7 +6505,7 @@ operations:
                       properties:
                         maxCartonWeightG:
                           type: integer
-                          x-parser-schema-id: <anonymous-schema-115>
+                          x-parser-schema-id: <anonymous-schema-127>
                         maxCartonDimsMm:
                           type: object
                           required:
@@ -6254,23 +6515,23 @@ operations:
                           properties:
                             l:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-117>
+                              x-parser-schema-id: <anonymous-schema-129>
                             w:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-118>
+                              x-parser-schema-id: <anonymous-schema-130>
                             h:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-119>
-                          x-parser-schema-id: <anonymous-schema-116>
+                              x-parser-schema-id: <anonymous-schema-131>
+                          x-parser-schema-id: <anonymous-schema-128>
                         acceptsPallets:
                           type: boolean
-                          x-parser-schema-id: <anonymous-schema-120>
+                          x-parser-schema-id: <anonymous-schema-132>
                         requiresSscc:
                           type: boolean
-                          x-parser-schema-id: <anonymous-schema-121>
+                          x-parser-schema-id: <anonymous-schema-133>
                       x-parser-schema-id: InboundLimits
-                  x-parser-schema-id: <anonymous-schema-112>
-              x-parser-schema-id: <anonymous-schema-111>
+                  x-parser-schema-id: <anonymous-schema-124>
+              x-parser-schema-id: <anonymous-schema-123>
           x-parser-schema-id: NodeOperationalProfileDeclaredIn
         examples:
           - name: nodeOperationalProfileDeclared
@@ -6364,9 +6625,9 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-124>
-                  x-parser-schema-id: <anonymous-schema-123>
-              x-parser-schema-id: <anonymous-schema-122>
+                      x-parser-schema-id: <anonymous-schema-136>
+                  x-parser-schema-id: <anonymous-schema-135>
+              x-parser-schema-id: <anonymous-schema-134>
           x-parser-schema-id: NodeActivatedIn
         examples:
           - name: nodeActivated
@@ -6450,9 +6711,9 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-127>
-                  x-parser-schema-id: <anonymous-schema-126>
-              x-parser-schema-id: <anonymous-schema-125>
+                      x-parser-schema-id: <anonymous-schema-139>
+                  x-parser-schema-id: <anonymous-schema-138>
+              x-parser-schema-id: <anonymous-schema-137>
           x-parser-schema-id: NodeSuspendedIn
         examples:
           - name: nodeSuspended
@@ -6537,9 +6798,9 @@ operations:
                   properties:
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-130>
-                  x-parser-schema-id: <anonymous-schema-129>
-              x-parser-schema-id: <anonymous-schema-128>
+                      x-parser-schema-id: <anonymous-schema-142>
+                  x-parser-schema-id: <anonymous-schema-141>
+              x-parser-schema-id: <anonymous-schema-140>
           x-parser-schema-id: NodeRetiredIn
         examples:
           - name: nodeRetired
@@ -6649,7 +6910,7 @@ operations:
                     properties:
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-133>
+                        x-parser-schema-id: <anonymous-schema-145>
                       level:
                         type: string
                         enum:
@@ -6661,19 +6922,19 @@ operations:
                         x-parser-schema-id: PackLevel
                       gtin:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-134>
+                        x-parser-schema-id: <anonymous-schema-146>
                       childGtin:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-135>
+                        x-parser-schema-id: <anonymous-schema-147>
                       unitsPerPack:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-136>
+                        x-parser-schema-id: <anonymous-schema-148>
                       declaredAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-137>
-                    x-parser-schema-id: <anonymous-schema-132>
-                x-parser-schema-id: <anonymous-schema-131>
+                        x-parser-schema-id: <anonymous-schema-149>
+                    x-parser-schema-id: <anonymous-schema-144>
+                x-parser-schema-id: <anonymous-schema-143>
             x-parser-schema-id: CatalogItemPackagingDeclaredIn
           examples:
             - name: catalogItemPackagingDeclared
@@ -6766,7 +7027,7 @@ operations:
                     properties:
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-140>
+                        x-parser-schema-id: <anonymous-schema-152>
                       level:
                         type: string
                         enum:
@@ -6778,13 +7039,13 @@ operations:
                         x-parser-schema-id: PackLevel
                       gtin:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-141>
+                        x-parser-schema-id: <anonymous-schema-153>
                       retiredAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-142>
-                    x-parser-schema-id: <anonymous-schema-139>
-                x-parser-schema-id: <anonymous-schema-138>
+                        x-parser-schema-id: <anonymous-schema-154>
+                    x-parser-schema-id: <anonymous-schema-151>
+                x-parser-schema-id: <anonymous-schema-150>
             x-parser-schema-id: CatalogItemPackLevelRetiredIn
           examples:
             - name: catalogItemPackLevelRetired
@@ -6878,25 +7139,25 @@ operations:
                     properties:
                       listingId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-145>
+                        x-parser-schema-id: <anonymous-schema-157>
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-146>
+                        x-parser-schema-id: <anonymous-schema-158>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-147>
+                        x-parser-schema-id: <anonymous-schema-159>
                       availableQty:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-148>
+                        x-parser-schema-id: <anonymous-schema-160>
                       basis:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-149>
+                        x-parser-schema-id: <anonymous-schema-161>
                       asOf:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-150>
-                    x-parser-schema-id: <anonymous-schema-144>
-                x-parser-schema-id: <anonymous-schema-143>
+                        x-parser-schema-id: <anonymous-schema-162>
+                    x-parser-schema-id: <anonymous-schema-156>
+                x-parser-schema-id: <anonymous-schema-155>
             x-parser-schema-id: ListingAvailabilityChangedIn
           examples:
             - name: listingAvailabilityChanged
@@ -6992,7 +7253,7 @@ operations:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-133>
+                      x-parser-schema-id: <anonymous-schema-145>
                     level:
                       type: string
                       enum:
@@ -7004,19 +7265,19 @@ operations:
                       x-parser-schema-id: PackLevel
                     gtin:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-134>
+                      x-parser-schema-id: <anonymous-schema-146>
                     childGtin:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-135>
+                      x-parser-schema-id: <anonymous-schema-147>
                     unitsPerPack:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-136>
+                      x-parser-schema-id: <anonymous-schema-148>
                     declaredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-137>
-                  x-parser-schema-id: <anonymous-schema-132>
-              x-parser-schema-id: <anonymous-schema-131>
+                      x-parser-schema-id: <anonymous-schema-149>
+                  x-parser-schema-id: <anonymous-schema-144>
+              x-parser-schema-id: <anonymous-schema-143>
           x-parser-schema-id: CatalogItemPackagingDeclaredIn
         examples:
           - name: catalogItemPackagingDeclared
@@ -7108,7 +7369,7 @@ operations:
                   properties:
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-140>
+                      x-parser-schema-id: <anonymous-schema-152>
                     level:
                       type: string
                       enum:
@@ -7120,13 +7381,13 @@ operations:
                       x-parser-schema-id: PackLevel
                     gtin:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-141>
+                      x-parser-schema-id: <anonymous-schema-153>
                     retiredAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-142>
-                  x-parser-schema-id: <anonymous-schema-139>
-              x-parser-schema-id: <anonymous-schema-138>
+                      x-parser-schema-id: <anonymous-schema-154>
+                  x-parser-schema-id: <anonymous-schema-151>
+              x-parser-schema-id: <anonymous-schema-150>
           x-parser-schema-id: CatalogItemPackLevelRetiredIn
         examples:
           - name: catalogItemPackLevelRetired
@@ -7219,25 +7480,25 @@ operations:
                   properties:
                     listingId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-145>
+                      x-parser-schema-id: <anonymous-schema-157>
                     catalogItemId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-146>
+                      x-parser-schema-id: <anonymous-schema-158>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-147>
+                      x-parser-schema-id: <anonymous-schema-159>
                     availableQty:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-148>
+                      x-parser-schema-id: <anonymous-schema-160>
                     basis:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-149>
+                      x-parser-schema-id: <anonymous-schema-161>
                     asOf:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-150>
-                  x-parser-schema-id: <anonymous-schema-144>
-              x-parser-schema-id: <anonymous-schema-143>
+                      x-parser-schema-id: <anonymous-schema-162>
+                  x-parser-schema-id: <anonymous-schema-156>
+              x-parser-schema-id: <anonymous-schema-155>
           x-parser-schema-id: ListingAvailabilityChangedIn
         examples:
           - name: listingAvailabilityChanged
@@ -7353,14 +7614,14 @@ operations:
                     properties:
                       shipmentId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-153>
+                        x-parser-schema-id: <anonymous-schema-165>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-154>
+                        x-parser-schema-id: <anonymous-schema-166>
                       receivedAt:
                         type: string
                         format: date-time
-                        x-parser-schema-id: <anonymous-schema-155>
+                        x-parser-schema-id: <anonymous-schema-167>
                       cartons:
                         type: array
                         items:
@@ -7371,7 +7632,7 @@ operations:
                           properties:
                             sscc:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-158>
+                              x-parser-schema-id: <anonymous-schema-170>
                             status:
                               type: string
                               enum:
@@ -7387,22 +7648,22 @@ operations:
                                 properties:
                                   gtin:
                                     type: string
-                                    x-parser-schema-id: <anonymous-schema-161>
+                                    x-parser-schema-id: <anonymous-schema-173>
                                   qtyEaches:
                                     type: integer
-                                    x-parser-schema-id: <anonymous-schema-162>
-                                x-parser-schema-id: <anonymous-schema-160>
-                              x-parser-schema-id: <anonymous-schema-159>
+                                    x-parser-schema-id: <anonymous-schema-174>
+                                x-parser-schema-id: <anonymous-schema-172>
+                              x-parser-schema-id: <anonymous-schema-171>
                             complianceCodes:
                               type: array
                               items:
                                 type: string
-                                x-parser-schema-id: <anonymous-schema-164>
-                              x-parser-schema-id: <anonymous-schema-163>
-                          x-parser-schema-id: <anonymous-schema-157>
-                        x-parser-schema-id: <anonymous-schema-156>
-                    x-parser-schema-id: <anonymous-schema-152>
-                x-parser-schema-id: <anonymous-schema-151>
+                                x-parser-schema-id: <anonymous-schema-176>
+                              x-parser-schema-id: <anonymous-schema-175>
+                          x-parser-schema-id: <anonymous-schema-169>
+                        x-parser-schema-id: <anonymous-schema-168>
+                    x-parser-schema-id: <anonymous-schema-164>
+                x-parser-schema-id: <anonymous-schema-163>
             x-parser-schema-id: InboundReceiptSubmittedIn
           examples:
             - name: inboundReceiptSubmitted
@@ -7513,14 +7774,14 @@ operations:
                   properties:
                     shipmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-153>
+                      x-parser-schema-id: <anonymous-schema-165>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-154>
+                      x-parser-schema-id: <anonymous-schema-166>
                     receivedAt:
                       type: string
                       format: date-time
-                      x-parser-schema-id: <anonymous-schema-155>
+                      x-parser-schema-id: <anonymous-schema-167>
                     cartons:
                       type: array
                       items:
@@ -7531,7 +7792,7 @@ operations:
                         properties:
                           sscc:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-158>
+                            x-parser-schema-id: <anonymous-schema-170>
                           status:
                             type: string
                             enum:
@@ -7547,22 +7808,22 @@ operations:
                               properties:
                                 gtin:
                                   type: string
-                                  x-parser-schema-id: <anonymous-schema-161>
+                                  x-parser-schema-id: <anonymous-schema-173>
                                 qtyEaches:
                                   type: integer
-                                  x-parser-schema-id: <anonymous-schema-162>
-                              x-parser-schema-id: <anonymous-schema-160>
-                            x-parser-schema-id: <anonymous-schema-159>
+                                  x-parser-schema-id: <anonymous-schema-174>
+                              x-parser-schema-id: <anonymous-schema-172>
+                            x-parser-schema-id: <anonymous-schema-171>
                           complianceCodes:
                             type: array
                             items:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-164>
-                            x-parser-schema-id: <anonymous-schema-163>
-                        x-parser-schema-id: <anonymous-schema-157>
-                      x-parser-schema-id: <anonymous-schema-156>
-                  x-parser-schema-id: <anonymous-schema-152>
-              x-parser-schema-id: <anonymous-schema-151>
+                              x-parser-schema-id: <anonymous-schema-176>
+                            x-parser-schema-id: <anonymous-schema-175>
+                        x-parser-schema-id: <anonymous-schema-169>
+                      x-parser-schema-id: <anonymous-schema-168>
+                  x-parser-schema-id: <anonymous-schema-164>
+              x-parser-schema-id: <anonymous-schema-163>
           x-parser-schema-id: InboundReceiptSubmittedIn
         examples:
           - name: inboundReceiptSubmitted
@@ -7695,19 +7956,19 @@ operations:
                     properties:
                       assignmentId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-167>
+                        x-parser-schema-id: <anonymous-schema-179>
                       releaseNo:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-168>
+                        x-parser-schema-id: <anonymous-schema-180>
                       orderId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-169>
+                        x-parser-schema-id: <anonymous-schema-181>
                       groupNo:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-170>
+                        x-parser-schema-id: <anonymous-schema-182>
                       nodeId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-171>
+                        x-parser-schema-id: <anonymous-schema-183>
                       lines:
                         type: array
                         items:
@@ -7718,17 +7979,17 @@ operations:
                           properties:
                             catalogItemId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-174>
+                              x-parser-schema-id: <anonymous-schema-186>
                             listingId:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-175>
+                              x-parser-schema-id: <anonymous-schema-187>
                             quantity:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-176>
-                          x-parser-schema-id: <anonymous-schema-173>
-                        x-parser-schema-id: <anonymous-schema-172>
-                    x-parser-schema-id: <anonymous-schema-166>
-                x-parser-schema-id: <anonymous-schema-165>
+                              x-parser-schema-id: <anonymous-schema-188>
+                          x-parser-schema-id: <anonymous-schema-185>
+                        x-parser-schema-id: <anonymous-schema-184>
+                    x-parser-schema-id: <anonymous-schema-178>
+                x-parser-schema-id: <anonymous-schema-177>
             x-parser-schema-id: FulfillmentReleasedToNodeIn
           examples:
             - name: fulfillmentReleasedToNode
@@ -7828,18 +8089,18 @@ operations:
                     properties:
                       assignmentId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-179>
+                        x-parser-schema-id: <anonymous-schema-191>
                       orderId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-180>
+                        x-parser-schema-id: <anonymous-schema-192>
                       groupNo:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-181>
+                        x-parser-schema-id: <anonymous-schema-193>
                       reason:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-182>
-                    x-parser-schema-id: <anonymous-schema-178>
-                x-parser-schema-id: <anonymous-schema-177>
+                        x-parser-schema-id: <anonymous-schema-194>
+                    x-parser-schema-id: <anonymous-schema-190>
+                x-parser-schema-id: <anonymous-schema-189>
             x-parser-schema-id: FulfillmentCancelledIn
           examples:
             - name: fulfillmentCancelled
@@ -7935,19 +8196,19 @@ operations:
                   properties:
                     assignmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-167>
+                      x-parser-schema-id: <anonymous-schema-179>
                     releaseNo:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-168>
+                      x-parser-schema-id: <anonymous-schema-180>
                     orderId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-169>
+                      x-parser-schema-id: <anonymous-schema-181>
                     groupNo:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-170>
+                      x-parser-schema-id: <anonymous-schema-182>
                     nodeId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-171>
+                      x-parser-schema-id: <anonymous-schema-183>
                     lines:
                       type: array
                       items:
@@ -7958,17 +8219,17 @@ operations:
                         properties:
                           catalogItemId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-174>
+                            x-parser-schema-id: <anonymous-schema-186>
                           listingId:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-175>
+                            x-parser-schema-id: <anonymous-schema-187>
                           quantity:
                             type: integer
-                            x-parser-schema-id: <anonymous-schema-176>
-                        x-parser-schema-id: <anonymous-schema-173>
-                      x-parser-schema-id: <anonymous-schema-172>
-                  x-parser-schema-id: <anonymous-schema-166>
-              x-parser-schema-id: <anonymous-schema-165>
+                            x-parser-schema-id: <anonymous-schema-188>
+                        x-parser-schema-id: <anonymous-schema-185>
+                      x-parser-schema-id: <anonymous-schema-184>
+                  x-parser-schema-id: <anonymous-schema-178>
+              x-parser-schema-id: <anonymous-schema-177>
           x-parser-schema-id: FulfillmentReleasedToNodeIn
         examples:
           - name: fulfillmentReleasedToNode
@@ -8067,18 +8328,18 @@ operations:
                   properties:
                     assignmentId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-179>
+                      x-parser-schema-id: <anonymous-schema-191>
                     orderId:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-180>
+                      x-parser-schema-id: <anonymous-schema-192>
                     groupNo:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-181>
+                      x-parser-schema-id: <anonymous-schema-193>
                     reason:
                       type: string
-                      x-parser-schema-id: <anonymous-schema-182>
-                  x-parser-schema-id: <anonymous-schema-178>
-              x-parser-schema-id: <anonymous-schema-177>
+                      x-parser-schema-id: <anonymous-schema-194>
+                  x-parser-schema-id: <anonymous-schema-190>
+              x-parser-schema-id: <anonymous-schema-189>
           x-parser-schema-id: FulfillmentCancelledIn
         examples:
           - name: fulfillmentCancelled
@@ -8488,6 +8749,15 @@ components:
                       - INDIVIDUAL
                       - CASE_PACKED
                     x-parser-schema-id: <anonymous-schema-85>
+                  placementOption:
+                    type: string
+                    enum:
+                      - SELLER_SPLIT
+                      - NETWORK_SPLIT
+                    description: >-
+                      Who splits the inbound (ADR 0015); always present since
+                      that ADR.
+                    x-parser-schema-id: <anonymous-schema-86>
                   lines:
                     type: array
                     items:
@@ -8499,21 +8769,96 @@ components:
                       properties:
                         catalogItemId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-87>
+                          x-parser-schema-id: <anonymous-schema-88>
                         gtin:
                           type: string
                           pattern: ^[0-9]{14}$
-                          x-parser-schema-id: <anonymous-schema-88>
+                          x-parser-schema-id: <anonymous-schema-89>
                         qtyEaches:
                           type: integer
                           minimum: 1
-                          x-parser-schema-id: <anonymous-schema-89>
+                          x-parser-schema-id: <anonymous-schema-90>
+                        unitVolumeDm3:
+                          type: integer
+                          minimum: 1
+                          maximum: 100000
+                          description: >-
+                            The seller-declared volume of one each, in cubic
+                            decimetres (ADR 0015). Omitted when undeclared.
+                          x-parser-schema-id: <anonymous-schema-91>
                       x-parser-schema-id: PlanLine
-                    x-parser-schema-id: <anonymous-schema-86>
+                    x-parser-schema-id: <anonymous-schema-87>
+                  redistribution:
+                    type: array
+                    description: >-
+                      The recorded capacity-split-v1 redistribution; present
+                      only for NETWORK_SPLIT (ADR 0015). Nothing downstream
+                      executes it.
+                    items:
+                      type: object
+                      description: >-
+                        One (node, line) share of a NETWORK_SPLIT plan's
+                        recorded redistribution (ADR 0015).
+                      required:
+                        - nodeId
+                        - lineNo
+                        - qtyEaches
+                      properties:
+                        nodeId:
+                          type: string
+                          x-parser-schema-id: <anonymous-schema-93>
+                        lineNo:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-94>
+                        qtyEaches:
+                          type: integer
+                          minimum: 1
+                          x-parser-schema-id: <anonymous-schema-95>
+                      x-parser-schema-id: RedistributionLine
+                    x-parser-schema-id: <anonymous-schema-92>
+                  placementFeeBasis:
+                    description: >-
+                      The recorded fee-basis fact; present only for
+                      NETWORK_SPLIT (ADR 0015).
+                    allOf:
+                      - type: object
+                        description: >-
+                          The recorded placement fee basis of a NETWORK_SPLIT
+                          plan (ADR 0015), a fact for a later vendor-settlement
+                          context, never a charge.
+                        required:
+                          - basis
+                          - month
+                          - dm3
+                          - nodeIds
+                        properties:
+                          basis:
+                            type: string
+                            enum:
+                              - NETWORK_SPLIT
+                            x-parser-schema-id: <anonymous-schema-97>
+                          month:
+                            type: string
+                            pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
+                            x-parser-schema-id: <anonymous-schema-98>
+                          dm3:
+                            type: integer
+                            format: int64
+                            minimum: 0
+                            x-parser-schema-id: <anonymous-schema-99>
+                          nodeIds:
+                            type: array
+                            items:
+                              type: string
+                              x-parser-schema-id: <anonymous-schema-101>
+                            x-parser-schema-id: <anonymous-schema-100>
+                        x-parser-schema-id: PlacementFeeBasis
+                    x-parser-schema-id: <anonymous-schema-96>
                   confirmedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-90>
+                    x-parser-schema-id: <anonymous-schema-102>
                 x-parser-schema-id: <anonymous-schema-81>
             x-parser-schema-id: <anonymous-schema-80>
         x-parser-schema-id: InboundPlanConfirmedEvent
@@ -8779,25 +9124,25 @@ components:
                 properties:
                   listingId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-145>
+                    x-parser-schema-id: <anonymous-schema-157>
                   catalogItemId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-146>
+                    x-parser-schema-id: <anonymous-schema-158>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-147>
+                    x-parser-schema-id: <anonymous-schema-159>
                   availableQty:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-148>
+                    x-parser-schema-id: <anonymous-schema-160>
                   basis:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-149>
+                    x-parser-schema-id: <anonymous-schema-161>
                   asOf:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-150>
-                x-parser-schema-id: <anonymous-schema-144>
-            x-parser-schema-id: <anonymous-schema-143>
+                    x-parser-schema-id: <anonymous-schema-162>
+                x-parser-schema-id: <anonymous-schema-156>
+            x-parser-schema-id: <anonymous-schema-155>
         x-parser-schema-id: ListingAvailabilityChangedIn
       examples:
         - name: listingAvailabilityChanged
@@ -8892,19 +9237,19 @@ components:
                 properties:
                   assignmentId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-167>
+                    x-parser-schema-id: <anonymous-schema-179>
                   releaseNo:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-168>
+                    x-parser-schema-id: <anonymous-schema-180>
                   orderId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-169>
+                    x-parser-schema-id: <anonymous-schema-181>
                   groupNo:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-170>
+                    x-parser-schema-id: <anonymous-schema-182>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-171>
+                    x-parser-schema-id: <anonymous-schema-183>
                   lines:
                     type: array
                     items:
@@ -8915,17 +9260,17 @@ components:
                       properties:
                         catalogItemId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-174>
+                          x-parser-schema-id: <anonymous-schema-186>
                         listingId:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-175>
+                          x-parser-schema-id: <anonymous-schema-187>
                         quantity:
                           type: integer
-                          x-parser-schema-id: <anonymous-schema-176>
-                      x-parser-schema-id: <anonymous-schema-173>
-                    x-parser-schema-id: <anonymous-schema-172>
-                x-parser-schema-id: <anonymous-schema-166>
-            x-parser-schema-id: <anonymous-schema-165>
+                          x-parser-schema-id: <anonymous-schema-188>
+                      x-parser-schema-id: <anonymous-schema-185>
+                    x-parser-schema-id: <anonymous-schema-184>
+                x-parser-schema-id: <anonymous-schema-178>
+            x-parser-schema-id: <anonymous-schema-177>
         x-parser-schema-id: FulfillmentReleasedToNodeIn
       examples:
         - name: fulfillmentReleasedToNode
@@ -9025,18 +9370,18 @@ components:
                 properties:
                   assignmentId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-179>
+                    x-parser-schema-id: <anonymous-schema-191>
                   orderId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-180>
+                    x-parser-schema-id: <anonymous-schema-192>
                   groupNo:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-181>
+                    x-parser-schema-id: <anonymous-schema-193>
                   reason:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-182>
-                x-parser-schema-id: <anonymous-schema-178>
-            x-parser-schema-id: <anonymous-schema-177>
+                    x-parser-schema-id: <anonymous-schema-194>
+                x-parser-schema-id: <anonymous-schema-190>
+            x-parser-schema-id: <anonymous-schema-189>
         x-parser-schema-id: FulfillmentCancelledIn
       examples:
         - name: fulfillmentCancelled
@@ -9652,40 +9997,40 @@ components:
                 properties:
                   shipmentId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-93>
+                    x-parser-schema-id: <anonymous-schema-105>
                   sellerId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-94>
+                    x-parser-schema-id: <anonymous-schema-106>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-95>
+                    x-parser-schema-id: <anonymous-schema-107>
                   sscc:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-96>
+                    x-parser-schema-id: <anonymous-schema-108>
                   kind:
                     type: string
                     description: >-
                       The carton discrepancy kind string: MissingCarton,
                       UnexpectedCarton, Damaged, Short or Over.
-                    x-parser-schema-id: <anonymous-schema-97>
+                    x-parser-schema-id: <anonymous-schema-109>
                   expected:
                     type: string
                     description: >-
                       Short and Over only, `<gtin>:<qtyEaches>`; omitted
                       otherwise.
-                    x-parser-schema-id: <anonymous-schema-98>
+                    x-parser-schema-id: <anonymous-schema-110>
                   actual:
                     type: string
                     description: >-
                       Short and Over only, `<gtin>:<qtyEaches>`; omitted
                       otherwise.
-                    x-parser-schema-id: <anonymous-schema-99>
+                    x-parser-schema-id: <anonymous-schema-111>
                   recordedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-100>
-                x-parser-schema-id: <anonymous-schema-92>
-            x-parser-schema-id: <anonymous-schema-91>
+                    x-parser-schema-id: <anonymous-schema-112>
+                x-parser-schema-id: <anonymous-schema-104>
+            x-parser-schema-id: <anonymous-schema-103>
         x-parser-schema-id: InboundDiscrepancyRecordedEvent
       examples:
         - name: inboundDiscrepancyRecorded
@@ -9788,19 +10133,19 @@ components:
                 properties:
                   sellerId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-103>
+                    x-parser-schema-id: <anonymous-schema-115>
                   shipmentId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-104>
+                    x-parser-schema-id: <anonymous-schema-116>
                   code:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-105>
+                    x-parser-schema-id: <anonymous-schema-117>
                   recordedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-106>
-                x-parser-schema-id: <anonymous-schema-102>
-            x-parser-schema-id: <anonymous-schema-101>
+                    x-parser-schema-id: <anonymous-schema-118>
+                x-parser-schema-id: <anonymous-schema-114>
+            x-parser-schema-id: <anonymous-schema-113>
         x-parser-schema-id: SellerComplianceViolationRecordedEvent
       examples:
         - name: sellerComplianceViolationRecorded
@@ -9890,12 +10235,12 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-109>
+                    x-parser-schema-id: <anonymous-schema-121>
                   nodeType:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-110>
-                x-parser-schema-id: <anonymous-schema-108>
-            x-parser-schema-id: <anonymous-schema-107>
+                    x-parser-schema-id: <anonymous-schema-122>
+                x-parser-schema-id: <anonymous-schema-120>
+            x-parser-schema-id: <anonymous-schema-119>
         x-parser-schema-id: NodeRegisteredIn
       examples:
         - name: nodeRegistered
@@ -9981,10 +10326,10 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-113>
+                    x-parser-schema-id: <anonymous-schema-125>
                   profileRevision:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-114>
+                    x-parser-schema-id: <anonymous-schema-126>
                   inbound:
                     type: object
                     description: >-
@@ -9993,7 +10338,7 @@ components:
                     properties:
                       maxCartonWeightG:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-115>
+                        x-parser-schema-id: <anonymous-schema-127>
                       maxCartonDimsMm:
                         type: object
                         required:
@@ -10003,23 +10348,23 @@ components:
                         properties:
                           l:
                             type: integer
-                            x-parser-schema-id: <anonymous-schema-117>
+                            x-parser-schema-id: <anonymous-schema-129>
                           w:
                             type: integer
-                            x-parser-schema-id: <anonymous-schema-118>
+                            x-parser-schema-id: <anonymous-schema-130>
                           h:
                             type: integer
-                            x-parser-schema-id: <anonymous-schema-119>
-                        x-parser-schema-id: <anonymous-schema-116>
+                            x-parser-schema-id: <anonymous-schema-131>
+                        x-parser-schema-id: <anonymous-schema-128>
                       acceptsPallets:
                         type: boolean
-                        x-parser-schema-id: <anonymous-schema-120>
+                        x-parser-schema-id: <anonymous-schema-132>
                       requiresSscc:
                         type: boolean
-                        x-parser-schema-id: <anonymous-schema-121>
+                        x-parser-schema-id: <anonymous-schema-133>
                     x-parser-schema-id: InboundLimits
-                x-parser-schema-id: <anonymous-schema-112>
-            x-parser-schema-id: <anonymous-schema-111>
+                x-parser-schema-id: <anonymous-schema-124>
+            x-parser-schema-id: <anonymous-schema-123>
         x-parser-schema-id: NodeOperationalProfileDeclaredIn
       examples:
         - name: nodeOperationalProfileDeclared
@@ -10114,9 +10459,9 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-124>
-                x-parser-schema-id: <anonymous-schema-123>
-            x-parser-schema-id: <anonymous-schema-122>
+                    x-parser-schema-id: <anonymous-schema-136>
+                x-parser-schema-id: <anonymous-schema-135>
+            x-parser-schema-id: <anonymous-schema-134>
         x-parser-schema-id: NodeActivatedIn
       examples:
         - name: nodeActivated
@@ -10201,9 +10546,9 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-127>
-                x-parser-schema-id: <anonymous-schema-126>
-            x-parser-schema-id: <anonymous-schema-125>
+                    x-parser-schema-id: <anonymous-schema-139>
+                x-parser-schema-id: <anonymous-schema-138>
+            x-parser-schema-id: <anonymous-schema-137>
         x-parser-schema-id: NodeSuspendedIn
       examples:
         - name: nodeSuspended
@@ -10289,9 +10634,9 @@ components:
                 properties:
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-130>
-                x-parser-schema-id: <anonymous-schema-129>
-            x-parser-schema-id: <anonymous-schema-128>
+                    x-parser-schema-id: <anonymous-schema-142>
+                x-parser-schema-id: <anonymous-schema-141>
+            x-parser-schema-id: <anonymous-schema-140>
         x-parser-schema-id: NodeRetiredIn
       examples:
         - name: nodeRetired
@@ -10379,7 +10724,7 @@ components:
                 properties:
                   catalogItemId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-133>
+                    x-parser-schema-id: <anonymous-schema-145>
                   level:
                     type: string
                     enum:
@@ -10391,19 +10736,19 @@ components:
                     x-parser-schema-id: PackLevel
                   gtin:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-134>
+                    x-parser-schema-id: <anonymous-schema-146>
                   childGtin:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-135>
+                    x-parser-schema-id: <anonymous-schema-147>
                   unitsPerPack:
                     type: integer
-                    x-parser-schema-id: <anonymous-schema-136>
+                    x-parser-schema-id: <anonymous-schema-148>
                   declaredAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-137>
-                x-parser-schema-id: <anonymous-schema-132>
-            x-parser-schema-id: <anonymous-schema-131>
+                    x-parser-schema-id: <anonymous-schema-149>
+                x-parser-schema-id: <anonymous-schema-144>
+            x-parser-schema-id: <anonymous-schema-143>
         x-parser-schema-id: CatalogItemPackagingDeclaredIn
       examples:
         - name: catalogItemPackagingDeclared
@@ -10496,7 +10841,7 @@ components:
                 properties:
                   catalogItemId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-140>
+                    x-parser-schema-id: <anonymous-schema-152>
                   level:
                     type: string
                     enum:
@@ -10508,13 +10853,13 @@ components:
                     x-parser-schema-id: PackLevel
                   gtin:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-141>
+                    x-parser-schema-id: <anonymous-schema-153>
                   retiredAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-142>
-                x-parser-schema-id: <anonymous-schema-139>
-            x-parser-schema-id: <anonymous-schema-138>
+                    x-parser-schema-id: <anonymous-schema-154>
+                x-parser-schema-id: <anonymous-schema-151>
+            x-parser-schema-id: <anonymous-schema-150>
         x-parser-schema-id: CatalogItemPackLevelRetiredIn
       examples:
         - name: catalogItemPackLevelRetired
@@ -10606,14 +10951,14 @@ components:
                 properties:
                   shipmentId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-153>
+                    x-parser-schema-id: <anonymous-schema-165>
                   nodeId:
                     type: string
-                    x-parser-schema-id: <anonymous-schema-154>
+                    x-parser-schema-id: <anonymous-schema-166>
                   receivedAt:
                     type: string
                     format: date-time
-                    x-parser-schema-id: <anonymous-schema-155>
+                    x-parser-schema-id: <anonymous-schema-167>
                   cartons:
                     type: array
                     items:
@@ -10624,7 +10969,7 @@ components:
                       properties:
                         sscc:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-158>
+                          x-parser-schema-id: <anonymous-schema-170>
                         status:
                           type: string
                           enum:
@@ -10640,22 +10985,22 @@ components:
                             properties:
                               gtin:
                                 type: string
-                                x-parser-schema-id: <anonymous-schema-161>
+                                x-parser-schema-id: <anonymous-schema-173>
                               qtyEaches:
                                 type: integer
-                                x-parser-schema-id: <anonymous-schema-162>
-                            x-parser-schema-id: <anonymous-schema-160>
-                          x-parser-schema-id: <anonymous-schema-159>
+                                x-parser-schema-id: <anonymous-schema-174>
+                            x-parser-schema-id: <anonymous-schema-172>
+                          x-parser-schema-id: <anonymous-schema-171>
                         complianceCodes:
                           type: array
                           items:
                             type: string
-                            x-parser-schema-id: <anonymous-schema-164>
-                          x-parser-schema-id: <anonymous-schema-163>
-                      x-parser-schema-id: <anonymous-schema-157>
-                    x-parser-schema-id: <anonymous-schema-156>
-                x-parser-schema-id: <anonymous-schema-152>
-            x-parser-schema-id: <anonymous-schema-151>
+                            x-parser-schema-id: <anonymous-schema-176>
+                          x-parser-schema-id: <anonymous-schema-175>
+                      x-parser-schema-id: <anonymous-schema-169>
+                    x-parser-schema-id: <anonymous-schema-168>
+                x-parser-schema-id: <anonymous-schema-164>
+            x-parser-schema-id: <anonymous-schema-163>
         x-parser-schema-id: InboundReceiptSubmittedIn
       examples:
         - name: inboundReceiptSubmitted
@@ -10766,16 +11111,78 @@ components:
       properties:
         catalogItemId:
           type: string
-          x-parser-schema-id: <anonymous-schema-87>
+          x-parser-schema-id: <anonymous-schema-88>
         gtin:
           type: string
           pattern: ^[0-9]{14}$
-          x-parser-schema-id: <anonymous-schema-88>
+          x-parser-schema-id: <anonymous-schema-89>
         qtyEaches:
           type: integer
           minimum: 1
-          x-parser-schema-id: <anonymous-schema-89>
+          x-parser-schema-id: <anonymous-schema-90>
+        unitVolumeDm3:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          description: >-
+            The seller-declared volume of one each, in cubic decimetres (ADR
+            0015). Omitted when undeclared.
+          x-parser-schema-id: <anonymous-schema-91>
       x-parser-schema-id: PlanLine
+    RedistributionLine:
+      type: object
+      description: >-
+        One (node, line) share of a NETWORK_SPLIT plan's recorded redistribution
+        (ADR 0015).
+      required:
+        - nodeId
+        - lineNo
+        - qtyEaches
+      properties:
+        nodeId:
+          type: string
+          x-parser-schema-id: <anonymous-schema-93>
+        lineNo:
+          type: integer
+          minimum: 1
+          x-parser-schema-id: <anonymous-schema-94>
+        qtyEaches:
+          type: integer
+          minimum: 1
+          x-parser-schema-id: <anonymous-schema-95>
+      x-parser-schema-id: RedistributionLine
+    PlacementFeeBasis:
+      type: object
+      description: >-
+        The recorded placement fee basis of a NETWORK_SPLIT plan (ADR 0015), a
+        fact for a later vendor-settlement context, never a charge.
+      required:
+        - basis
+        - month
+        - dm3
+        - nodeIds
+      properties:
+        basis:
+          type: string
+          enum:
+            - NETWORK_SPLIT
+          x-parser-schema-id: <anonymous-schema-97>
+        month:
+          type: string
+          pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
+          x-parser-schema-id: <anonymous-schema-98>
+        dm3:
+          type: integer
+          format: int64
+          minimum: 0
+          x-parser-schema-id: <anonymous-schema-99>
+        nodeIds:
+          type: array
+          items:
+            type: string
+            x-parser-schema-id: <anonymous-schema-101>
+          x-parser-schema-id: <anonymous-schema-100>
+      x-parser-schema-id: PlacementFeeBasis
     CartonContent:
       type: object
       required:
@@ -10884,7 +11291,7 @@ components:
       properties:
         maxCartonWeightG:
           type: integer
-          x-parser-schema-id: <anonymous-schema-115>
+          x-parser-schema-id: <anonymous-schema-127>
         maxCartonDimsMm:
           type: object
           required:
@@ -10894,20 +11301,20 @@ components:
           properties:
             l:
               type: integer
-              x-parser-schema-id: <anonymous-schema-117>
+              x-parser-schema-id: <anonymous-schema-129>
             w:
               type: integer
-              x-parser-schema-id: <anonymous-schema-118>
+              x-parser-schema-id: <anonymous-schema-130>
             h:
               type: integer
-              x-parser-schema-id: <anonymous-schema-119>
-          x-parser-schema-id: <anonymous-schema-116>
+              x-parser-schema-id: <anonymous-schema-131>
+          x-parser-schema-id: <anonymous-schema-128>
         acceptsPallets:
           type: boolean
-          x-parser-schema-id: <anonymous-schema-120>
+          x-parser-schema-id: <anonymous-schema-132>
         requiresSscc:
           type: boolean
-          x-parser-schema-id: <anonymous-schema-121>
+          x-parser-schema-id: <anonymous-schema-133>
       x-parser-schema-id: InboundLimits
     SellerOnboardedEvent:
       allOf:
@@ -11316,25 +11723,25 @@ components:
               properties:
                 listingId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-145>
+                  x-parser-schema-id: <anonymous-schema-157>
                 catalogItemId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-146>
+                  x-parser-schema-id: <anonymous-schema-158>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-147>
+                  x-parser-schema-id: <anonymous-schema-159>
                 availableQty:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-148>
+                  x-parser-schema-id: <anonymous-schema-160>
                 basis:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-149>
+                  x-parser-schema-id: <anonymous-schema-161>
                 asOf:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-150>
-              x-parser-schema-id: <anonymous-schema-144>
-          x-parser-schema-id: <anonymous-schema-143>
+                  x-parser-schema-id: <anonymous-schema-162>
+              x-parser-schema-id: <anonymous-schema-156>
+          x-parser-schema-id: <anonymous-schema-155>
       x-parser-schema-id: ListingAvailabilityChangedIn
     FulfillmentReleasedToNodeIn:
       allOf:
@@ -11394,19 +11801,19 @@ components:
               properties:
                 assignmentId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-167>
+                  x-parser-schema-id: <anonymous-schema-179>
                 releaseNo:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-168>
+                  x-parser-schema-id: <anonymous-schema-180>
                 orderId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-169>
+                  x-parser-schema-id: <anonymous-schema-181>
                 groupNo:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-170>
+                  x-parser-schema-id: <anonymous-schema-182>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-171>
+                  x-parser-schema-id: <anonymous-schema-183>
                 lines:
                   type: array
                   items:
@@ -11417,17 +11824,17 @@ components:
                     properties:
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-174>
+                        x-parser-schema-id: <anonymous-schema-186>
                       listingId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-175>
+                        x-parser-schema-id: <anonymous-schema-187>
                       quantity:
                         type: integer
-                        x-parser-schema-id: <anonymous-schema-176>
-                    x-parser-schema-id: <anonymous-schema-173>
-                  x-parser-schema-id: <anonymous-schema-172>
-              x-parser-schema-id: <anonymous-schema-166>
-          x-parser-schema-id: <anonymous-schema-165>
+                        x-parser-schema-id: <anonymous-schema-188>
+                    x-parser-schema-id: <anonymous-schema-185>
+                  x-parser-schema-id: <anonymous-schema-184>
+              x-parser-schema-id: <anonymous-schema-178>
+          x-parser-schema-id: <anonymous-schema-177>
       x-parser-schema-id: FulfillmentReleasedToNodeIn
     FulfillmentCancelledIn:
       allOf:
@@ -11485,18 +11892,18 @@ components:
               properties:
                 assignmentId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-179>
+                  x-parser-schema-id: <anonymous-schema-191>
                 orderId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-180>
+                  x-parser-schema-id: <anonymous-schema-192>
                 groupNo:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-181>
+                  x-parser-schema-id: <anonymous-schema-193>
                 reason:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-182>
-              x-parser-schema-id: <anonymous-schema-178>
-          x-parser-schema-id: <anonymous-schema-177>
+                  x-parser-schema-id: <anonymous-schema-194>
+              x-parser-schema-id: <anonymous-schema-190>
+          x-parser-schema-id: <anonymous-schema-189>
       x-parser-schema-id: FulfillmentCancelledIn
     InboundPlanConfirmedEvent:
       allOf:
@@ -11571,6 +11978,15 @@ components:
                     - INDIVIDUAL
                     - CASE_PACKED
                   x-parser-schema-id: <anonymous-schema-85>
+                placementOption:
+                  type: string
+                  enum:
+                    - SELLER_SPLIT
+                    - NETWORK_SPLIT
+                  description: >-
+                    Who splits the inbound (ADR 0015); always present since that
+                    ADR.
+                  x-parser-schema-id: <anonymous-schema-86>
                 lines:
                   type: array
                   items:
@@ -11582,21 +11998,96 @@ components:
                     properties:
                       catalogItemId:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-87>
+                        x-parser-schema-id: <anonymous-schema-88>
                       gtin:
                         type: string
                         pattern: ^[0-9]{14}$
-                        x-parser-schema-id: <anonymous-schema-88>
+                        x-parser-schema-id: <anonymous-schema-89>
                       qtyEaches:
                         type: integer
                         minimum: 1
-                        x-parser-schema-id: <anonymous-schema-89>
+                        x-parser-schema-id: <anonymous-schema-90>
+                      unitVolumeDm3:
+                        type: integer
+                        minimum: 1
+                        maximum: 100000
+                        description: >-
+                          The seller-declared volume of one each, in cubic
+                          decimetres (ADR 0015). Omitted when undeclared.
+                        x-parser-schema-id: <anonymous-schema-91>
                     x-parser-schema-id: PlanLine
-                  x-parser-schema-id: <anonymous-schema-86>
+                  x-parser-schema-id: <anonymous-schema-87>
+                redistribution:
+                  type: array
+                  description: >-
+                    The recorded capacity-split-v1 redistribution; present only
+                    for NETWORK_SPLIT (ADR 0015). Nothing downstream executes
+                    it.
+                  items:
+                    type: object
+                    description: >-
+                      One (node, line) share of a NETWORK_SPLIT plan's recorded
+                      redistribution (ADR 0015).
+                    required:
+                      - nodeId
+                      - lineNo
+                      - qtyEaches
+                    properties:
+                      nodeId:
+                        type: string
+                        x-parser-schema-id: <anonymous-schema-93>
+                      lineNo:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-94>
+                      qtyEaches:
+                        type: integer
+                        minimum: 1
+                        x-parser-schema-id: <anonymous-schema-95>
+                    x-parser-schema-id: RedistributionLine
+                  x-parser-schema-id: <anonymous-schema-92>
+                placementFeeBasis:
+                  description: >-
+                    The recorded fee-basis fact; present only for NETWORK_SPLIT
+                    (ADR 0015).
+                  allOf:
+                    - type: object
+                      description: >-
+                        The recorded placement fee basis of a NETWORK_SPLIT plan
+                        (ADR 0015), a fact for a later vendor-settlement
+                        context, never a charge.
+                      required:
+                        - basis
+                        - month
+                        - dm3
+                        - nodeIds
+                      properties:
+                        basis:
+                          type: string
+                          enum:
+                            - NETWORK_SPLIT
+                          x-parser-schema-id: <anonymous-schema-97>
+                        month:
+                          type: string
+                          pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
+                          x-parser-schema-id: <anonymous-schema-98>
+                        dm3:
+                          type: integer
+                          format: int64
+                          minimum: 0
+                          x-parser-schema-id: <anonymous-schema-99>
+                        nodeIds:
+                          type: array
+                          items:
+                            type: string
+                            x-parser-schema-id: <anonymous-schema-101>
+                          x-parser-schema-id: <anonymous-schema-100>
+                      x-parser-schema-id: PlacementFeeBasis
+                  x-parser-schema-id: <anonymous-schema-96>
                 confirmedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-90>
+                  x-parser-schema-id: <anonymous-schema-102>
               x-parser-schema-id: <anonymous-schema-81>
           x-parser-schema-id: <anonymous-schema-80>
       x-parser-schema-id: InboundPlanConfirmedEvent
@@ -12027,40 +12518,40 @@ components:
               properties:
                 shipmentId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-93>
+                  x-parser-schema-id: <anonymous-schema-105>
                 sellerId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-94>
+                  x-parser-schema-id: <anonymous-schema-106>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-95>
+                  x-parser-schema-id: <anonymous-schema-107>
                 sscc:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-96>
+                  x-parser-schema-id: <anonymous-schema-108>
                 kind:
                   type: string
                   description: >-
                     The carton discrepancy kind string: MissingCarton,
                     UnexpectedCarton, Damaged, Short or Over.
-                  x-parser-schema-id: <anonymous-schema-97>
+                  x-parser-schema-id: <anonymous-schema-109>
                 expected:
                   type: string
                   description: >-
                     Short and Over only, `<gtin>:<qtyEaches>`; omitted
                     otherwise.
-                  x-parser-schema-id: <anonymous-schema-98>
+                  x-parser-schema-id: <anonymous-schema-110>
                 actual:
                   type: string
                   description: >-
                     Short and Over only, `<gtin>:<qtyEaches>`; omitted
                     otherwise.
-                  x-parser-schema-id: <anonymous-schema-99>
+                  x-parser-schema-id: <anonymous-schema-111>
                 recordedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-100>
-              x-parser-schema-id: <anonymous-schema-92>
-          x-parser-schema-id: <anonymous-schema-91>
+                  x-parser-schema-id: <anonymous-schema-112>
+              x-parser-schema-id: <anonymous-schema-104>
+          x-parser-schema-id: <anonymous-schema-103>
       x-parser-schema-id: InboundDiscrepancyRecordedEvent
     SellerComplianceViolationRecordedEvent:
       allOf:
@@ -12119,19 +12610,19 @@ components:
               properties:
                 sellerId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-103>
+                  x-parser-schema-id: <anonymous-schema-115>
                 shipmentId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-104>
+                  x-parser-schema-id: <anonymous-schema-116>
                 code:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-105>
+                  x-parser-schema-id: <anonymous-schema-117>
                 recordedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-106>
-              x-parser-schema-id: <anonymous-schema-102>
-          x-parser-schema-id: <anonymous-schema-101>
+                  x-parser-schema-id: <anonymous-schema-118>
+              x-parser-schema-id: <anonymous-schema-114>
+          x-parser-schema-id: <anonymous-schema-113>
       x-parser-schema-id: SellerComplianceViolationRecordedEvent
     NodeRegisteredIn:
       allOf:
@@ -12189,12 +12680,12 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-109>
+                  x-parser-schema-id: <anonymous-schema-121>
                 nodeType:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-110>
-              x-parser-schema-id: <anonymous-schema-108>
-          x-parser-schema-id: <anonymous-schema-107>
+                  x-parser-schema-id: <anonymous-schema-122>
+              x-parser-schema-id: <anonymous-schema-120>
+          x-parser-schema-id: <anonymous-schema-119>
       x-parser-schema-id: NodeRegisteredIn
     NodeOperationalProfileDeclaredIn:
       allOf:
@@ -12252,10 +12743,10 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-113>
+                  x-parser-schema-id: <anonymous-schema-125>
                 profileRevision:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-114>
+                  x-parser-schema-id: <anonymous-schema-126>
                 inbound:
                   type: object
                   description: >-
@@ -12264,7 +12755,7 @@ components:
                   properties:
                     maxCartonWeightG:
                       type: integer
-                      x-parser-schema-id: <anonymous-schema-115>
+                      x-parser-schema-id: <anonymous-schema-127>
                     maxCartonDimsMm:
                       type: object
                       required:
@@ -12274,23 +12765,23 @@ components:
                       properties:
                         l:
                           type: integer
-                          x-parser-schema-id: <anonymous-schema-117>
+                          x-parser-schema-id: <anonymous-schema-129>
                         w:
                           type: integer
-                          x-parser-schema-id: <anonymous-schema-118>
+                          x-parser-schema-id: <anonymous-schema-130>
                         h:
                           type: integer
-                          x-parser-schema-id: <anonymous-schema-119>
-                      x-parser-schema-id: <anonymous-schema-116>
+                          x-parser-schema-id: <anonymous-schema-131>
+                      x-parser-schema-id: <anonymous-schema-128>
                     acceptsPallets:
                       type: boolean
-                      x-parser-schema-id: <anonymous-schema-120>
+                      x-parser-schema-id: <anonymous-schema-132>
                     requiresSscc:
                       type: boolean
-                      x-parser-schema-id: <anonymous-schema-121>
+                      x-parser-schema-id: <anonymous-schema-133>
                   x-parser-schema-id: InboundLimits
-              x-parser-schema-id: <anonymous-schema-112>
-          x-parser-schema-id: <anonymous-schema-111>
+              x-parser-schema-id: <anonymous-schema-124>
+          x-parser-schema-id: <anonymous-schema-123>
       x-parser-schema-id: NodeOperationalProfileDeclaredIn
     NodeActivatedIn:
       allOf:
@@ -12347,9 +12838,9 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-124>
-              x-parser-schema-id: <anonymous-schema-123>
-          x-parser-schema-id: <anonymous-schema-122>
+                  x-parser-schema-id: <anonymous-schema-136>
+              x-parser-schema-id: <anonymous-schema-135>
+          x-parser-schema-id: <anonymous-schema-134>
       x-parser-schema-id: NodeActivatedIn
     NodeSuspendedIn:
       allOf:
@@ -12406,9 +12897,9 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-127>
-              x-parser-schema-id: <anonymous-schema-126>
-          x-parser-schema-id: <anonymous-schema-125>
+                  x-parser-schema-id: <anonymous-schema-139>
+              x-parser-schema-id: <anonymous-schema-138>
+          x-parser-schema-id: <anonymous-schema-137>
       x-parser-schema-id: NodeSuspendedIn
     NodeRetiredIn:
       allOf:
@@ -12465,9 +12956,9 @@ components:
               properties:
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-130>
-              x-parser-schema-id: <anonymous-schema-129>
-          x-parser-schema-id: <anonymous-schema-128>
+                  x-parser-schema-id: <anonymous-schema-142>
+              x-parser-schema-id: <anonymous-schema-141>
+          x-parser-schema-id: <anonymous-schema-140>
       x-parser-schema-id: NodeRetiredIn
     CatalogItemPackagingDeclaredIn:
       allOf:
@@ -12527,7 +13018,7 @@ components:
               properties:
                 catalogItemId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-133>
+                  x-parser-schema-id: <anonymous-schema-145>
                 level:
                   type: string
                   enum:
@@ -12539,19 +13030,19 @@ components:
                   x-parser-schema-id: PackLevel
                 gtin:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-134>
+                  x-parser-schema-id: <anonymous-schema-146>
                 childGtin:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-135>
+                  x-parser-schema-id: <anonymous-schema-147>
                 unitsPerPack:
                   type: integer
-                  x-parser-schema-id: <anonymous-schema-136>
+                  x-parser-schema-id: <anonymous-schema-148>
                 declaredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-137>
-              x-parser-schema-id: <anonymous-schema-132>
-          x-parser-schema-id: <anonymous-schema-131>
+                  x-parser-schema-id: <anonymous-schema-149>
+              x-parser-schema-id: <anonymous-schema-144>
+          x-parser-schema-id: <anonymous-schema-143>
       x-parser-schema-id: CatalogItemPackagingDeclaredIn
     CatalogItemPackLevelRetiredIn:
       allOf:
@@ -12610,7 +13101,7 @@ components:
               properties:
                 catalogItemId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-140>
+                  x-parser-schema-id: <anonymous-schema-152>
                 level:
                   type: string
                   enum:
@@ -12622,13 +13113,13 @@ components:
                   x-parser-schema-id: PackLevel
                 gtin:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-141>
+                  x-parser-schema-id: <anonymous-schema-153>
                 retiredAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-142>
-              x-parser-schema-id: <anonymous-schema-139>
-          x-parser-schema-id: <anonymous-schema-138>
+                  x-parser-schema-id: <anonymous-schema-154>
+              x-parser-schema-id: <anonymous-schema-151>
+          x-parser-schema-id: <anonymous-schema-150>
       x-parser-schema-id: CatalogItemPackLevelRetiredIn
     InboundReceiptSubmittedIn:
       allOf:
@@ -12688,14 +13179,14 @@ components:
               properties:
                 shipmentId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-153>
+                  x-parser-schema-id: <anonymous-schema-165>
                 nodeId:
                   type: string
-                  x-parser-schema-id: <anonymous-schema-154>
+                  x-parser-schema-id: <anonymous-schema-166>
                 receivedAt:
                   type: string
                   format: date-time
-                  x-parser-schema-id: <anonymous-schema-155>
+                  x-parser-schema-id: <anonymous-schema-167>
                 cartons:
                   type: array
                   items:
@@ -12706,7 +13197,7 @@ components:
                     properties:
                       sscc:
                         type: string
-                        x-parser-schema-id: <anonymous-schema-158>
+                        x-parser-schema-id: <anonymous-schema-170>
                       status:
                         type: string
                         enum:
@@ -12722,22 +13213,22 @@ components:
                           properties:
                             gtin:
                               type: string
-                              x-parser-schema-id: <anonymous-schema-161>
+                              x-parser-schema-id: <anonymous-schema-173>
                             qtyEaches:
                               type: integer
-                              x-parser-schema-id: <anonymous-schema-162>
-                          x-parser-schema-id: <anonymous-schema-160>
-                        x-parser-schema-id: <anonymous-schema-159>
+                              x-parser-schema-id: <anonymous-schema-174>
+                          x-parser-schema-id: <anonymous-schema-172>
+                        x-parser-schema-id: <anonymous-schema-171>
                       complianceCodes:
                         type: array
                         items:
                           type: string
-                          x-parser-schema-id: <anonymous-schema-164>
-                        x-parser-schema-id: <anonymous-schema-163>
-                    x-parser-schema-id: <anonymous-schema-157>
-                  x-parser-schema-id: <anonymous-schema-156>
-              x-parser-schema-id: <anonymous-schema-152>
-          x-parser-schema-id: <anonymous-schema-151>
+                          x-parser-schema-id: <anonymous-schema-176>
+                        x-parser-schema-id: <anonymous-schema-175>
+                    x-parser-schema-id: <anonymous-schema-169>
+                  x-parser-schema-id: <anonymous-schema-168>
+              x-parser-schema-id: <anonymous-schema-164>
+          x-parser-schema-id: <anonymous-schema-163>
       x-parser-schema-id: InboundReceiptSubmittedIn
 x-parser-spec-parsed: true
 x-parser-api-version: 3
