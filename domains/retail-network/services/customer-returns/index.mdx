@@ -1,0 +1,151 @@
+---
+id: customer-returns
+name: Customer Returns (events)
+version: 1.0.0
+summary: >-
+  The shopper-facing return authorization of the retail network: a return is
+  authorized with its disposition decided at authorization (KEEP returnless
+  below a caller-declared threshold, NEAREST_RETURNS_CENTER, ORIGIN_NODE), the
+  reverse label comes from shipping-and-tracking, returns-processing receives
+  the advices and grades the outcome, and offer-availability restocks the
+  sellable units.
+badges:
+  - content: customer-returns
+    textColor: blue
+    backgroundColor: blue
+  - content: returnauthorization
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: customer-returns-ReturnAuthorized
+    version: 1.0.0
+    to:
+      - id: customerReturnsEvents
+        version: 1.0.0
+  - id: customer-returns-ReturnLabelIssued
+    version: 1.0.0
+    to:
+      - id: customerReturnsEvents
+        version: 1.0.0
+  - id: customer-returns-ReturnCompleted
+    version: 1.0.0
+    to:
+      - id: customerReturnsEvents
+        version: 1.0.0
+  - id: customer-returns-ReturnCancelled
+    version: 1.0.0
+    to:
+      - id: customerReturnsEvents
+        version: 1.0.0
+receives:
+  - id: customer-ordering-CustomerOrderPlaced
+    version: 1.0.0
+    from:
+      - id: customerOrderingEvents
+        version: 1.0.0
+  - id: customer-ordering-ShopperNoticeDecided
+    version: 1.0.0
+    from:
+      - id: customerOrderingEvents
+        version: 1.0.0
+  - id: node-topology-NodeRegistered
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: node-topology-NodeActivated
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: node-topology-NodeSuspended
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: node-topology-NodeRetired
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: node-topology-ServiceAreaAssigned
+    version: 1.0.0
+    from:
+      - id: nodeTopologyEvents
+        version: 1.0.0
+  - id: order-sourcing-FulfillmentReleasedToNode
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: order-sourcing-FulfillmentLocked
+    version: 1.0.0
+    from:
+      - id: orderSourcingEvents
+        version: 1.0.0
+  - id: vendor-connectivity-VendorReturnOutcomeSubmitted
+    version: 1.0.0
+    from:
+      - id: vendorConnectivityEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+The shopper-facing return authorization of the retail network: a return is authorized with its disposition decided at authorization (KEEP returnless below a caller-declared threshold, NEAREST_RETURNS_CENTER, ORIGIN_NODE), the reverse label comes from shipping-and-tracking, returns-processing receives the advices and grades the outcome, and offer-availability restocks the sellable units. Fees are recorded as facts, never money; doorstep pickup is dormant until last-mile carries it.
+
+| | |
+|---|---|
+| Bounded context | `customer-returns` |
+| Domain | Retail Network (`retail-network`) |
+| DDD classification | Supporting |
+| Tier | Retail Network, commerce tier |
+| Publishes (Kafka) | `retailnetwork.customer-returns.events` |
+| Consumes (Kafka) | `customerReturnsEvents`<br/>`customerOrderingEvents`<br/>`nodeTopologyEvents`<br/>`orderSourcingEvents`<br/>`vendorConnectivityEvents` |
+| CloudEvents type prefix | `com.retailnetwork.commerce.customer-returns.` |
+| Event source | `/retailnetwork/customer-returns` |
+| Repository | [IQVO/customer-returns](https://github.com/IQVO/customer-returns) |
+| REST API | [customer-returns-api](/docs/services/customer-returns-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event catalog for the **customer-returns** bounded context of the retail network (commerce tier): the shopper-facing returns front door of the network.
+The REST contract is `apis/openapi.yaml`.
+
+**Published.** Four types, all on `retailnetwork.customer-returns.events`: `ReturnAuthorized` (raised for every disposition, KEEP included), `ReturnLabelIssued`
+(once per linked reverse label), `ReturnCompleted` (the graded outcome, the fact offer-availability consumes to raise availability) and `ReturnCancelled`
+(the shopper's cancellation or the lazy expiry). Every event leaves through a **transactional outbox**: the aggregate row and the already-encoded events are
+written in ONE database transaction and an always-on relay drains them to Kafka (at-least-once; the CloudEvents `id` is minted with the outbox row, so a
+retry republishes the same `id`).
+
+**Consumed.** Ten types from four producers (ADR 0003): customer-ordering `CustomerOrderPlaced` and the terminal `ShopperNoticeDecided` families (local
+OrderGroupView; only a SHIPPED or DELIVERED group is authorizable); node-topology `NodeRegistered`, `NodeActivated`, `NodeSuspended`, `NodeRetired` and
+`ServiceAreaAssigned` (local ReturnsNetworkView, the node and prefix halves); order-sourcing `FulfillmentReleasedToNode` (the per-item owners) and
+`FulfillmentLocked` (the fulfilling node, the origin half); vendor-connectivity `VendorReturnOutcomeSubmitted` (the returns centre's graded outcome). Each is
+deduplicated on the CloudEvents `id` in the `processed_events` inbox table and dispatched on the full `type`; a message that is not a valid CloudEvents 1.0
+envelope is skipped with a WARN and a type this context does not act on is ignored (both are committed past). `data` is decoded tolerantly (unknown fields are
+ignored). Offsets are committed only after the handler succeeded; a transient failure retries the same message with capped exponential backoff, and a payload
+that can never be applied or an exhausted retry budget is dead-lettered to `<topic>.dlq` with the headers `x-dlq-source-topic`, `x-dlq-source-partition`,
+`x-dlq-source-offset`, `x-dlq-error` and `x-dlq-failed-at`. The consumed `data` below lists only the fields this context relies on. The ONE synchronous call
+is the shipping context's reverse-label route (ADR 0005); no other neighbour is called.
+
+**Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka header `content-type` set to `application/cloudevents+json; charset=UTF-8`.
+`specversion`, `id`, `source` (`/retailnetwork/customer-returns`), `type`, `subject` (the aggregate root id, the `authorizationId`), `time`,
+`datacontenttype` (`application/json`) and `dataschema` (`urn:retailnetwork:customer-returns:events:<EventName>:v<version>`) are all required. Kafka key =
+the subject, so one authorization's events stay ordered on one partition. Type = `com.retailnetwork.commerce.customer-returns.returnauthorization.<EventName>`.
+
+**Conventions.** `data` is camelCase; timestamps are RFC 3339 UTC; quantities are ALWAYS eaches; optional fields are omitted when absent (never null);
+arrays are always present. No published event carries a unit price, an address, a person's name, a phone number or free text (the PII rule); `reason` is an
+enum. Lines beyond the authorization are never published on `ReturnCompleted` (they stay on the local outcome facts, flagged unexpected).
+
+
+## Architecture diagram
+<NodeGraph />

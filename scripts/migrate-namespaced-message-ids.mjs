@@ -91,12 +91,15 @@ for (const { svc, dir } of services) {
   if (!fs.existsSync(ev)) continue;
   for (const bare of fs.readdirSync(ev).sort()) {
     if (!BARE.test(bare)) continue; // already namespaced
-    let next = resolve(bare, svc);
-    if (!next) report.ambiguous.push(`${svc}/events/${bare} -> ${(byBase.get(bare) ?? []).join(',') || 'retired'}`);
-    if (!next || taken.has(next)) next = `${svc}-${bare}`;
-    taken.add(next);
     const from = path.join(ev, bare);
     const hasCurrent = fs.existsSync(path.join(from, 'index.mdx'));
+    let next = resolve(bare, svc);
+    if (!next) report.ambiguous.push(`${svc}/events/${bare} -> ${(byBase.get(bare) ?? []).join(',') || 'retired'}`);
+    // A versioned-only husk (a consumer-side copy retired by the ownership rewrite) holds
+    // OLDER versions of the same resource: it keeps sharing the id, or receives pinned to
+    // those versions dangle. Only a second CURRENT page needs an id of its own.
+    if (!next || (hasCurrent && taken.has(next))) next = `${svc}-${bare}`;
+    if (hasCurrent) taken.add(next);
     if (hasCurrent && !pageMap.has(bare)) pageMap.set(bare, next);
     for (const f of indexFiles(from)) {
       const text = fs.readFileSync(f, 'utf8');
