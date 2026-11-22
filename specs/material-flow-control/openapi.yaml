@@ -30,9 +30,14 @@ info:
     another request is `409 transport-request-conflict`; a rejected id stays rejected, so the caller sends a NEW
     `transport_request_id`, derived from the task id and the attempt, to try again).
 
+    **Retention.** A request record is never deleted. Once the retention purges an ended transport's order
+    (`ORDER_RETENTION_HOURS`, ADR 0008), its `transport_request_id` answers `410 transport-request-expired` on a
+    read, a retried request and a cancellation: the id is never accepted again, so the caller never reuses it.
+
     **Replay classes** (every problem type declares one): FINAL — a function of the request alone, stored and
     replayed (`bad-request`, `invalid-parameter`, `transport-request-conflict`, `station-not-found`,
-    `unknown-location`, `idempotency-key-required`, `idempotency-key-invalid`, `idempotency-key-reused`); OUTCOME — the four rejections
+    `unknown-location`, `idempotency-key-required`, `idempotency-key-invalid`, `idempotency-key-reused`,
+    `transport-request-expired`); OUTCOME — the four rejections
     (`unknown-container`, `container-busy`, `destination-unreachable`, `subsystem-unavailable`): the rejection
     record and `TransportRejected` commit WITH
     the stored answer, and a replay creates nothing; RETRYABLE — the key is released, so a retry under the same key
@@ -87,7 +92,8 @@ paths:
         answers the order view with `Location`; the first leg is requested after commit and progress follows as
         events. `422` carries one of the four rejection reasons and the `transport_request_id`, and publishes
         `TransportRejected`. A retry of the same `transport_request_id` and request answers the original outcome
-        (`202` with the current view, or the same `422`).
+        (`202` with the current view, or the same `422`); once the retention purged that transport's ended order,
+        `410 transport-request-expired` (the request is never executed again).
       tags: [transport-requests]
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
@@ -109,6 +115,7 @@ paths:
         '422':
           $ref: '#/components/responses/Rejected'
           description: '`unknown-container`, `container-busy`, `destination-unreachable`, `subsystem-unavailable` (with `reason` and `transport_request_id`). Replay class OUTCOME.'
+        '410': {$ref: '#/components/responses/Expired'}
         '500': {$ref: '#/components/responses/Internal'}
         '503': {$ref: '#/components/responses/Unavailable'}
   /transport-requests/{transportRequestId}:
@@ -124,6 +131,7 @@ paths:
         '200': {description: The transport request., content: {application/json: {schema: {$ref: '#/components/schemas/TransportOrder'}}}}
         '400': {$ref: '#/components/responses/BadRequest', description: '`invalid-parameter`.'}
         '404': {$ref: '#/components/responses/NotFound', description: '`transport-request-not-found`.'}
+        '410': {$ref: '#/components/responses/Expired'}
         '500': {$ref: '#/components/responses/Internal'}
   /transport-requests/{transportRequestId}/cancellation:
     post:
@@ -151,6 +159,7 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
           description: '`transport-not-cancellable`, `transport-ended` — Replay class RETRYABLE (the key is released); `idempotency-key-reused` — Replay class FINAL.'
+        '410': {$ref: '#/components/responses/Expired'}
         '500': {$ref: '#/components/responses/Internal'}
         '503': {$ref: '#/components/responses/Unavailable'}
   /container-tracks/{containerId}:
@@ -240,6 +249,9 @@ components:
       content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
     Conflict:
       description: '`transport-request-conflict`, `idempotency-key-reused` — Replay class FINAL; `transport-not-cancellable`, `transport-ended`, `not-in-clarification` — Replay class RETRYABLE.'
+      content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+    Expired:
+      description: '`transport-request-expired`: the retention purged this ended transport''s order (ADR 0008); the request record is kept, so the id is never accepted again — use a new `transport_request_id`. Replay class FINAL.'
       content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
     Rejected:
       description: '`unknown-container`, `container-busy`, `destination-unreachable`, `subsystem-unavailable`. Replay class OUTCOME: the rejection record and `TransportRejected` commit with the stored answer.'
