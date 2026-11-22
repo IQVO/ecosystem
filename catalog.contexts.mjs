@@ -210,7 +210,8 @@ export const CONTEXTS = {
       "Shift planning and labor assignment. Stops deliberately at the process-path boundary: it assigns people to paths, it does not plan work.",
     topics: ["warehouse.workforce.events", "warehouse.workforce.analytics"],
   },
-  // WCS tier (warehouse-docs wcs/): subsystem controllers below the WES, CloudEvents segment wes.
+  // WCS tier (warehouse-docs wcs/): the subsystem controllers and the material flow controller
+  // below the WES, CloudEvents segment wes.
   // equipment-emulator (the simulated AMRs and AS/RS behind them) is test infrastructure, not a
   // bounded context, and is deliberately not catalogued.
   'asrs-control': {
@@ -228,6 +229,14 @@ export const CONTEXTS = {
     purpose:
       "The VDA 5050 master control of the autonomous mobile robots: it accepts transport legs from material-flow-control, assigns each leg to one robot by distance, battery and availability, releases the route as base and horizon while reserving every node and edge for exactly one robot, resolves deadlocks, sends robots to charge and to park, and keeps a registry of every robot's connection, state, errors and factsheet. Every accepted leg ends in exactly one of LegCompleted or LegFailed.",
     topics: ["warehouse.amr-fleet-control.events", "warehouse.amr-fleet-control.analytics"],
+  },
+  'material-flow-control': {
+    subdomain: 'wes',
+    classification: 'Supporting',
+    tier: 'WES, WCS material flow controller',
+    purpose:
+      "The material flow controller of the WCS tier and the one door from the WES to the automation: it accepts or rejects a transport request at once, splits an accepted request into legs through handoff points (an AS/RS retrieve or store, an AMR move), starts each leg only after the previous handoff was confirmed, keeps the one physical position of every container inside the automation, sequences arrivals at each goods-to-person station under its buffer limit, sends unknown or mismatched containers to clarification, and aggregates subsystem capacity. Every accepted request ends in exactly one of TransportCompleted or TransportFailed.",
+    topics: ["warehouse.material-flow-control.events", "warehouse.material-flow-control.analytics"],
   },
   // --- Retail Network (separate organization; see SUBDOMAINS['retail-network']) ---
   'node-topology': {

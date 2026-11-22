@@ -1,0 +1,149 @@
+---
+id: material-flow-control
+name: Material Flow Control (events)
+version: 0.1.0
+summary: >-
+  The material flow controller of the WCS tier and the one door from the WES to
+  the automation: it accepts or rejects a transport request at once, splits an
+  accepted request into legs through handoff points (an AS/RS retrieve or store,
+  an AMR move), starts each leg only after the previous handoff was confirmed,
+  keeps the one physical position of every container inside the automation,
+  sequences arrivals at each goods-to-person station under its buffer limit,
+  sends unknown or mismatched containers to clarification, and aggregates
+  subsystem capacity.
+badges:
+  - content: material-flow-control
+    textColor: blue
+    backgroundColor: blue
+  - content: transportrequest
+    textColor: blue
+    backgroundColor: blue
+  - content: transportorder
+    textColor: blue
+    backgroundColor: blue
+  - content: containertrack
+    textColor: blue
+    backgroundColor: blue
+  - content: subsystemcapacity
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: material-flow-control-TransportRejected
+    version: 0.1.0
+    to:
+      - id: materialFlowControlEvents
+        version: 0.1.0
+  - id: material-flow-control-TransportAccepted
+    version: 0.1.0
+    to:
+      - id: materialFlowControlEvents
+        version: 0.1.0
+  - id: material-flow-control-ContainerArrivedAtStation
+    version: 0.1.0
+    to:
+      - id: materialFlowControlEvents
+        version: 0.1.0
+  - id: material-flow-control-TransportCompleted
+    version: 0.1.0
+    to:
+      - id: materialFlowControlEvents
+        version: 0.1.0
+  - id: material-flow-control-TransportFailed
+    version: 0.1.0
+    to:
+      - id: materialFlowControlEvents
+        version: 0.1.0
+  - id: material-flow-control-ContainerSentToClarification
+    version: 0.1.0
+    to:
+      - id: materialFlowControlEvents
+        version: 0.1.0
+  - id: material-flow-control-SubsystemCapacityChanged
+    version: 0.1.0
+    to:
+      - id: materialFlowControlEvents
+        version: 0.1.0
+receives:
+  - id: asrs-control-ContainerStored
+    version: 1.0.0
+    from:
+      - id: asrsControlEvents
+        version: 1.0.0
+  - id: asrs-control-ContainerPresentedAtPort
+    version: 1.0.0
+    from:
+      - id: asrsControlEvents
+        version: 1.0.0
+  - id: asrs-control-StorageJobFailed
+    version: 1.0.0
+    from:
+      - id: asrsControlEvents
+        version: 1.0.0
+  - id: asrs-control-EquipmentStateChanged
+    version: 1.0.0
+    from:
+      - id: asrsControlEvents
+        version: 1.0.0
+  - id: asrs-control-AsrsCapacityChanged
+    version: 1.0.0
+    from:
+      - id: asrsControlEvents
+        version: 1.0.0
+  - id: amr-fleet-control-LegAssigned
+    version: 1.0.0
+    from:
+      - id: amrFleetControlEvents
+        version: 1.0.0
+  - id: amr-fleet-control-ContainerPickedUp
+    version: 1.0.0
+    from:
+      - id: amrFleetControlEvents
+        version: 1.0.0
+  - id: amr-fleet-control-LegCompleted
+    version: 1.0.0
+    from:
+      - id: amrFleetControlEvents
+        version: 1.0.0
+  - id: amr-fleet-control-LegFailed
+    version: 1.0.0
+    from:
+      - id: amrFleetControlEvents
+        version: 1.0.0
+  - id: amr-fleet-control-FleetCapacityChanged
+    version: 1.0.0
+    from:
+      - id: amrFleetControlEvents
+        version: 1.0.0
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+The material flow controller of the WCS tier and the one door from the WES to the automation: it accepts or rejects a transport request at once, splits an accepted request into legs through handoff points (an AS/RS retrieve or store, an AMR move), starts each leg only after the previous handoff was confirmed, keeps the one physical position of every container inside the automation, sequences arrivals at each goods-to-person station under its buffer limit, sends unknown or mismatched containers to clarification, and aggregates subsystem capacity. Every accepted request ends in exactly one of TransportCompleted or TransportFailed.
+
+| | |
+|---|---|
+| Bounded context | `material-flow-control` |
+| Domain | WES (`wes`) |
+| DDD classification | Supporting |
+| Tier | WES, WCS material flow controller |
+| Publishes (Kafka) | `warehouse.material-flow-control.events`<br/>`warehouse.material-flow-control.analytics` |
+| Consumes (Kafka) | `materialFlowControlEvents`<br/>`materialFlowControlAnalytics`<br/>`asrsControlEvents`<br/>`amrFleetControlEvents` |
+| CloudEvents type prefix | `com.warehouse.wes.material-flow-control.` |
+| Event source | `/warehouse/material-flow-control` |
+| Repository | [IQVO/material-flow-control](https://github.com/IQVO/material-flow-control) |
+| REST API | [material-flow-control-api](/docs/services/material-flow-control-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+The facts of material-flow-control, the WCS material flow controller and the one door from the WES to the automation: transport requests accepted or rejected, containers arriving at goods-to-person stations, transports completed or failed, containers sent to clarification, and the aggregated capacity of the AMR fleet, the AS/RS and the stations. CloudEvents 1.0 structured mode; every event is written to warehouse.material-flow-control.events and warehouse.material-flow-control.analytics under the same id; the Kafka key is the subject; every *_at is material-flow-control's own clock. No payload names a robot, leg, node, shuttle, aisle, rack position, port or storage job (seam decision 3). It consumes ten facts of the two subsystem controllers (asrsControlEvents, amrFleetControlEvents; WCS context map relationships 4 and 5) and commits every other type on those topics past.
+
+## Architecture diagram
+<NodeGraph />
