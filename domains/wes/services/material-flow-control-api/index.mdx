@@ -1,0 +1,110 @@
+---
+id: material-flow-control-api
+version: 0.1.0
+name: Material Flow Control API
+summary: >-
+  REST API of material-flow-control. The material flow controller of the WCS
+  tier and the one door from the WES to the automation: it accepts or rejects a
+  transport request at once, splits an accepted request into legs through
+  handoff points (an AS/RS retrieve or store, an AMR move), starts each leg only
+  after the previous handoff was confirmed, keeps the one physical position of
+  every container inside the automation, sequences arrivals at each
+  goods-to-person station under its buffer limit, sends unknown or mismatched
+  containers to clarification, and aggregates subsystem capacity.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: material-flow-control
+badges:
+  - content: transport-requests
+    textColor: blue
+    backgroundColor: blue
+  - content: container-tracks
+    textColor: blue
+    backgroundColor: blue
+  - content: stations
+    textColor: blue
+    backgroundColor: blue
+  - content: subsystems
+    textColor: blue
+    backgroundColor: blue
+  - content: probes
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: material-flow-control-api-healthz
+    version: 0.1.0
+  - id: material-flow-control-api-readyz
+    version: 0.1.0
+  - id: material-flow-control-api-requestTransport
+    version: 0.1.0
+  - id: material-flow-control-api-getTransport
+    version: 0.1.0
+  - id: material-flow-control-api-cancelTransport
+    version: 0.1.0
+  - id: material-flow-control-api-getContainerTrack
+    version: 0.1.0
+  - id: material-flow-control-api-resolveClarification
+    version: 0.1.0
+  - id: material-flow-control-api-getStation
+    version: 0.1.0
+  - id: material-flow-control-api-listSubsystems
+    version: 0.1.0
+---
+## Purpose
+The material flow controller of the WCS tier and the one door from the WES to the automation: it accepts or rejects a transport request at once, splits an accepted request into legs through handoff points (an AS/RS retrieve or store, an AMR move), starts each leg only after the previous handoff was confirmed, keeps the one physical position of every container inside the automation, sequences arrivals at each goods-to-person station under its buffer limit, sends unknown or mismatched containers to clarification, and aggregates subsystem capacity. Every accepted request ends in exactly one of TransportCompleted or TransportFailed.
+
+| | |
+|---|---|
+| Bounded context | `material-flow-control` |
+| Domain | WES (`wes`) |
+| DDD classification | Supporting |
+| Tier | WES, WCS material flow controller |
+| Repository | [IQVO/material-flow-control](https://github.com/IQVO/material-flow-control) |
+| Events | [material-flow-control](/docs/services/material-flow-control) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+The relationship-1 interface of **material-flow-control** (WCS tier, Supporting; ADR 0001, ADR 0005): the one
+door from the WES (fulfillment-execution) to the automation. A transport request is accepted or rejected at
+once (`202` or `422`); its progress is reported only through events on `warehouse.material-flow-control.events`
+(TransportAccepted, ContainerArrivedAtStation, TransportCompleted, TransportFailed), never by polling.
+
+Base path: the Service `material-flow-control` on :8080 (in-cluster
+`http://material-flow-control.warehouse-systems.svc.cluster.local`), through Kong at
+`/api/material-flow-control`. Every POST requires `Idempotency-Key` (1-128 printable ASCII characters); a replayed answer carries
+`Idempotency-Replayed: true`. Bodies snake_case; errors RFC 9457 `application/problem+json` with a stable
+`code`. No authentication. Location vocabulary: the AS/RS is addressed by its logical `LocationCode`
+(`WH1-AUTO-ASRS-ASRS1-00-00-S`, plan 05a D14); a goods-to-person station by its station id (`ST1`) or its
+`LocationCode`; any other place (decant, pack station, dock door, forward-area handoff, clarification point)
+by its `LocationCode`. No route or body names a robot, a leg, a node or a storage job.
+
+**Two idempotency layers.** The fleet `Idempotency-Key` (24 hours) and the domain key `transport_request_id`
+(a retry of the same id and request returns the original outcome and creates nothing; the same id with
+another request is `409 transport-request-conflict`; a rejected id stays rejected, so the caller sends a NEW
+`transport_request_id`, derived from the task id and the attempt, to try again).
+
+**Replay classes** (every problem type declares one): FINAL — a function of the request alone, stored and
+replayed (`bad-request`, `invalid-parameter`, `transport-request-conflict`, `station-not-found`,
+`unknown-location`, `idempotency-key-required`, `idempotency-key-invalid`, `idempotency-key-reused`); OUTCOME — the four rejections
+(`unknown-container`, `container-busy`, `destination-unreachable`, `subsystem-unavailable`): the rejection
+record and `TransportRejected` commit WITH
+the stored answer, and a replay creates nothing; RETRYABLE — the key is released, so a retry under the same key
+executes again (`transport-request-not-found`, `container-track-not-found` — the caller mints the
+`transport_request_id` and a `ContainerStored` fact or an acceptance creates a track, so the target can exist
+by the retry; `transport-not-cancellable`, `transport-ended`, `not-in-clarification`, `internal-error`,
+`dependency-unavailable`). 2xx answers are stored; 5xx answers and panics never are. Releasing a key means the
+same key with another body is a NEW request, not `idempotency-key-reused`.
+  
+
+## Architecture diagram
+<NodeGraph />
