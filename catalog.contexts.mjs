@@ -221,6 +221,14 @@ export const CONTEXTS = {
       "Store and retrieve containers in the automated storage and retrieval system at the throughput the WCS needs, and own where each container sits inside the rack: position assignment, one storage job per aisle at a time, port presentation, reshuffles and PackML equipment state, over a telegram protocol on MQTT to the shuttles and lifts. To the WMS the whole AS/RS is one logical location; no rack position is ever published.",
     topics: ["warehouse.asrs-control.events", "warehouse.asrs-control.analytics"],
   },
+  'amr-fleet-control': {
+    subdomain: 'wes',
+    classification: 'Generic',
+    tier: 'WES, WCS subsystem controller',
+    purpose:
+      "The VDA 5050 master control of the autonomous mobile robots: it accepts transport legs from material-flow-control, assigns each leg to one robot by distance, battery and availability, releases the route as base and horizon while reserving every node and edge for exactly one robot, resolves deadlocks, sends robots to charge and to park, and keeps a registry of every robot's connection, state, errors and factsheet. Every accepted leg ends in exactly one of LegCompleted or LegFailed.",
+    topics: ["warehouse.amr-fleet-control.events", "warehouse.amr-fleet-control.analytics"],
+  },
   // --- Retail Network (separate organization; see SUBDOMAINS['retail-network']) ---
   'node-topology': {
     subdomain: 'retail-network',

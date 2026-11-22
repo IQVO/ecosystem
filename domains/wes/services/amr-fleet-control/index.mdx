@@ -1,0 +1,152 @@
+---
+id: amr-fleet-control
+name: Amr Fleet Control (events)
+version: 1.0.0
+summary: >-
+  The VDA 5050 master control of the autonomous mobile robots: it accepts
+  transport legs from material-flow-control, assigns each leg to one robot by
+  distance, battery and availability, releases the route as base and horizon
+  while reserving every node and edge for exactly one robot, resolves deadlocks,
+  sends robots to charge and to park, and keeps a registry of every robot's
+  connection, state, errors and factsheet.
+badges:
+  - content: amr-fleet-control
+    textColor: blue
+    backgroundColor: blue
+  - content: mission
+    textColor: blue
+    backgroundColor: blue
+  - content: robot
+    textColor: blue
+    backgroundColor: blue
+  - content: fleet
+    textColor: blue
+    backgroundColor: blue
+  - content: fleetmap
+    textColor: blue
+    backgroundColor: blue
+sends:
+  - id: amr-fleet-control-LegAssigned
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.events
+        version: 1.0.0
+  - id: amr-fleet-control-ContainerPickedUp
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.events
+        version: 1.0.0
+  - id: amr-fleet-control-LegCompleted
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.events
+        version: 1.0.0
+  - id: amr-fleet-control-LegFailed
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.events
+        version: 1.0.0
+  - id: amr-fleet-control-RobotStateChanged
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.events
+        version: 1.0.0
+  - id: amr-fleet-control-FleetCapacityChanged
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.events
+        version: 1.0.0
+  - id: amr-fleet-control-DeadlockDetected
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.events
+        version: 1.0.0
+  - id: amr-fleet-control-LegAssignedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.analytics
+        version: 1.0.0
+  - id: amr-fleet-control-ContainerPickedUpAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.analytics
+        version: 1.0.0
+  - id: amr-fleet-control-LegCompletedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.analytics
+        version: 1.0.0
+  - id: amr-fleet-control-LegFailedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.analytics
+        version: 1.0.0
+  - id: amr-fleet-control-RobotStateChangedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.analytics
+        version: 1.0.0
+  - id: amr-fleet-control-FleetCapacityChangedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.analytics
+        version: 1.0.0
+  - id: amr-fleet-control-DeadlockDetectedAnalytics
+    version: 1.0.0
+    to:
+      - id: warehouse.amr-fleet-control.analytics
+        version: 1.0.0
+receives: []
+schemaPath: asyncapi.yaml
+specifications:
+  asyncapiPath: asyncapi.yaml
+owners:
+  - claudioed
+---
+## Purpose
+The VDA 5050 master control of the autonomous mobile robots: it accepts transport legs from material-flow-control, assigns each leg to one robot by distance, battery and availability, releases the route as base and horizon while reserving every node and edge for exactly one robot, resolves deadlocks, sends robots to charge and to park, and keeps a registry of every robot's connection, state, errors and factsheet. Every accepted leg ends in exactly one of LegCompleted or LegFailed.
+
+| | |
+|---|---|
+| Bounded context | `amr-fleet-control` |
+| Domain | WES (`wes`) |
+| DDD classification | Generic |
+| Tier | WES, WCS subsystem controller |
+| Publishes (Kafka) | `warehouse.amr-fleet-control.events`<br/>`warehouse.amr-fleet-control.analytics` |
+| Consumes (Kafka) | nothing: this context is a pure publisher |
+| CloudEvents type prefix | `com.warehouse.wes.amr-fleet-control.` |
+| Event source | `/warehouse/amr-fleet-control` |
+| Repository | [IQVO/amr-fleet-control](https://github.com/IQVO/amr-fleet-control) |
+| REST API | [amr-fleet-control-api](/docs/services/amr-fleet-control-api) |
+
+Every message is a CloudEvents 1.0 structured-mode JSON document (`application/cloudevents+json`).
+`<ctx>.events` topics carry the integration contract; `<ctx>.analytics` topics carry projector input for the
+context's own reports and are never consumed by another context.
+
+## Contract
+
+
+Event contract of the **amr-fleet-control** bounded context (WCS tier, Generic, segment `wes`; ADR 0001, ADR 0003).
+Seven facts. material-flow-control (WCS plan 04) consumes five: `LegAssigned`, `ContainerPickedUp`, `LegCompleted`
+and `LegFailed` for its subsystem-controller interface (WCS context map relationship 4), and `FleetCapacityChanged`
+for its capacity view. `RobotStateChanged` and `DeadlockDetected` have no consumer yet: material-flow-control skips
+`RobotStateChanged`, and `DeadlockDetected` (like `LegFailed` with reason `ROBOT_BLOCKED`) is designed for
+exception-management (WCS plan 05).
+
+**Published** through a transactional outbox to `warehouse.amr-fleet-control.events`, and the same occurrence
+(same CloudEvents `id`, `type` and `data`) to `warehouse.amr-fleet-control.analytics` with the `analytics`
+`dataschema` segment. Kafka key = `subject`.
+
+**Envelope (mandatory).** CloudEvents 1.0 structured mode, header
+`content-type: application/cloudevents+json; charset=UTF-8`,
+`type` = `com.warehouse.wes.amr-fleet-control.<entity>.<EventName>`. Dispatch on the full `type`, ignore unknown
+types, dedupe on `id`.
+
+**Time.** `time` and every `*_at` field are amr-fleet-control's clock. `robot_timestamp` is the VDA 5050 header
+timestamp of the robot state the fact came from (the emulator's simulated time), present only on such facts.
+
+No VDA 5050 order, base, horizon or edge is ever published; node ids appear only in `DeadlockDetected`.
+
+
+## Architecture diagram
+<NodeGraph />

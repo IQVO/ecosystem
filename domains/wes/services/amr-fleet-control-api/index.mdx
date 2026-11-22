@@ -1,0 +1,83 @@
+---
+id: amr-fleet-control-api
+version: 1.0.0
+name: Amr Fleet Control API
+summary: >-
+  REST API of amr-fleet-control. The VDA 5050 master control of the autonomous
+  mobile robots: it accepts transport legs from material-flow-control, assigns
+  each leg to one robot by distance, battery and availability, releases the
+  route as base and horizon while reserving every node and edge for exactly one
+  robot, resolves deadlocks, sends robots to charge and to park, and keeps a
+  registry of every robot's connection, state, errors and factsheet.
+schemaPath: openapi.yaml
+specifications:
+  - type: openapi
+    path: openapi.yaml
+    name: amr-fleet-control API
+badges:
+  - content: legs
+    textColor: blue
+    backgroundColor: blue
+  - content: fleet
+    textColor: blue
+    backgroundColor: blue
+  - content: health
+    textColor: blue
+    backgroundColor: blue
+owners:
+  - claudioed
+writesTo: []
+readsFrom: []
+sends: []
+receives:
+  - id: amr-fleet-control-api-getLiveness
+    version: 1.0.0
+  - id: amr-fleet-control-api-getReadiness
+    version: 1.0.0
+  - id: amr-fleet-control-api-getFleet
+    version: 1.0.0
+  - id: amr-fleet-control-api-requestLeg
+    version: 1.0.0
+  - id: amr-fleet-control-api-getLeg
+    version: 1.0.0
+  - id: amr-fleet-control-api-cancelLeg
+    version: 1.0.0
+  - id: amr-fleet-control-api-getRobot
+    version: 1.0.0
+---
+## Purpose
+The VDA 5050 master control of the autonomous mobile robots: it accepts transport legs from material-flow-control, assigns each leg to one robot by distance, battery and availability, releases the route as base and horizon while reserving every node and edge for exactly one robot, resolves deadlocks, sends robots to charge and to park, and keeps a registry of every robot's connection, state, errors and factsheet. Every accepted leg ends in exactly one of LegCompleted or LegFailed.
+
+| | |
+|---|---|
+| Bounded context | `amr-fleet-control` |
+| Domain | WES (`wes`) |
+| DDD classification | Generic |
+| Tier | WES, WCS subsystem controller |
+| Repository | [IQVO/amr-fleet-control](https://github.com/IQVO/amr-fleet-control) |
+| Events | [amr-fleet-control](/docs/services/amr-fleet-control) |
+
+This service groups the context's synchronous surface: the OLTP REST API (`openapi.yaml`) and, where the
+context has one, the separate read-only reports API (`openapi-reports.yaml`) served by its `*-reports`
+binary from an isolated analytical database. Endpoints are unauthenticated fleet-wide.
+
+
+The subsystem-controller interface of **amr-fleet-control** (WCS tier, Generic; ADR 0001, ADR 0004), called by
+material-flow-control (WCS context map relationship 4, the same shape as asrs-control's relationship 5). A leg is
+accepted or refused at once (`202` or `422`); its progress is reported only by events on
+`warehouse.amr-fleet-control.events` (LegAssigned, ContainerPickedUp, LegCompleted, LegFailed). No VDA 5050 order,
+node or edge appears here.
+
+**Idempotency.** Every POST requires `Idempotency-Key` (1-128 characters). The first request executes; a retry
+with the same key and body returns the stored answer with `Idempotency-Replayed: true`; the same key with another
+body is `409 idempotency-key-reused`. Only 2xx and FINAL refusals are stored (24 hours): `bad-request`,
+`invalid-parameter`, `leg-not-found`. RETRYABLE refusals release the key, so a retry under the same key executes
+again: `fleet-not-found`, `robot-not-found`, `unknown-handoff-point`, `handoff-unreachable` (the map file and the
+robot registry can change inside the window), `container-busy`, `fleet-unavailable`, `leg-not-cancellable`,
+`leg-ended`.
+
+**Errors** are RFC 9457 `application/problem+json` with a stable `code`. No authentication (fleet rule).
+  
+
+## Architecture diagram
+<NodeGraph />
