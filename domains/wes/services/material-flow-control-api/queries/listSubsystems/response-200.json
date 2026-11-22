@@ -1,0 +1,83 @@
+{
+  "type": "object",
+  "required": [
+    "subsystems"
+  ],
+  "properties": {
+    "subsystems": {
+      "type": "array",
+      "description": "Sorted by kind then id.",
+      "items": {
+        "type": "object",
+        "description": "One snapshot per subsystem and station (ADR 0006), the body of `SubsystemCapacityChanged`. Branch on\n`subsystem_kind`: `buffer_limit`, `occupied` and `queue_depth` are meaningful only for STATION (0\nelsewhere); never sum `units_available` or `open_work` across kinds.\n\n| Field | AMR_FLEET (FleetCapacityChanged) | ASRS (AsrsCapacityChanged) | STATION (its queue) |\n| --- | --- | --- | --- |\n| `subsystem_id` | `fleet_id` | `asrs_id` | station id |\n| `units_total` | `robots_total` (0 accepted) | `units_total` (0 accepted, never sent) | `buffer_limit` |\n| `units_available` = idle-and-dispatchable | `robots_available` (idle, assignable and above the charge threshold; a robot runs one leg at a time) | `units_available` (not HELD; an aisle unit queues jobs) | `buffer_limit - occupied` (min 0) |\n| `open_work` = queued + active | `legs_queued + legs_active` | `open_jobs` (queued and executing) | `occupied + waiting` |\n| `status` UNAVAILABLE | `robots_online` = 0 (includes `robots_total` 0) | `units_available` = 0 | never |\n| `status` DEGRADED | available < total | available < total | arrivals wait upstream |\n| `capacity_per_hour` | available x `legsPerRobotHour` (30) | available x `retrievalsPerUnitHour` (60) | 0 |\n| `buffer_limit`, `occupied`, `queue_depth` | 0 | 0 | the queue's |\n| `measured_at` | this context's clock | this context's clock | this context's clock |\n\nNegative counts clamp to 0.\n",
+        "required": [
+          "subsystem_kind",
+          "subsystem_id",
+          "status",
+          "units_total",
+          "units_available",
+          "open_work",
+          "capacity_per_hour",
+          "buffer_limit",
+          "occupied",
+          "queue_depth",
+          "measured_at"
+        ],
+        "properties": {
+          "subsystem_kind": {
+            "type": "string",
+            "enum": [
+              "AMR_FLEET",
+              "ASRS",
+              "STATION"
+            ]
+          },
+          "subsystem_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "AVAILABLE",
+              "DEGRADED",
+              "UNAVAILABLE"
+            ]
+          },
+          "units_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "units_available": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "open_work": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "capacity_per_hour": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "buffer_limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "occupied": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "queue_depth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "measured_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  },
+  "isSchema": true
+}

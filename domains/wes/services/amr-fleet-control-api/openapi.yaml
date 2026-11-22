@@ -1,0 +1,537 @@
+openapi: 3.1.0
+info:
+  title: amr-fleet-control API
+  version: 1.0.0
+  contact:
+    name: amr-fleet-control maintainers
+    url: https://github.com/IQVO/amr-fleet-control
+    email: amr-fleet-control@iqvo.example.com
+  license:
+    name: UNLICENSED
+  description: |
+    The subsystem-controller interface of **amr-fleet-control** (WCS tier, Generic; ADR 0001, ADR 0004), called by
+    material-flow-control (WCS context map relationship 4, the same shape as asrs-control's relationship 5). A leg is
+    accepted or refused at once (`202` or `422`); its progress is reported only by events on
+    `warehouse.amr-fleet-control.events` (LegAssigned, ContainerPickedUp, LegCompleted, LegFailed). No VDA 5050 order,
+    node or edge appears here.
+
+    **Idempotency.** Every POST requires `Idempotency-Key` (1-128 characters). The first request executes; a retry
+    with the same key and body returns the stored answer with `Idempotency-Replayed: true`; the same key with another
+    body is `409 idempotency-key-reused`. Only 2xx and FINAL refusals are stored (24 hours): `bad-request`,
+    `invalid-parameter`, `leg-not-found`. RETRYABLE refusals release the key, so a retry under the same key executes
+    again: `fleet-not-found`, `robot-not-found`, `unknown-handoff-point`, `handoff-unreachable` (the map file and the
+    robot registry can change inside the window), `container-busy`, `fleet-unavailable`, `leg-not-cancellable`,
+    `leg-ended`.
+
+    **Errors** are RFC 9457 `application/problem+json` with a stable `code`. No authentication (fleet rule).
+servers:
+  - url: https://amr-fleet-control.warehouse-systems.internal
+tags:
+  - name: legs
+    description: Transport legs and their cancellation.
+  - name: fleet
+    description: The fleet, its capacity and its robots.
+  - name: health
+    description: Probes.
+paths:
+  /healthz:
+    get:
+      operationId: getLiveness
+      summary: Liveness
+      description: 200 while the process runs.
+      tags:
+        - health
+      responses:
+        '200':
+          description: Alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /readyz:
+    get:
+      operationId: getReadiness
+      summary: Readiness
+      description: 200 when Postgres, Kafka and the MQTT link are reachable; 503 while draining or while one is not.
+      tags:
+        - health
+      responses:
+        '200':
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '503':
+          $ref: '#/components/responses/NotReady'
+  /fleets/{fleetId}:
+    get:
+      operationId: getFleet
+      summary: Read the fleet
+      description: The map, the handoff points (sorted ids), every robot of the registry (without factsheets) and the capacity snapshot.
+      tags:
+        - fleet
+      parameters:
+        - $ref: '#/components/parameters/FleetId'
+      responses:
+        '200':
+          description: The fleet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fleet'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /fleets/{fleetId}/legs:
+    post:
+      operationId: requestLeg
+      summary: Request a transport leg
+      description: |
+        `from_handoff_point_id` and `to_handoff_point_id` are handoff points of the fleet's map (AS/RS ports, stations). The leg is QUEUED until a robot is assigned (`LegAssigned`), then the robot picks the container at `from` (`ContainerPickedUp`) and drops it at `to` (`LegCompleted`), or the leg ends `LegFailed` with a reason. A leg is refused at once when the container already has an open leg (`422 container-busy`), a handoff point is unknown (`422 unknown-handoff-point`), no route joins them (`422 handoff-unreachable`) or no robot is online (`422 fleet-unavailable`). `reference` is echoed in every event of the leg.
+      tags:
+        - legs
+      parameters:
+        - $ref: '#/components/parameters/FleetId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LegRequest'
+      responses:
+        '202':
+          description: Accepted. Progress follows as events.
+          headers:
+            Location:
+              description: The leg.
+              schema:
+                type: string
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Leg'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/LegRefused'
+  /fleets/{fleetId}/legs/{legId}:
+    get:
+      operationId: getLeg
+      summary: Read a leg
+      description: The leg's status, its robot once assigned and, once ended, its reason.
+      tags:
+        - legs
+      parameters:
+        - $ref: '#/components/parameters/FleetId'
+        - $ref: '#/components/parameters/LegId'
+      responses:
+        '200':
+          description: The leg.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Leg'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /fleets/{fleetId}/legs/{legId}/cancellation:
+    post:
+      operationId: cancelLeg
+      summary: Cancel a leg
+      description: |
+        A QUEUED leg is cancelled at once (`200`, `LegFailed` reason CANCELLED). An ASSIGNED leg gets a VDA 5050 cancelOrder (`202`, CANCEL_REQUESTED) and ends CANCELLED when the robot confirms. A PICKED_UP leg is `409 leg-not-cancellable` (the container is on the robot); an ended leg is `409 leg-ended`.
+      tags:
+        - legs
+      parameters:
+        - $ref: '#/components/parameters/FleetId'
+        - $ref: '#/components/parameters/LegId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Cancelled at once.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Leg'
+        '202':
+          description: The robot was asked to cancel (CANCEL_REQUESTED).
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Leg'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /fleets/{fleetId}/robots/{manufacturer}/{serialNumber}:
+    get:
+      operationId: getRobot
+      summary: Read a robot
+      description: One robot of the registry, with its factsheet once the robot published one.
+      tags:
+        - fleet
+      parameters:
+        - $ref: '#/components/parameters/FleetId'
+        - $ref: '#/components/parameters/Manufacturer'
+        - $ref: '#/components/parameters/SerialNumber'
+      responses:
+        '200':
+          description: The robot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Robot'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  parameters:
+    FleetId:
+      name: fleetId
+      in: path
+      required: true
+      description: The fleet id (the map file's `fleetId`, e.g. AMR1).
+      schema:
+        $ref: '#/components/schemas/Id'
+    LegId:
+      name: legId
+      in: path
+      required: true
+      description: The leg id (`leg-<uuid>`).
+      schema:
+        $ref: '#/components/schemas/Id'
+    Manufacturer:
+      name: manufacturer
+      in: path
+      required: true
+      description: The robot's VDA 5050 manufacturer.
+      schema:
+        $ref: '#/components/schemas/Id'
+    SerialNumber:
+      name: serialNumber
+      in: path
+      required: true
+      description: The robot's VDA 5050 serial number.
+      schema:
+        $ref: '#/components/schemas/Id'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Caller-minted key, 1 to 128 characters (fleet guideline R3-R5); a missing or longer one is `400 idempotency-key-required`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  headers:
+    IdempotencyReplayed:
+      description: '`true` on an answer replayed from the idempotency store; absent on a first execution.'
+      schema:
+        type: string
+        enum:
+          - 'true'
+  responses:
+    Problem:
+      description: An RFC 9457 problem.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: '`fleet-not-found` or `robot-not-found` (RETRYABLE: the map file and the robot registry can change, so the key is released), or `leg-not-found` (FINAL: legs are minted here and never deleted, so the answer is replayed).'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    LegRefused:
+      description: 'The leg is refused at once, always RETRYABLE (the key is released): `unknown-handoff-point` and `handoff-unreachable` (a new map version may add the point or join the two), `container-busy`, `fleet-unavailable`.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotReady:
+      description: Postgres, Kafka or the MQTT link unreachable, or draining (`dependency-unavailable`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Status'
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Id:
+      type: string
+      minLength: 1
+      maxLength: 128
+      description: No control characters.
+    Status:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          examples:
+            - ok
+            - ready
+            - not_ready
+    Problem:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string
+          description: Stable fleet error code.
+          examples:
+            - container-busy
+        detail:
+          type: string
+        instance:
+          type: string
+    RobotRef:
+      type: object
+      required:
+        - manufacturer
+        - serial_number
+      properties:
+        manufacturer:
+          type: string
+        serial_number:
+          type: string
+    LegRequest:
+      type: object
+      required:
+        - container_id
+        - from_handoff_point_id
+        - to_handoff_point_id
+      additionalProperties: false
+      properties:
+        container_id:
+          $ref: '#/components/schemas/Id'
+        from_handoff_point_id:
+          $ref: '#/components/schemas/Id'
+          description: Where the robot picks the container.
+        to_handoff_point_id:
+          $ref: '#/components/schemas/Id'
+          description: Where the robot drops it; differs from from_handoff_point_id.
+        reference:
+          $ref: '#/components/schemas/Id'
+          description: The caller's reference (a transport request), echoed in the leg's events. Omit it when there is none; an empty string is `400 bad-request`.
+    Leg:
+      type: object
+      required:
+        - leg_id
+        - fleet_id
+        - container_id
+        - from_handoff_point_id
+        - to_handoff_point_id
+        - status
+        - map_version
+        - accepted_at
+      properties:
+        leg_id:
+          type: string
+        fleet_id:
+          type: string
+        container_id:
+          type: string
+        from_handoff_point_id:
+          type: string
+        to_handoff_point_id:
+          type: string
+        reference:
+          type: string
+        status:
+          type: string
+          enum:
+            - QUEUED
+            - ASSIGNED
+            - PICKED_UP
+            - CANCEL_REQUESTED
+            - DONE
+            - FAILED
+            - CANCELLED
+        robot:
+          $ref: '#/components/schemas/RobotRef'
+        reason:
+          type: string
+          enum:
+            - CANCELLED
+            - ROBOT_BLOCKED
+            - ROBOT_FAULT
+            - ROBOT_OFFLINE
+            - ORDER_REJECTED
+            - PICK_FAILED
+            - DROP_FAILED
+            - MAP_VERSION_RETIRED
+        robot_error:
+          type: string
+          description: The robot's VDA 5050 errorType behind a failure.
+        map_version:
+          type: string
+        accepted_at:
+          type: string
+          format: date-time
+        assigned_at:
+          type: string
+          format: date-time
+        picked_up_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+    Robot:
+      type: object
+      required:
+        - manufacturer
+        - serial_number
+        - connection
+        - state
+        - battery_percent
+        - charging
+        - available
+        - error_types
+        - last_seen_at
+      properties:
+        manufacturer:
+          type: string
+        serial_number:
+          type: string
+        connection:
+          type: string
+          enum:
+            - ONLINE
+            - OFFLINE
+            - CONNECTION_BROKEN
+        state:
+          type: string
+          enum:
+            - IDLE
+            - EXECUTE
+            - SUSPENDED
+            - HELD
+            - STOPPED
+        battery_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+        charging:
+          type: boolean
+        available:
+          type: boolean
+          description: Idle
+          on the map: null
+          nothing in flight and at or above the charge threshold.: null
+        node_id:
+          type: string
+          description: The map node the robot stands on.
+        mission_id:
+          type: string
+          description: The leg or internal mission the robot executes.
+        error_types:
+          type: array
+          items:
+            type: string
+        last_seen_at:
+          type: string
+          format: date-time
+        factsheet:
+          type: object
+          required:
+            - series_name
+            - max_speed
+            - max_load_mass
+          properties:
+            series_name:
+              type: string
+            max_speed:
+              type: number
+            max_load_mass:
+              type: number
+    Fleet:
+      type: object
+      required:
+        - fleet_id
+        - map_id
+        - map_version
+        - handoff_points
+        - robots
+        - capacity
+      properties:
+        fleet_id:
+          type: string
+        map_id:
+          type: string
+        map_version:
+          type: string
+        handoff_points:
+          type: array
+          items:
+            type: string
+        robots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Robot'
+          description: Without factsheets.
+        capacity:
+          type: object
+          required:
+            - robots_total
+            - robots_online
+            - robots_available
+            - robots_charging
+            - robots_held
+            - legs_queued
+            - legs_active
+          properties:
+            robots_total:
+              type: integer
+              minimum: 0
+            robots_online:
+              type: integer
+              minimum: 0
+            robots_available:
+              type: integer
+              minimum: 0
+            robots_charging:
+              type: integer
+              minimum: 0
+            robots_held:
+              type: integer
+              minimum: 0
+            legs_queued:
+              type: integer
+              minimum: 0
+            legs_active:
+              type: integer
+              minimum: 0
